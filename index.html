@@ -113,6 +113,8 @@
   /* groups view */
   .grp{border:1px solid var(--line);border-radius:10px;margin:8px 0;overflow:hidden;background:#fff}
   .grphead{display:flex;align-items:center;gap:12px;padding:10px 12px;flex-wrap:wrap}
+  .caret{border:0;background:transparent;color:var(--accent);font-size:14px;cursor:pointer;padding:2px 6px;flex-shrink:0;width:26px}
+  .caret:hover{color:var(--accent-d)}
   .grpchips{display:flex;align-items:center;gap:1px;font-size:12px}
   .grpchips .ichip{font-size:12px;padding:2px 8px}
   .plus{color:var(--muted);font-weight:700;margin:0 4px}
@@ -220,7 +222,7 @@ const STATE = {
   detected: null,                  // {services,industries,competitors} counts from last upload
   rules: {                       // enabled flags
     zero:true, free:true, nearme:true, competitor:true, location:true,
-    info:true, jobs:true, person:false, format:true, lowrel:false,
+    info:true, jobs:true, person:true, format:true, lowrel:false, org:true,
   },
   lowRelThreshold: 1,
   rows: [],                      // parsed AKR
@@ -239,6 +241,7 @@ const STATE = {
   groupExpanded:{},             // group key -> bool
   groupSearch:'',
   groupPendingOnly:true,        // hide fully-decided combinations
+  serpRunning:false, serpCancel:false, serpAuto:false,   // auto rankings fetch state (transient)
 };
 const PAGE_SIZE = 60;
 
@@ -258,7 +261,9 @@ const STOP = new Set(('a an the and or for of to in on at is are be vs with what
 
 /* US states for location detection */
 const US_STATES = ['alabama','alaska','arizona','arkansas','california','colorado','connecticut','delaware','florida','georgia','hawaii','idaho','illinois','indiana','iowa','kansas','kentucky','louisiana','maine','maryland','massachusetts','michigan','minnesota','mississippi','missouri','montana','nebraska','nevada','new hampshire','new jersey','new mexico','new york','north carolina','north dakota','ohio','oklahoma','oregon','pennsylvania','rhode island','south carolina','south dakota','tennessee','texas','utah','vermont','virginia','washington','west virginia','wisconsin','wyoming'];
-const BIG_CITIES = ['seattle','portland','atlanta','dallas','austin','houston','chicago','boston','denver','miami','phoenix','orlando','tacoma','onalaska','delaware','maryland','india','france','mumbai','burma','asia','usa','united states','uk','london','canada','toronto','nyc','new york'];
+const BIG_CITIES = ['seattle','portland','atlanta','dallas','austin','houston','chicago','boston','denver','miami','phoenix','orlando','tacoma','onalaska','delaware','maryland','india','france','mumbai','burma','asia','usa','united states','uk','london','canada','toronto','nyc','new york',
+  // international cities & countries — off-geo for a US-served client
+  'dubai','abu dhabi','singapore','sydney','melbourne','brisbane','perth','auckland','hong kong','shanghai','beijing','tokyo','kuala lumpur','jakarta','manila','bangkok','thailand','bali','goa','rishikesh','kerala','delhi','bangalore','bengaluru','chennai','pune','hyderabad','dublin','paris','berlin','munich','amsterdam','madrid','barcelona','rome','milan','zurich','geneva','vienna','stockholm','copenhagen','oslo','lisbon','athens','istanbul','tel aviv','riyadh','doha','qatar','kuwait','bahrain','cape town','johannesburg','nairobi','lagos','cairo','mexico','spain','italy','germany','australia','australian','new zealand','ireland','scotland','wales','europe','africa','middle east','vancouver','montreal','ottawa','calgary','costa rica','las vegas','san francisco','los angeles','san diego','vegas','nashville','aspen','sedona','tulum'];
 /* modifier words — qualifiers/intent/format/audience that describe HOW/FOR-WHOM, not the offering itself */
 const MODIFIER_WORDS = new Set(['corporate','executive','executives','online','virtual','in-person','inperson','remote','hybrid','offsite','off-site',
   'best','top','free','cheap','affordable','low-cost','budget','luxury','premium','private','group','public','open',
@@ -279,20 +284,27 @@ const INFO_RX = /\b(how to|how-to|what is|what's|meaning|definition|define|youtu
 const JOBS_RX = /\b(jobs?|salary|salaries|hiring|career|careers|certification|certified|certificate|course|courses|degree|class schedule|teacher training|become a|how to become|exam|syllabus)\b/;
 /* wrong-format / commercial mismatch */
 const FORMAT_RX = /\b(login|sign in|app|apk|download|coupon|promo code|discount code|cracked|torrent|free pdf)\b/;
+/* likely a specific brand / named organisation (not a generic topic) → reject */
+const ORG_RX = /\b(institutes?|academ(y|ies)|society|societies|foundations?|associations?|ashram|sangha|vihara|monastery|university|college|ll[cp]|gmbh|pvt|dhamma|goenka|chopra|mindvalley|headspace|deepak|sadhguru|isha)\b/;
 
 /* ---- Customer Profile (ICP) classification — uses primary + secondary keywords ---- */
 const PROFILES = [
-  {name:'B2B / Corporate',       rxg:/\b(corporate|executives?|employees?|staff|workplace|workforce|compan(y|ies)|business(es)?|b2b|enterprise|organi[sz]ations?|teams?|hr|leadership|for work|office)\b/g},
+  {name:'B2B / Corporate',       rxg:/\b(corporate|executives?|employees?|staff|workplace|workforce|compan(y|ies)|business(es)?|b2b|enterprise|organi[sz]ations?|team building|hr|leadership|for work|office|conference|keynote|offsite|off-site)\b/g},
   {name:'Healthcare / Clinical', rxg:/\b(hospitals?|clinics?|clinical|patients?|therap(y|ist|ists)|nurs(e|es|ing)|medical|healthcare|psychologists?|psychiatr|wellbeing program)\b/g},
-  {name:'Aspiring Practitioner', rxg:/\b(certifications?|certified|certificate|teacher training|become an?|how to teach|train the trainer|courses?|diploma|licen[sc]e|academy|qualif|instructor)\b/g},
+  {name:'Aspiring Practitioner', rxg:/\b(certifications?|certified|certificate|teacher training|become an?|how to teach|train the trainer|courses?|diploma|licen[sc]e|qualif|instructor|200 hour|ryt)\b/g},
   {name:'Local Seeker',          rxg:/\b(near me|nearby|in [a-z]+ city)\b/g},
-  {name:'Individual / Consumer', rxg:/\b(at home|for sleep|for anxiety|for stress|for beginners?|beginners?|personal|myself|my own|free|app|youtube|guided|self[- ]?guided)\b/g},
+  {name:'Athlete / Sports',      rxg:/\b(athletes?|sports?|cricket|football|soccer|basketball|tennis|golf|olympic|team mental|player)\b/g},
+  {name:'Individual / Consumer', rxg:/\b(at home|for sleep|for anxiety|for stress|for beginners?|beginners?|personal|myself|my own|free|app|youtube|guided|self[- ]?guided|near me|bali|goa|rishikesh|costa rica|thailand|destination|getaway|cheap|affordable|classes?)\b/g},
   {name:'Researcher / Student',  rxg:/\b(what is|what's|meaning|definitions?|define|benefits?|history of|study|studies|statistics|examples?|how does|why (is|do|does))\b/g},
 ];
+/* consumer-wellness offerings that, with no business signal, mean an individual searcher */
+const CONSUMER_WELLNESS=/\b(yoga|meditation|mindfulness|vipassana|nidra|vinyasa|pranayama|retreat|breathwork|sound bath|reiki)\b/;
 function classifyProfile(r){
   const t=(r.kw+' '+(r.sec||'')).toLowerCase();
   let best='General', bestN=0;
   for(const p of PROFILES){ const m=t.match(p.rxg); const n=m?m.length:0; if(n>bestN){bestN=n;best=p.name;} }
+  // fallback: a consumer-wellness topic with no clearer signal is an individual/consumer search
+  if(best==='General' && CONSUMER_WELLNESS.test(t)) best='Individual / Consumer';
   return best;
 }
 /* generic sites that rank for almost everything — they DON'T indicate intent/ICP, so ignore them */
@@ -387,7 +399,7 @@ VIEWS.setup=function(){
 
   <div class="grid2">
     <div class="card">
-      <h3>Industries / ICP <span style="font-weight:400;color:var(--muted);font-size:12px">(from Industry tab)</span></h3>
+      <h3>Industries <span style="font-weight:400;color:var(--muted);font-size:12px">(from Industry tab)</span></h3>
       <div class="hint">Keywords pointing at non-ICP audiences get flagged.</div>
       <div class="taginput"><input type="text" id="indIn" placeholder="e.g. Hospital systems"><button class="btn sec sm" id="indAdd">Add</button></div>
       <div class="tags" id="indTags"></div>
@@ -429,16 +441,7 @@ VIEWS.setup=function(){
     </div>
   </div>
 
-  <div class="card">
-    <h3>Session</h3>
-    <div class="hint">Your work auto-saves in this browser. Export a file to back up or move machines.</div>
-    <div class="row-actions">
-      <button class="btn sec sm" id="expSess">⤓ Export session file</button>
-      <button class="btn sec sm" id="impSess">⤒ Import session file</button>
-      <input type="file" id="sessFile" accept=".json" style="display:none">
-      <button class="btn ghost sm" id="clrSess" style="color:var(--red)">Start over</button>
-    </div>
-  </div>`:''}
+  `:''}
 
   <div class="row-actions" style="margin-top:6px">
     <button class="btn" id="next" ${loaded?'':'disabled'}>Continue to Shortlist →</button>
@@ -616,6 +619,7 @@ function evalRow(r){
   }
   if(R.jobs && JOBS_RX.test(t)) hit.push('Job / education-seeker intent');
   if(R.format && FORMAT_RX.test(t)) hit.push('Wrong-format / login/app intent');
+  if(R.org && ORG_RX.test(t)) hit.push('Likely brand / organisation name');
   if(R.lowrel){const n=parseFloat(r.rel);if(!isNaN(n)&&n<=STATE.lowRelThreshold)hit.push('Low relevance score ('+r.rel+')');}
   // identifier-driven rejection
   const idRej=Object.keys(STATE.identifiers).filter(w=>STATE.identifiers[w]==='rej'||STATE.identifiers[w]==='brand'||STATE.identifiers[w]==='loc');
@@ -1071,13 +1075,14 @@ function renderShort(mode){
         Pending only
       </label>
       <input type="text" id="gsrch" placeholder="Find keyword / identifier…" value="${esc(STATE.groupSearch)}" style="width:200px">
-      <button class="btn sec sm" id="serpAll" title="Fetch top-10 rankings for all PENDING keywords and auto-set ICP from who ranks">⌕ Rankings: all pending${(()=>{const n=STATE.rows.filter(r=>r.status==='pending'&&!r.serpDone).length;return n?' ('+n+')':'';})()}</button>
+      ${STATE.serpRunning
+        ? `<span style="font-size:12.5px;font-weight:600;color:var(--accent)">⏳ Fetching rankings <span id="serpProg">…</span></span> <button class="btn sec sm" id="serpStop">Stop</button>`
+        : (()=>{const n=STATE.rows.filter(r=>r.status==='pending'&&!r.serpDone).length; return n?`<button class="btn sec sm" id="serpAll" title="Fetch top-10 rankings for pending keywords (auto-runs when deployed)">⌕ Get rankings (${n})</button>`:`<span style="font-size:12px;color:var(--green);font-weight:600">✓ Rankings fetched</span>`;})()}
       <span style="flex:1"></span>
       <span style="color:var(--muted);font-size:12px">${icpVisible.length} profiles · ${all.length} topics${pendOnly?` · ${all.filter(r=>r.status!=='pending').length} decided (hidden)`:''}</span>
       <button class="btn sm" id="export">⤓ Export CSV</button>
     </div>
     <div style="padding:8px 14px 12px">
-      <div class="banner" style="margin:0 0 12px">👤 <b>Review by customer profile (ICP), then drill to topics.</b> Run <b>Rankings: all pending</b> first (sets ICP from who ranks). For each profile: <b>✓ Approve all</b> if it's the buyer, <b>✕ Reject all</b> if not, or <b>View identifiers</b> to refine. Turn off <b>Pending only</b> to see every topic.</div>
       ${icpVisible.length?icpVisible.map(g=>{
         const open=!!STATE.groupExpanded['ICP:'+g.key];
         const sample=(pendOnly?g.rows.filter(r=>r.status==='pending'):g.rows).slice().sort((a,b)=>b.vol-a.vol).slice(0,2).map(r=>r.kw);
@@ -1085,12 +1090,12 @@ function renderShort(mode){
         return `
         <div class="grp">
           <div class="grphead">
+            <button class="caret gexp" data-k="ICP:${esc(g.key)}" title="${open?'Hide':'View'} identifiers">${open?'▾':'▸'}</button>
             <span class="grpchips"><span class="ichip" style="background:var(--blue-soft);color:var(--blue)">${esc(g.key)}</span></span>
             <span class="grpcounts">${gcount(g)}</span>
             <span class="grpbtns">
               <button class="btn sec sm icpact" data-k="${esc(g.key)}" data-a="select" ${g.pen?'':'disabled'}>✓ Approve all</button>
               <button class="btn sec sm icpact" data-k="${esc(g.key)}" data-a="reject" ${g.pen?'':'disabled'}>✕ Reject all</button>
-              <button class="btn ghost sm gexp" data-k="ICP:${esc(g.key)}">${open?'Hide':'View identifiers'}</button>
               ${(g.sel||g.rej)?`<button class="btn ghost sm icpact" data-k="${esc(g.key)}" data-a="reset">Reset</button>`:''}
             </span>
           </div>
@@ -1098,12 +1103,12 @@ function renderShort(mode){
           ${open?`<div class="grpbody">${subs.length?subs.map(sg=>{const so=!!STATE.groupExpanded['ICPID:'+g.key+'||'+sg.key];return `
             <div class="modrow">
               <div class="modhead">
-                <span class="grpchips"><span class="plus">↳</span><span class="ichip">${esc(sg.type)}</span>${(sg.mods||[]).map(m=>`<span class="plus">+</span><span class="ichip mod">${esc(m)}</span>`).join('')}</span>
+                <button class="caret gexp" data-k="ICPID:${esc(g.key)}||${esc(sg.key)}" title="${so?'Hide':'View'} topics">${so?'▾':'▸'}</button>
+                <span class="grpchips"><span class="ichip">${esc(sg.type)}</span>${(sg.mods||[]).map(m=>`<span class="plus">+</span><span class="ichip mod">${esc(m)}</span>`).join('')}</span>
                 <span class="grpcounts">${gcount(sg)}</span>
                 <span class="grpbtns">
                   <button class="btn sec sm icpgact" data-p="${esc(g.key)}" data-k="${esc(sg.key)}" data-a="select" ${sg.pen?'':'disabled'}>✓ Keep all</button>
                   <button class="btn sec sm icpgact" data-p="${esc(g.key)}" data-k="${esc(sg.key)}" data-a="reject" ${sg.pen?'':'disabled'}>✕ Reject all</button>
-                  <button class="btn ghost sm gexp" data-k="ICPID:${esc(g.key)}||${esc(sg.key)}">${so?'Hide':'View'}</button>
                   ${(sg.sel||sg.rej)?`<button class="btn ghost sm icpgact" data-p="${esc(g.key)}" data-k="${esc(sg.key)}" data-a="reset">Reset</button>`:''}
                 </span>
               </div>
@@ -1128,6 +1133,12 @@ function renderShort(mode){
   if($('#toBlog'))$('#toBlog').onclick=()=>{STATE.phase='Blog';STATE.page=0;render();};
   if($('#export'))$('#export').onclick=exportCsv;
   if($('#serpAll'))$('#serpAll').onclick=()=>fetchSerpBulk(STATE.rows.filter(r=>r.status==='pending'));
+  if($('#serpStop'))$('#serpStop').onclick=()=>{STATE.serpCancel=true;};
+  // auto-fetch rankings once per page load (only where a key or the /api proxy is available)
+  const onServer = /^https?:$/.test(location.protocol) && !/^(localhost|127\.|0\.0\.0\.0|\[|$)/.test(location.hostname);
+  if((STATE.config.serperKey||onServer) && !STATE.serpAuto && !STATE.serpRunning && STATE.rows.some(r=>r.status==='pending'&&!r.serpDone)){
+    STATE.serpAuto=true; setTimeout(()=>fetchSerpBulk(STATE.rows.filter(r=>r.status==='pending'), true), 60);
+  }
   if($('#icpNext'))$('#icpNext').onclick=()=>go(2);
   if($('#gpend'))$('#gpend').onchange=e=>{STATE.groupPendingOnly=e.target.checked;render();};
   if($('#gsrch'))$('#gsrch').oninput=e=>{STATE.groupSearch=e.target.value;render();};
@@ -1162,17 +1173,22 @@ async function fetchSerp(r){
   if(!r.profileEdited){ const p=classifyProfileFromSerp(r); if(p) r.profile=p; }   // decide ICP from rankings
 }
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-async function fetchSerpBulk(rows){
+async function fetchSerpBulk(rows, auto){
   rows=rows.filter(r=>!r.serpDone && r.status!=='rejected');   // never spend calls on rejected topics
-  if(!rows.length){toast('Nothing to fetch (rejected topics are skipped)');return;}
-  if(rows.length>60 && !confirm(`Fetch top-10 rankings for ${rows.length} keywords? That's ${rows.length} Serper calls.`))return;
+  if(!rows.length){ if(!auto)toast('Nothing to fetch (rejected topics are skipped)'); return; }
+  if(STATE.serpRunning)return;
+  STATE.serpRunning=true; STATE.serpCancel=false; render();   // show the live status bar
   let done=0,err=0;
   for(const r of rows){
+    if(STATE.serpCancel)break;
     try{ await fetchSerp(r); }catch(e){ err++; if(err===1)toast('SERP error: '+e.message); }
-    done++; if(done%5===0||done===rows.length){toast('Rankings '+done+'/'+rows.length); renderStats();}
+    done++;
+    const pe=document.getElementById('serpProg'); if(pe)pe.textContent=done+'/'+rows.length;
+    if(done%10===0)renderStats();
     await sleep(300);
   }
-  saveState(); toast('Rankings done · '+done+' fetched'+(err?' · '+err+' errors':'')); render();
+  STATE.serpRunning=false;
+  saveState(); toast('Rankings '+(STATE.serpCancel?'stopped at '+done:'done · '+done+' fetched')+(err?' · '+err+' errors':'')); render();
 }
 function exportCsv(){
   const cols=['Primary Keyword','Page Type','Topic','Total Search Volume','Relevance Score','Service/Product Type','Modifier','Customer Profile','Decision','Approved','Rejected','Reason'];
@@ -1200,7 +1216,11 @@ function exportCsv(){
 /* ============================ PERSISTENCE ============================ */
 const LS_KEY='topicShortlist.v1';
 function saveState(){ try{ if(!STATE.rows.length)return; localStorage.setItem(LS_KEY, JSON.stringify(STATE)); }catch(e){} }
-function loadState(){ try{ const s=localStorage.getItem(LS_KEY); if(!s)return false; Object.assign(STATE, JSON.parse(s)); return !!(STATE.rows&&STATE.rows.length); }catch(e){return false;} }
+function loadState(){ try{ const s=localStorage.getItem(LS_KEY); if(!s)return false; const p=JSON.parse(s);
+  const rules={...STATE.rules, ...(p.rules||{})};      // merge so new default flags (e.g. org) survive an old session
+  const config={...STATE.config, ...(p.config||{})};
+  Object.assign(STATE, p); STATE.rules=rules; STATE.config=config;
+  return !!(STATE.rows&&STATE.rows.length); }catch(e){return false;} }
 function clearSession(){ if(confirm('Start over? This clears the loaded AKR and all decisions on this device.')){ localStorage.removeItem(LS_KEY); STATE.rows=[]; STATE.step=0; location.reload(); } }
 function exportSession(){
   const blob=new Blob([JSON.stringify(STATE)],{type:'application/json'});
@@ -1219,6 +1239,7 @@ document.addEventListener('visibilitychange', ()=>{ if(document.hidden) saveStat
 
 /* ============================ BOOT ============================ */
 loadState();
+STATE.serpRunning=false; STATE.serpCancel=false; STATE.serpAuto=false;   // reset transient rankings flags each load
 render();
 </script>
 </body>
