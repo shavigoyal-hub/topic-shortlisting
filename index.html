@@ -111,6 +111,7 @@
   .ichip{display:inline-block;background:var(--accent-soft);color:var(--accent-d);border-radius:6px;padding:1px 6px;font-size:10.5px;font-weight:600;margin:1px 3px 1px 0;white-space:nowrap}
   .ichip.mod{background:var(--amber-soft);color:var(--amber)}
   .ichip.fam{background:var(--navy);color:#fff;font-weight:700}
+  .ichip.aud{background:var(--blue-soft);color:var(--blue);font-style:italic}
   /* grid view */
   .gridtbl{border-collapse:separate;border-spacing:0;font-size:12px}
   .gridtbl th,.gridtbl td{border:1px solid var(--line);padding:6px 8px;text-align:center;white-space:nowrap}
@@ -262,8 +263,9 @@ const STATE = {
   groupSearch:'',
   groupPendingOnly:true,        // hide fully-decided combinations
   serpRunning:false, serpCancel:false, serpAuto:false,   // auto rankings fetch state (transient)
-  viewMode:'grid',              // grid (A) | filters (B) | profiles (C) | clusters (D)
+  viewMode:'grid',              // grid (A) | filters (B) | profiles (C) | clusters (D) | table (E)
   fTypes:[], fAud:[],           // filters view: selected service types / audiences
+  gridCell:null,                // {f,p} currently-opened grid cell
 };
 const PROFILE_ORDER=['B2B / Corporate','Healthcare / Clinical','Aspiring Practitioner','Athlete / Sports','Local Seeker','Individual / Consumer','Researcher / Student','General','Unclassified'];
 function profileSort(a,b){const ia=PROFILE_ORDER.indexOf(a),ib=PROFILE_ORDER.indexOf(b);return (ia<0?98:ia)-(ib<0?98:ib)||a.localeCompare(b);}
@@ -975,7 +977,7 @@ function buildProfileGroups(rows){
   return arr;
 }
 function applyProfileGroup(profile,key,action){
-  const rows=STATE.rows.filter(r=>r.pageType===STATE.phase && r.profile===profile && (r.family||'Other')===key);
+  const rows=STATE.rows.filter(r=>r.pageType===STATE.phase && r.profile===profile && (r.combo||'(no identifier)')===key);
   let n=0;
   rows.forEach(r=>{
     if(action==='select'){ if(r.status==='pending'){r.status='selected';r.reason='ICP '+profile+' · '+key;r.manual=true;n++;} }
@@ -1126,10 +1128,12 @@ function renderShort(mode){
       <button class="btn sm" id="export">⤓ Export CSV</button>
     </div>
     <div style="padding:8px 14px 12px">
-      ${shownG.length?shownG.map(g=>{const open=!!STATE.groupExpanded[g.key];return `
+      ${shownG.length?shownG.map(g=>{const open=!!STATE.groupExpanded[g.key];
+        const auds=[...new Set(g.rows.map(r=>r.profile))].sort((a,b)=>g.rows.filter(r=>r.profile===b).length-g.rows.filter(r=>r.profile===a).length).slice(0,2);
+        return `
         <div class="grp">
           <div class="grphead">
-            <span class="grpchips"><span class="ichip">${esc(g.type)}</span>${(g.mods||[]).map(m=>`<span class="plus">+</span><span class="ichip mod">${esc(m)}</span>`).join('')}</span>
+            <span class="grpchips"><span class="ichip">${esc(g.type)}</span>${(g.mods||[]).map(m=>`<span class="plus">+</span><span class="ichip mod">${esc(m)}</span>`).join('')}${auds.map(a=>`<span class="ichip aud">${esc(a)}</span>`).join('')}</span>
             <span class="grpcounts">${gcount(g)}</span>
             <span class="grpbtns">
               <button class="btn sec sm gact" data-k="${esc(g.key)}" data-a="select" ${g.pen?'':'disabled'}>✓ Keep all</button>
@@ -1166,10 +1170,10 @@ function renderShort(mode){
       <button class="btn sm" id="export">⤓ Export CSV</button>
     </div>
     <div style="padding:8px 14px 12px">
-      <div style="margin-bottom:8px;font-size:11.5px;color:var(--muted)"><span class="ichip fam">family</span> <span class="ichip">type</span> <span class="ichip mod">modifier</span></div>
+      <div style="margin-bottom:8px;font-size:11.5px;color:var(--muted)"><span class="ichip">type</span> <span class="ichip mod">modifier</span></div>
       ${icpVisible.length?icpVisible.map(g=>{
         const open=!!STATE.groupExpanded['ICP:'+g.key];
-        let subs=[]; if(open){ subs=buildFamilies(g.rows); if(pendOnly)subs=subs.filter(s=>s.pen>0); subs.sort((a,b)=>(pendOnly?b.pen-a.pen:b.total-a.total)||b.total-a.total); }
+        let subs=[]; if(open){ subs=buildGroups(g.rows); if(pendOnly)subs=subs.filter(s=>s.pen>0); subs.sort((a,b)=>(pendOnly?b.pen-a.pen:b.total-a.total)||b.total-a.total); }
         return `
         <div class="grp">
           <div class="grphead">
@@ -1183,14 +1187,11 @@ function renderShort(mode){
             </span>
           </div>
           ${open?`<div class="grpbody">${subs.length?subs.map(sg=>{const so=!!STATE.groupExpanded['ICPID:'+g.key+'||'+sg.key];
-            const fr=pendOnly?sg.rows.filter(r=>r.status==='pending'):sg.rows;
-            const ftypes=[...new Set(fr.flatMap(r=>r.typeIds))].filter(t=>norm(t)!==norm(sg.key)).slice(0,4);
-            const fmods=[...new Set(fr.flatMap(r=>r.modIds))].slice(0,6);
             return `
             <div class="modrow">
               <div class="modhead">
                 <button class="caret gexp" data-k="ICPID:${esc(g.key)}||${esc(sg.key)}" title="${so?'Hide':'View'} topics">${so?'▾':'▸'}</button>
-                <span class="grpchips"><span class="ichip fam">${esc(sg.key)}</span>${ftypes.map(t=>`<span class="ichip">${esc(t)}</span>`).join('')}${fmods.map(m=>`<span class="ichip mod">${esc(m)}</span>`).join('')}</span>
+                <span class="grpchips"><span class="ichip">${esc(sg.type)}</span>${(sg.mods||[]).map(m=>`<span class="plus">+</span><span class="ichip mod">${esc(m)}</span>`).join('')}</span>
                 <span class="grpcounts">${gcount(sg)}</span>
                 <span class="grpbtns">
                   <button class="btn sec sm icpgact" data-p="${esc(g.key)}" data-k="${esc(sg.key)}" data-a="select" ${sg.pen?'':'disabled'}>✓ Keep all</button>
@@ -1219,9 +1220,12 @@ function renderShort(mode){
     <div class="scrollx" style="padding:4px 12px 12px">
       <table class="gridtbl">
         <thead><tr><th class="gcorner">Type ＼ Audience</th>${profList.map(p=>`<th class="gcol">${esc(p)}<div class="ghbtns"><button class="gcolact" data-p="${esc(p)}" data-a="select" title="Keep all ${esc(p)}">✓</button><button class="gcolact" data-p="${esc(p)}" data-a="reject" title="Reject all ${esc(p)}">✕</button></div></th>`).join('')}</tr></thead>
-        <tbody>${famList.map(f=>`<tr><th class="grow">${esc(f)}<span class="ghbtns"><button class="growact" data-f="${esc(f)}" data-a="select" title="Keep all ${esc(f)}">✓</button><button class="growact" data-f="${esc(f)}" data-a="reject" title="Reject all ${esc(f)}">✕</button></span></th>${profList.map(p=>{const s=cstat(cellRows(f,p));if(!s.total)return '<td class="gcell empty">·</td>';return `<td class="gcell ${s.sel&&!s.pen?'kept':''} ${s.pen?'haspen':''}" data-f="${esc(f)}" data-p="${esc(p)}" title="Keep ${s.pen} pending as a page">${s.pen?`<b>${s.pen}</b>`:''}${s.sel?`<span class="gsel">✓${s.sel}</span>`:''}${!s.pen&&!s.sel?`<span style="color:var(--muted)">${s.rej}✕</span>`:''}</td>`;}).join('')}</tr>`).join('')}</tbody>
+        <tbody>${famList.map(f=>`<tr><th class="grow">${esc(f)}<span class="ghbtns"><button class="growact" data-f="${esc(f)}" data-a="select" title="Keep all ${esc(f)}">✓</button><button class="growact" data-f="${esc(f)}" data-a="reject" title="Reject all ${esc(f)}">✕</button></span></th>${profList.map(p=>{const s=cstat(cellRows(f,p));if(!s.total)return '<td class="gcell empty">·</td>';const seln=STATE.gridCell&&STATE.gridCell.f===f&&STATE.gridCell.p===p;return `<td class="gcell ${s.sel&&!s.pen?'kept':''} ${s.total?'haspen':''} ${seln?'sel':''}" data-f="${esc(f)}" data-p="${esc(p)}" title="View topics">${s.pen?`<b>${s.pen}</b>`:''}${s.sel?`<span class="gsel">✓${s.sel}</span>`:''}${!s.pen&&!s.sel?`<span style="color:var(--muted)">${s.rej}✕</span>`:''}</td>`;}).join('')}</tr>`).join('')}</tbody>
       </table>
     </div>
+    ${STATE.gridCell?(()=>{const f=STATE.gridCell.f,p=STATE.gridCell.p,rows=cellRows(f,p),s=cstat(rows);return `<div style="border-top:1px solid var(--line);padding:10px 14px 14px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><span class="ichip">${esc(f)}</span><span class="ichip aud">${esc(p)}</span><span class="muted" style="font-size:12px">${s.pen} to review · ${s.sel}✓ · ${s.rej}✕</span><span style="flex:1"></span><button class="btn sec sm gcellact" data-f="${esc(f)}" data-p="${esc(p)}" data-a="select" ${s.pen?'':'disabled'}>✓ Keep all</button><button class="btn sec sm gcellact" data-f="${esc(f)}" data-p="${esc(p)}" data-a="reject" ${s.pen?'':'disabled'}>✕ Reject all</button></div>
+      ${topicList(pendOnly?rows.filter(r=>r.status==='pending'):rows)}</div>`;})():'<div class="muted" style="padding:10px 14px;font-size:12px">Click any cell to see its topics.</div>'}
   </div>`;
 
   // ---------- B · FILTERS  (two checklists) ----------
@@ -1236,17 +1240,43 @@ function renderShort(mode){
       <div><div style="font-weight:700;margin-bottom:8px">Service types we offer</div>${famList.map(f=>`<label class="chk"><input type="checkbox" class="ftype" value="${esc(f)}" ${STATE.fTypes.includes(f)?'checked':''}> <span>${esc(f)}</span> <span class="muted">(${famCnt(f)})</span></label>`).join('')||'<span class="muted">none</span>'}</div>
       <div><div style="font-weight:700;margin-bottom:8px">Audiences we serve (ICP)</div>${profList.map(p=>`<label class="chk"><input type="checkbox" class="faud" value="${esc(p)}" ${STATE.fAud.includes(p)?'checked':''}> <span>${esc(p)}</span> <span class="muted">(${profCnt(p)})</span></label>`).join('')}</div>
     </div>
-    <div class="row-actions" style="padding:0 14px 16px">
+    <div class="row-actions" style="padding:0 14px 14px">
       <button class="btn" id="applyFilters">Keep ${matchN} matching · reject the rest</button>
       <span class="muted" style="font-size:12.5px">Matches = service type ✓ <b>and</b> audience ✓. Empty list = “any”.</span>
+    </div>
+    <div style="border-top:1px solid var(--line);padding:8px 14px 14px">
+      <div class="muted" style="font-size:12px;margin-bottom:4px">${matchN} matching topics${(STATE.fTypes.length||STATE.fAud.length)?'':' (no filters = all pending)'}</div>
+      ${topicList(all.filter(r=>r.status==='pending'&&matchPred(r)).slice(0,200))}
+    </div>
+  </div>`;
+
+  // ---------- E · TABLE  (type & modifier as columns, A→Z) ----------
+  const eRows=(pendOnly?all.filter(r=>r.status==='pending'):all).slice()
+    .sort((a,b)=>(a.comboType||'~').localeCompare(b.comboType||'~')||(a.comboMods.join(' ')||'~').localeCompare(b.comboMods.join(' ')||'~')||b.vol-a.vol);
+  const tableBodyE=`
+  <div class="tablewrap">
+    <div class="tbar"><b style="font-size:13px">Sorted A→Z by Type, then Modifier</b><span style="flex:1"></span>${serpStatus}<button class="btn sm" id="export">⤓ Export CSV</button></div>
+    <div class="scrollx">
+      <table>
+        <thead><tr><th>Type</th><th>Modifier</th><th>Audience</th><th>Keyword — Topic</th><th>Vol</th><th>Decide</th></tr></thead>
+        <tbody>${eRows.length?eRows.map(r=>`<tr class="${r.status==='rejected'?'rejected':r.status==='selected'?'selected':''}">
+          <td><span class="ichip">${esc(r.comboType)}</span></td>
+          <td>${r.comboMods.map(m=>`<span class="ichip mod">${esc(m)}</span>`).join('')||'<span class="muted">—</span>'}</td>
+          <td><span class="ichip aud">${esc(r.profile)}</span></td>
+          <td><span class="kw">${esc(r.kw)}</span>${r.topic?`<span class="muted" style="font-size:11.5px"> — ${esc(r.topic)}</span>`:''}</td>
+          <td>${r.vol.toLocaleString()}</td>
+          <td><span class="miniact"><button class="y" data-id="${r.id}" data-act="selected">Keep</button><button class="n" data-id="${r.id}" data-act="rejected">Reject</button></span></td>
+        </tr>`).join(''):'<tr><td colspan="6"><div class="empty">No topics.</div></td></tr>'}</tbody>
+      </table>
     </div>
   </div>`;
 
   const vm=STATE.viewMode;
-  const blurb={grid:'Each cell is a candidate page (a service type for an audience). Click cells to keep, or use the row/column ✓✕.',
+  const blurb={grid:'Each cell is a candidate page (a service type for an audience). Click a cell to see its topics; use row/column ✓✕ to bulk decide.',
     filters:'Tick the service types and audiences that fit the client. Everything matching both becomes the shortlist.',
-    profiles:'Drill ICP → identifier → topic and approve/reject at any level.',
-    clusters:'Each row is a Type + Modifier cluster (a page candidate). Keep or reject whole clusters.'}[vm];
+    profiles:'Drill ICP → type+modifier → topic and approve/reject at any level.',
+    clusters:'Each row is a Type + Modifier cluster (a page candidate), with its audience. Keep or reject whole clusters.',
+    table:'Flat table sorted A→Z by Type then Modifier, with the audience alongside.'}[vm];
   $('#view').innerHTML=`
   <div class="pagehead"><h2>Shortlist — Service / Product <span style="font-weight:400;color:var(--muted);font-size:14px">→ pages to build</span></h2><p>${blurb}</p></div>
   <div class="phasetabs" style="margin-bottom:14px">
@@ -1254,11 +1284,13 @@ function renderShort(mode){
     <button class="vtab ${vm==='filters'?'on':''}" data-vm="filters">B · Filters</button>
     <button class="vtab ${vm==='profiles'?'on':''}" data-vm="profiles">C · Profiles</button>
     <button class="vtab ${vm==='clusters'?'on':''}" data-vm="clusters">D · Clusters</button>
+    <button class="vtab ${vm==='table'?'on':''}" data-vm="table">E · Table</button>
   </div>
-  ${vm==='grid'?gridBody:vm==='filters'?filtersBody:vm==='profiles'?icpBody:groupsBody}`;
+  ${vm==='grid'?gridBody:vm==='filters'?filtersBody:vm==='profiles'?icpBody:vm==='table'?tableBodyE:groupsBody}`;
 
   $('#view').querySelectorAll('.vtab').forEach(b=>b.onclick=()=>{STATE.viewMode=b.dataset.vm;render();});
-  $('#view').querySelectorAll('.gcell.haspen').forEach(c=>c.onclick=()=>decide(r=>r.family===c.dataset.f&&r.profile===c.dataset.p,'select','Page: '+c.dataset.f+' / '+c.dataset.p));
+  $('#view').querySelectorAll('.gcell.haspen').forEach(c=>c.onclick=()=>{STATE.gridCell={f:c.dataset.f,p:c.dataset.p};render();});
+  $('#view').querySelectorAll('.gcellact').forEach(b=>b.onclick=()=>decide(r=>r.family===b.dataset.f&&r.profile===b.dataset.p,b.dataset.a,'Page: '+b.dataset.f+' / '+b.dataset.p));
   $('#view').querySelectorAll('.growact').forEach(b=>b.onclick=()=>decide(r=>r.family===b.dataset.f,b.dataset.a,'Type: '+b.dataset.f));
   $('#view').querySelectorAll('.gcolact').forEach(b=>b.onclick=()=>decide(r=>r.profile===b.dataset.p,b.dataset.a,'Audience: '+b.dataset.p));
   $('#view').querySelectorAll('.ftype').forEach(c=>c.onchange=()=>{const v=c.value;STATE.fTypes=c.checked?[...STATE.fTypes,v]:STATE.fTypes.filter(x=>x!==v);render();});
@@ -1284,9 +1316,9 @@ function renderShort(mode){
   $('#view').querySelectorAll('.gact').forEach(b=>b.onclick=()=>applyGroup(b.dataset.k, b.dataset.a));
   $('#view').querySelectorAll('.icpact').forEach(b=>b.onclick=()=>applyProfile(b.dataset.k, b.dataset.a));
   $('#view').querySelectorAll('.icpgact').forEach(b=>b.onclick=()=>applyProfileGroup(b.dataset.p, b.dataset.k, b.dataset.a));
-  $('#view').querySelectorAll('.grpitem .miniact button').forEach(b=>b.onclick=()=>{
+  $('#view').querySelectorAll('.miniact button[data-id]').forEach(b=>b.onclick=()=>{
     const r=STATE.rows.find(x=>x.id==b.dataset.id); r.status=b.dataset.act; r.manual=true;
-    if(b.dataset.act==='selected'&&/^Group|ICP|identifier|brand|Location|Zero|Free|Near|Informational|Job|Wrong|relevance|person/i.test(r.reason))r.reason='';
+    if(b.dataset.act==='selected'&&/^Group|ICP|Page|Shortlisted|Out of scope|identifier|brand|Location|Zero|Free|Near|Informational|Job|Wrong|relevance|person|Other/i.test(r.reason))r.reason='';
     renderStats();render();
   });
 }
