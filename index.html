@@ -319,20 +319,18 @@ const DOMAIN_SIGNALS=[
   {profile:'Researcher / Student',  rx:/(researchgate|jstor|scholar\.google|sciencedirect|springer|frontiersin|pubmed)/},
 ];
 function isHomepage(u){ try{return new URL(u).pathname.replace(/\/+$/,'')==='';}catch(e){return false;} }
+/* read the ICP from WHAT THE RANKING PAGES ARE ABOUT — score their titles+snippets with the profile lexicon */
 function classifyProfileFromSerp(r){
-  if(!r.serpDone||!r.serp.length)return null;
-  const score={}; let meaningful=0;
-  r.serp.forEach(u=>{const h=hostOf(u);
-    if(IGNORE_DOMAINS.test(h)||isHomepage(u))return;   // skip generic/social/forum/video + homepages (navigational, not intent)
-    meaningful++;
-    DOMAIN_SIGNALS.forEach(d=>{ if(d.rx.test(h)) score[d.profile]=(score[d.profile]||0)+1; });});
-  const ranked=Object.entries(score).sort((a,b)=>b[1]-a[1]);
-  if(!ranked.length) return null;
-  const top=ranked[0][1], second=ranked[1]?ranked[1][1]:0;
-  // rankings drive the ICP: one clear meaningful domain (generic/social/homepages already excluded) is enough
-  return (top>second) ? ranked[0][0] : null;
+  if(!r.serpDone) return null;
+  const text=(r.serpTitles||[]).join('  ').toLowerCase();
+  if(!text.trim()) return null;
+  let best=null,bn=0;
+  for(const p of PROFILES){ const m=text.match(p.rxg); const n=m?m.length:0; if(n>bn){bn=n;best=p.name;} }
+  return bn>0 ? best : null;
 }
-function classifyProfiles(){ STATE.rows.forEach(r=>{ if(!r.profileEdited) r.profile=classifyProfile(r); }); }
+function classifyProfiles(){ STATE.rows.forEach(r=>{ if(r.profileEdited)return;
+  r.profile = r.serpDone ? (classifyProfileFromSerp(r)||classifyProfile(r)) : 'Unclassified';   // classify only once rankings are in
+}); }
 function profileOptions(){ return [...PROFILES.map(p=>p.name), ...STATE.config.industries, 'General']; }
 
 /* ============================ RENDER SHELL ============================ */
@@ -583,7 +581,7 @@ function ingest(aoa){
       topic:(a[ci.topic]||'').toString().trim(),
       sec:(a[ci.sec]||'').toString().trim(),   // parsed but intentionally ignored everywhere
       vol, rel:(a[ci.rel]||'').toString().trim(),
-      status:'pending', reason:'', autoReason:'', manual:false, idents:[], typeIds:[], modIds:[], combo:'', family:'', profile:'', profileEdited:false, serp:[], serpDone:false,
+      status:'pending', reason:'', autoReason:'', manual:false, idents:[], typeIds:[], modIds:[], combo:'', family:'', profile:'', profileEdited:false, serp:[], serpTitles:[], serpDone:false,
     });
   }
   STATE.rows=out;
@@ -1198,8 +1196,12 @@ async function fetchSerp(r){
   }
   if(!res.ok) throw new Error('Serper '+res.status+(key?'':' (set SERPER_KEY in Vercel, or paste a key in Setup)'));
   const j=await res.json();
-  r.serp=(j.organic||[]).slice(0,10).map(o=>o.link||''); r.serpDone=true;
-  if(!r.profileEdited){ const p=classifyProfileFromSerp(r); if(p) r.profile=p; }   // decide ICP from rankings
+  const items=(j.organic||[]).slice(0,10);
+  r.serp=items.map(o=>o.link||'');
+  // titles + snippets of the MEANINGFUL ranking pages (skip generic/social/forum/video + homepages)
+  r.serpTitles=items.filter(o=>{const h=hostOf(o.link||'');return !IGNORE_DOMAINS.test(h)&&!isHomepage(o.link||'');}).map(o=>((o.title||'')+' '+(o.snippet||'')).trim());
+  r.serpDone=true;
+  if(!r.profileEdited) r.profile = classifyProfileFromSerp(r) || classifyProfile(r);   // ICP from what the ranking pages are about
 }
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function fetchSerpBulk(rows, auto){
