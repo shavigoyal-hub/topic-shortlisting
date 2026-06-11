@@ -110,6 +110,7 @@
   .pill.pend{background:#eef0f4;color:var(--muted)}
   .ichip{display:inline-block;background:var(--accent-soft);color:var(--accent-d);border-radius:6px;padding:1px 6px;font-size:10.5px;font-weight:600;margin:1px 3px 1px 0;white-space:nowrap}
   .ichip.mod{background:var(--amber-soft);color:var(--amber)}
+  .ichip.fam{background:var(--navy);color:#fff;font-weight:700}
   /* groups view */
   .grp{border:1px solid var(--line);border-radius:10px;margin:8px 0;overflow:hidden;background:#fff}
   .grphead{display:flex;align-items:center;gap:12px;padding:10px 12px;flex-wrap:wrap}
@@ -1078,7 +1079,7 @@ function renderShort(mode){
   const gcount=g=>pendOnly
     ? `<b>${g.pen}</b> to review${g.total>g.pen?` <span style="color:var(--muted);font-weight:400">of ${g.total} · ${g.rej?g.rej+' rejected':''}${g.rej&&g.sel?', ':''}${g.sel?g.sel+' kept':''} hidden</span>`:''}`
     : `<b>${g.total}</b> topics · <span style="color:var(--green)">${g.sel}✓</span> <span style="color:var(--red)">${g.rej}✕</span> <span style="color:var(--amber)">${g.pen} pending</span>`;
-  const topicList=rows=>`<div class="grplist">${rows.slice().sort((a,b)=>b.vol-a.vol).map(r=>`<div class="grpitem">${pendOnly?'':`<span class="pill ${r.status==='selected'?'sel':r.status==='rejected'?'rej':'pend'}">${r.status}</span>`}<span style="flex:1;min-width:0"><span class="kw">${esc(r.kw)}</span>${r.topic?`<span style="color:var(--muted);font-size:11.5px"> — ${esc(r.topic)}</span>`:''}<span class="idcell" style="display:block">${r.typeIds.map(w=>`<span class="ichip">${esc(w)}</span>`).join('')}${r.modIds.map(w=>`<span class="ichip mod">${esc(w)}</span>`).join('')}</span></span><span class="gv">${r.vol.toLocaleString()}</span><span class="miniact"><button class="y" data-id="${r.id}" data-act="selected">Keep</button><button class="n" data-id="${r.id}" data-act="rejected">Reject</button></span></div>`).join('')}</div>`;
+  const topicList=rows=>`<div class="grplist">${rows.slice().sort((a,b)=>(a.combo||'').localeCompare(b.combo||'')||b.vol-a.vol).map(r=>`<div class="grpitem">${pendOnly?'':`<span class="pill ${r.status==='selected'?'sel':r.status==='rejected'?'rej':'pend'}">${r.status}</span>`}<span class="kw" style="flex:1;min-width:0">${esc(r.kw)}${r.topic?`<span style="color:var(--muted);font-weight:400;font-size:11.5px"> — ${esc(r.topic)}</span>`:''}</span><span class="gv">${r.vol.toLocaleString()}</span><span class="miniact"><button class="y" data-id="${r.id}" data-act="selected">Keep</button><button class="n" data-id="${r.id}" data-act="rejected">Reject</button></span></div>`).join('')}</div>`;
   const groupsBody=`
   <div class="tablewrap">
     <div class="tbar">
@@ -1132,6 +1133,7 @@ function renderShort(mode){
       <button class="btn sm" id="export">⤓ Export CSV</button>
     </div>
     <div style="padding:8px 14px 12px">
+      <div style="margin-bottom:8px;font-size:11.5px;color:var(--muted)"><span class="ichip fam">family</span> <span class="ichip">type</span> <span class="ichip mod">modifier</span></div>
       ${icpVisible.length?icpVisible.map(g=>{
         const open=!!STATE.groupExpanded['ICP:'+g.key];
         let subs=[]; if(open){ subs=buildFamilies(g.rows); if(pendOnly)subs=subs.filter(s=>s.pen>0); subs.sort((a,b)=>(pendOnly?b.pen-a.pen:b.total-a.total)||b.total-a.total); }
@@ -1149,13 +1151,13 @@ function renderShort(mode){
           </div>
           ${open?`<div class="grpbody">${subs.length?subs.map(sg=>{const so=!!STATE.groupExpanded['ICPID:'+g.key+'||'+sg.key];
             const fr=pendOnly?sg.rows.filter(r=>r.status==='pending'):sg.rows;
-            const ftypes=[...new Set(fr.flatMap(r=>r.typeIds))].filter(t=>norm(t)!==norm(sg.key)).slice(0,5);
-            const fmods=[...new Set(fr.flatMap(r=>r.modIds))].slice(0,8);
+            const ftypes=[...new Set(fr.flatMap(r=>r.typeIds))].filter(t=>norm(t)!==norm(sg.key)).slice(0,4);
+            const fmods=[...new Set(fr.flatMap(r=>r.modIds))].slice(0,6);
             return `
             <div class="modrow">
               <div class="modhead">
                 <button class="caret gexp" data-k="ICPID:${esc(g.key)}||${esc(sg.key)}" title="${so?'Hide':'View'} topics">${so?'▾':'▸'}</button>
-                <span class="grpchips"><span class="ichip" style="font-weight:700">${esc(sg.key)}</span>${ftypes.map(t=>`<span class="ichip">${esc(t)}</span>`).join('')}${fmods.map(m=>`<span class="ichip mod">${esc(m)}</span>`).join('')}</span>
+                <span class="grpchips"><span class="ichip fam">${esc(sg.key)}</span>${ftypes.map(t=>`<span class="ichip">${esc(t)}</span>`).join('')}${fmods.map(m=>`<span class="ichip mod">${esc(m)}</span>`).join('')}</span>
                 <span class="grpcounts">${gcount(sg)}</span>
                 <span class="grpbtns">
                   <button class="btn sec sm icpgact" data-p="${esc(g.key)}" data-k="${esc(sg.key)}" data-a="select" ${sg.pen?'':'disabled'}>✓ Keep all</button>
