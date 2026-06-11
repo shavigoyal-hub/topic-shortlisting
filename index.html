@@ -329,8 +329,8 @@ function classifyProfileFromSerp(r){
   const ranked=Object.entries(score).sort((a,b)=>b[1]-a[1]);
   if(!ranked.length) return null;
   const top=ranked[0][1], second=ranked[1]?ranked[1][1]:0;
-  // override the keyword guess only on a clear signal (≥2 meaningful matching domains, with a lead)
-  return (top>=2 && top>second) ? ranked[0][0] : null;
+  // rankings drive the ICP: one clear meaningful domain (generic/social/homepages already excluded) is enough
+  return (top>second) ? ranked[0][0] : null;
 }
 function classifyProfiles(){ STATE.rows.forEach(r=>{ if(!r.profileEdited) r.profile=classifyProfile(r); }); }
 function profileOptions(){ return [...PROFILES.map(p=>p.name), ...STATE.config.industries, 'General']; }
@@ -583,7 +583,7 @@ function ingest(aoa){
       topic:(a[ci.topic]||'').toString().trim(),
       sec:(a[ci.sec]||'').toString().trim(),   // parsed but intentionally ignored everywhere
       vol, rel:(a[ci.rel]||'').toString().trim(),
-      status:'pending', reason:'', autoReason:'', manual:false, idents:[], typeIds:[], modIds:[], combo:'', profile:'', profileEdited:false, serp:[], serpDone:false,
+      status:'pending', reason:'', autoReason:'', manual:false, idents:[], typeIds:[], modIds:[], combo:'', family:'', profile:'', profileEdited:false, serp:[], serpDone:false,
     });
   }
   STATE.rows=out;
@@ -748,12 +748,41 @@ function computeRowIdents(){
     r.modIds=toks.filter(t=>!STOP.has(t)&&identCategory(t)==='mod');
     r.idents=[...r.typeIds,...r.modIds];
   });
-  // identifier = service TYPE + one or more MODIFIERS
+  // identifier = service TYPE + one or more MODIFIERS, and a FAMILY (for grouping into fewer tabs)
   STATE.rows.forEach(r=>{
     r.comboType = r.typeIds[0] || '(no type)';
     r.comboMods = pickMods(r);                       // array — can be multiple
     r.combo = r.comboMods.length ? r.comboType+' + '+r.comboMods.join(' + ') : r.comboType;
+    r.family = familyOf(r);
   });
+}
+/* coarse families so similar identifiers merge into a handful of tabs (not 1 per combo) */
+const TYPE_FAMILIES=[
+  ['Leadership',                    /\bleadership|leaders?\b/],
+  ['Mindset',                       /\bmindset\b/],
+  ['Mindfulness',                   /\bmindful(ness)?\b/],
+  ['Mental performance & wellbeing',/\b(mental|resilience|burnout|wellbeing|well-being|wellness|stress|emotional intelligence|performance|focus)\b/],
+  ['Meditation',                    /\b(meditation|vipassana|nidra|breathwork)\b/],
+  ['Yoga',                          /\b(yoga|vinyasa|pranayama|asana)\b/],
+  ['Coaching',                      /\bcoach(ing|es)?\b/],
+  ['Keynote & speaking',            /\b(keynote|speaker|speaking|emcee|moderator)\b/],
+  ['Retreats',                      /\bretreats?\b/],
+  ['Workshops',                     /\bworkshops?\b/],
+  ['Training',                      /\btrainings?\b/],
+  ['Conferences & events',          /\b(conference|summit|seminar|webinar|event)\b/],
+  ['Programs',                      /\bprograms?\b/],
+];
+function familyOf(r){
+  const t=(r.kw+' '+r.topic).toLowerCase();
+  for(const [name,rx] of TYPE_FAMILIES){ if(rx.test(t)) return name; }
+  const ty=r.typeIds[0]; return ty?ty[0].toUpperCase()+ty.slice(1):'Other';
+}
+/* group rows by family (counts via counts()) */
+function buildFamilies(rows){
+  const m=new Map();
+  rows.forEach(r=>{const k=r.family||'Other'; if(!m.has(k))m.set(k,{key:k,rows:[]}); m.get(k).rows.push(r);});
+  const arr=[...m.values()]; arr.forEach(counts);
+  return arr;
 }
 VIEWS.ident=function(){
   buildIdentifiers();
@@ -895,7 +924,7 @@ function buildProfileGroups(rows){
   return arr;
 }
 function applyProfileGroup(profile,key,action){
-  const rows=STATE.rows.filter(r=>r.pageType===STATE.phase && r.profile===profile && (r.combo||'(no identifier)')===key);
+  const rows=STATE.rows.filter(r=>r.pageType===STATE.phase && r.profile===profile && (r.family||'Other')===key);
   let n=0;
   rows.forEach(r=>{
     if(action==='select'){ if(r.status==='pending'){r.status='selected';r.reason='ICP '+profile+' · '+key;r.manual=true;n++;} }
@@ -1086,7 +1115,7 @@ function renderShort(mode){
       ${icpVisible.length?icpVisible.map(g=>{
         const open=!!STATE.groupExpanded['ICP:'+g.key];
         const sample=(pendOnly?g.rows.filter(r=>r.status==='pending'):g.rows).slice().sort((a,b)=>b.vol-a.vol).slice(0,2).map(r=>r.kw);
-        let subs=[]; if(open){ subs=buildGroups(g.rows); if(pendOnly)subs=subs.filter(s=>s.pen>0); subs.sort((a,b)=>(pendOnly?b.pen-a.pen:b.total-a.total)||b.total-a.total); }
+        let subs=[]; if(open){ subs=buildFamilies(g.rows); if(pendOnly)subs=subs.filter(s=>s.pen>0); subs.sort((a,b)=>(pendOnly?b.pen-a.pen:b.total-a.total)||b.total-a.total); }
         return `
         <div class="grp">
           <div class="grphead">
@@ -1104,7 +1133,7 @@ function renderShort(mode){
             <div class="modrow">
               <div class="modhead">
                 <button class="caret gexp" data-k="ICPID:${esc(g.key)}||${esc(sg.key)}" title="${so?'Hide':'View'} topics">${so?'▾':'▸'}</button>
-                <span class="grpchips"><span class="ichip">${esc(sg.type)}</span>${(sg.mods||[]).map(m=>`<span class="plus">+</span><span class="ichip mod">${esc(m)}</span>`).join('')}</span>
+                <span class="grpchips"><span class="ichip">${esc(sg.key)}</span></span>
                 <span class="grpcounts">${gcount(sg)}</span>
                 <span class="grpbtns">
                   <button class="btn sec sm icpgact" data-p="${esc(g.key)}" data-k="${esc(sg.key)}" data-a="select" ${sg.pen?'':'disabled'}>✓ Keep all</button>
