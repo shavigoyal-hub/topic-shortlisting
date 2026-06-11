@@ -131,6 +131,13 @@
   .chk{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;cursor:pointer}
   .chk input{width:16px;height:16px}
   .muted{color:var(--muted)}
+  /* modal */
+  .modal{position:fixed;inset:0;background:rgba(12,12,48,.45);display:flex;align-items:center;justify-content:center;z-index:200;padding:24px}
+  .modal-card{background:#fff;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.3);width:min(820px,100%);max-height:86vh;display:flex;flex-direction:column;overflow:hidden}
+  .modal-head{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .modal-body{overflow:auto;padding:4px 14px 14px}
+  .modal-x{border:0;background:transparent;font-size:18px;cursor:pointer;color:var(--muted)}
+  .modal-x:hover{color:var(--ink)}
   /* groups view */
   .grp{border:1px solid var(--line);border-radius:10px;margin:8px 0;overflow:hidden;background:#fff}
   .grphead{display:flex;align-items:center;gap:12px;padding:10px 12px;flex-wrap:wrap}
@@ -266,6 +273,8 @@ const STATE = {
   viewMode:'grid',              // grid (A) | filters (B) | profiles (C) | clusters (D) | table (E)
   fTypes:[], fAud:[],           // filters view: selected service types / audiences
   gridCell:null,                // {f,p} currently-opened grid cell
+  modal:null,                   // {type:'cell',f,p} | {type:'filter'} topic popup
+  eAud:'all',                   // E view: audience filter
 };
 const PROFILE_ORDER=['B2B / Corporate','Healthcare / Clinical','Aspiring Practitioner','Athlete / Sports','Local Seeker','Individual / Consumer','Researcher / Student','General','Unclassified'];
 function profileSort(a,b){const ia=PROFILE_ORDER.indexOf(a),ib=PROFILE_ORDER.indexOf(b);return (ia<0?98:ia)-(ib<0?98:ib)||a.localeCompare(b);}
@@ -1223,9 +1232,7 @@ function renderShort(mode){
         <tbody>${famList.map(f=>`<tr><th class="grow">${esc(f)}<span class="ghbtns"><button class="growact" data-f="${esc(f)}" data-a="select" title="Keep all ${esc(f)}">✓</button><button class="growact" data-f="${esc(f)}" data-a="reject" title="Reject all ${esc(f)}">✕</button></span></th>${profList.map(p=>{const s=cstat(cellRows(f,p));if(!s.total)return '<td class="gcell empty">·</td>';const seln=STATE.gridCell&&STATE.gridCell.f===f&&STATE.gridCell.p===p;return `<td class="gcell ${s.sel&&!s.pen?'kept':''} ${s.total?'haspen':''} ${seln?'sel':''}" data-f="${esc(f)}" data-p="${esc(p)}" title="View topics">${s.pen?`<b>${s.pen}</b>`:''}${s.sel?`<span class="gsel">✓${s.sel}</span>`:''}${!s.pen&&!s.sel?`<span style="color:var(--muted)">${s.rej}✕</span>`:''}</td>`;}).join('')}</tr>`).join('')}</tbody>
       </table>
     </div>
-    ${STATE.gridCell?(()=>{const f=STATE.gridCell.f,p=STATE.gridCell.p,rows=cellRows(f,p),s=cstat(rows);return `<div style="border-top:1px solid var(--line);padding:10px 14px 14px">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><span class="ichip">${esc(f)}</span><span class="ichip aud">${esc(p)}</span><span class="muted" style="font-size:12px">${s.pen} to review · ${s.sel}✓ · ${s.rej}✕</span><span style="flex:1"></span><button class="btn sec sm gcellact" data-f="${esc(f)}" data-p="${esc(p)}" data-a="select" ${s.pen?'':'disabled'}>✓ Keep all</button><button class="btn sec sm gcellact" data-f="${esc(f)}" data-p="${esc(p)}" data-a="reject" ${s.pen?'':'disabled'}>✕ Reject all</button></div>
-      ${topicList(pendOnly?rows.filter(r=>r.status==='pending'):rows)}</div>`;})():'<div class="muted" style="padding:10px 14px;font-size:12px">Click any cell to see its topics.</div>'}
+    <div class="muted" style="padding:8px 14px;font-size:12px">Click a cell to open its topics in a popup · row/column ✓✕ bulk-decide.</div>
   </div>`;
 
   // ---------- B · FILTERS  (two checklists) ----------
@@ -1240,36 +1247,65 @@ function renderShort(mode){
       <div><div style="font-weight:700;margin-bottom:8px">Service types we offer</div>${famList.map(f=>`<label class="chk"><input type="checkbox" class="ftype" value="${esc(f)}" ${STATE.fTypes.includes(f)?'checked':''}> <span>${esc(f)}</span> <span class="muted">(${famCnt(f)})</span></label>`).join('')||'<span class="muted">none</span>'}</div>
       <div><div style="font-weight:700;margin-bottom:8px">Audiences we serve (ICP)</div>${profList.map(p=>`<label class="chk"><input type="checkbox" class="faud" value="${esc(p)}" ${STATE.fAud.includes(p)?'checked':''}> <span>${esc(p)}</span> <span class="muted">(${profCnt(p)})</span></label>`).join('')}</div>
     </div>
-    <div class="row-actions" style="padding:0 14px 14px">
+    <div class="row-actions" style="padding:0 14px 16px">
       <button class="btn" id="applyFilters">Keep ${matchN} matching · reject the rest</button>
+      <button class="btn sec" id="viewMatches">👁 View ${matchN} matching topics</button>
       <span class="muted" style="font-size:12.5px">Matches = service type ✓ <b>and</b> audience ✓. Empty list = “any”.</span>
-    </div>
-    <div style="border-top:1px solid var(--line);padding:8px 14px 14px">
-      <div class="muted" style="font-size:12px;margin-bottom:4px">${matchN} matching topics${(STATE.fTypes.length||STATE.fAud.length)?'':' (no filters = all pending)'}</div>
-      ${topicList(all.filter(r=>r.status==='pending'&&matchPred(r)).slice(0,200))}
     </div>
   </div>`;
 
-  // ---------- E · TABLE  (type & modifier as columns, A→Z) ----------
-  const eRows=(pendOnly?all.filter(r=>r.status==='pending'):all).slice()
-    .sort((a,b)=>(a.comboType||'~').localeCompare(b.comboType||'~')||(a.comboMods.join(' ')||'~').localeCompare(b.comboMods.join(' ')||'~')||b.vol-a.vol);
+  // ---------- E · MODIFIER → TYPE  (audience filter + select-all at each level) ----------
+  const primMod=r=>r.comboMods[0]||'(no modifier)';
+  const eAll=all.filter(r=>STATE.eAud==='all'||r.profile===STATE.eAud);
+  const eModMap=new Map(); eAll.forEach(r=>{const m=primMod(r); if(!eModMap.has(m))eModMap.set(m,[]); eModMap.get(m).push(r);});
+  const eMods=[...eModMap.keys()].sort((a,b)=>a.localeCompare(b));   // modifier A→Z (primary)
   const tableBodyE=`
   <div class="tablewrap">
-    <div class="tbar"><b style="font-size:13px">Sorted A→Z by Type, then Modifier</b><span style="flex:1"></span>${serpStatus}<button class="btn sm" id="export">⤓ Export CSV</button></div>
-    <div class="scrollx">
-      <table>
-        <thead><tr><th>Type</th><th>Modifier</th><th>Audience</th><th>Keyword — Topic</th><th>Vol</th><th>Decide</th></tr></thead>
-        <tbody>${eRows.length?eRows.map(r=>`<tr class="${r.status==='rejected'?'rejected':r.status==='selected'?'selected':''}">
-          <td><span class="ichip">${esc(r.comboType)}</span></td>
-          <td>${r.comboMods.map(m=>`<span class="ichip mod">${esc(m)}</span>`).join('')||'<span class="muted">—</span>'}</td>
-          <td><span class="ichip aud">${esc(r.profile)}</span></td>
-          <td><span class="kw">${esc(r.kw)}</span>${r.topic?`<span class="muted" style="font-size:11.5px"> — ${esc(r.topic)}</span>`:''}</td>
-          <td>${r.vol.toLocaleString()}</td>
-          <td><span class="miniact"><button class="y" data-id="${r.id}" data-act="selected">Keep</button><button class="n" data-id="${r.id}" data-act="rejected">Reject</button></span></td>
-        </tr>`).join(''):'<tr><td colspan="6"><div class="empty">No topics.</div></td></tr>'}</tbody>
-      </table>
+    <div class="tbar">
+      <label style="font-size:12.5px;font-weight:600">Audience <select id="eAud" style="margin-left:6px">
+        <option value="all" ${STATE.eAud==='all'?'selected':''}>All audiences</option>
+        ${profList.map(p=>`<option value="${esc(p)}" ${STATE.eAud===p?'selected':''}>${esc(p)} (${all.filter(r=>r.profile===p&&r.status==='pending').length})</option>`).join('')}
+      </select></label>
+      ${STATE.eAud!=='all'?`<button class="btn sec sm eaudact" data-a="select">✓ Keep all</button><button class="btn sec sm eaudact" data-a="reject">✕ Reject all</button>`:''}
+      <label style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600"><span class="sw" style="width:38px;height:21px"><input type="checkbox" id="gpend" ${pendOnly?'checked':''}><span class="sl"></span></span>Pending only</label>
+      <span style="flex:1"></span>${serpStatus}<button class="btn sm" id="export">⤓ Export CSV</button>
+    </div>
+    <div style="padding:8px 14px 12px">
+      <div class="muted" style="font-size:11.5px;margin-bottom:6px">Grouped by <b>modifier</b> → <b>type</b> (A→Z). ✓✕ selects all of a modifier or type.</div>
+      ${eMods.map(m=>{const rows=eModMap.get(m),s=cstat(rows); if(pendOnly&&!s.pen)return ''; const mo=!!STATE.groupExpanded['E:'+m];
+        const tMap=new Map(); rows.forEach(r=>{const t=r.comboType||'(no type)'; if(!tMap.has(t))tMap.set(t,[]); tMap.get(t).push(r);});
+        const tList=[...tMap.keys()].sort((a,b)=>a.localeCompare(b));
+        return `<div class="grp">
+          <div class="grphead">
+            <button class="caret gexp" data-k="E:${esc(m)}">${mo?'▾':'▸'}</button>
+            <span class="grpchips"><span class="ichip mod">${esc(m)}</span></span>
+            <span class="grpcounts">${gcount(s)}</span>
+            <span class="grpbtns"><button class="btn sec sm emodact" data-m="${esc(m)}" data-a="select" ${s.pen?'':'disabled'}>✓ Keep all</button><button class="btn sec sm emodact" data-m="${esc(m)}" data-a="reject" ${s.pen?'':'disabled'}>✕ Reject all</button></span>
+          </div>
+          ${mo?`<div class="grpbody">${tList.map(t=>{const tr=tMap.get(t),ts=cstat(tr); if(pendOnly&&!ts.pen)return ''; const to=!!STATE.groupExpanded['ET:'+m+'||'+t]; return `
+            <div class="modrow"><div class="modhead">
+              <button class="caret gexp" data-k="ET:${esc(m)}||${esc(t)}">${to?'▾':'▸'}</button>
+              <span class="grpchips"><span class="ichip">${esc(t)}</span></span>
+              <span class="grpcounts">${gcount(ts)}</span>
+              <span class="grpbtns"><button class="btn sec sm etypeact" data-m="${esc(m)}" data-t="${esc(t)}" data-a="select" ${ts.pen?'':'disabled'}>✓ Keep all</button><button class="btn sec sm etypeact" data-m="${esc(m)}" data-t="${esc(t)}" data-a="reject" ${ts.pen?'':'disabled'}>✕ Reject all</button></span>
+            </div>${to?topicList(pendOnly?tr.filter(r=>r.status==='pending'):tr):''}</div>`;}).join('')}</div>`:''}
+        </div>`;}).join('')||'<div class="empty">No topics.</div>'}
     </div>
   </div>`;
+
+  // topic popup (A grid cell / B filter matches)
+  let modalHtml='';
+  if(STATE.modal){
+    let title='', mrows=[];
+    if(STATE.modal.type==='cell'){ mrows=all.filter(r=>r.family===STATE.modal.f&&r.profile===STATE.modal.p); title=`<span class="ichip">${esc(STATE.modal.f)}</span><span class="ichip aud">${esc(STATE.modal.p)}</span>`; }
+    else { mrows=all.filter(matchPred); title='<b>Matching topics</b>'; }
+    const s=cstat(mrows), list=pendOnly?mrows.filter(r=>r.status==='pending'):mrows;
+    modalHtml=`<div class="modal" id="modalBg"><div class="modal-card">
+      <div class="modal-head">${title}<span class="muted" style="font-size:12px">${s.pen} to review · ${s.sel}✓ · ${s.rej}✕</span>
+        <button class="btn sec sm modact" data-a="select" ${s.pen?'':'disabled'}>✓ Keep all</button><button class="btn sec sm modact" data-a="reject" ${s.pen?'':'disabled'}>✕ Reject all</button>
+        <span style="flex:1"></span><button class="modal-x" id="modalClose">✕</button></div>
+      <div class="modal-body">${topicList(list)}</div></div></div>`;
+  }
 
   const vm=STATE.viewMode;
   const blurb={grid:'Each cell is a candidate page (a service type for an audience). Click a cell to see its topics; use row/column ✓✕ to bulk decide.',
@@ -1286,16 +1322,26 @@ function renderShort(mode){
     <button class="vtab ${vm==='clusters'?'on':''}" data-vm="clusters">D · Clusters</button>
     <button class="vtab ${vm==='table'?'on':''}" data-vm="table">E · Table</button>
   </div>
-  ${vm==='grid'?gridBody:vm==='filters'?filtersBody:vm==='profiles'?icpBody:vm==='table'?tableBodyE:groupsBody}`;
+  ${vm==='grid'?gridBody:vm==='filters'?filtersBody:vm==='profiles'?icpBody:vm==='table'?tableBodyE:groupsBody}
+  ${modalHtml}`;
 
   $('#view').querySelectorAll('.vtab').forEach(b=>b.onclick=()=>{STATE.viewMode=b.dataset.vm;render();});
-  $('#view').querySelectorAll('.gcell.haspen').forEach(c=>c.onclick=()=>{STATE.gridCell={f:c.dataset.f,p:c.dataset.p};render();});
-  $('#view').querySelectorAll('.gcellact').forEach(b=>b.onclick=()=>decide(r=>r.family===b.dataset.f&&r.profile===b.dataset.p,b.dataset.a,'Page: '+b.dataset.f+' / '+b.dataset.p));
+  $('#view').querySelectorAll('.gcell.haspen').forEach(c=>c.onclick=()=>{STATE.modal={type:'cell',f:c.dataset.f,p:c.dataset.p};render();});
+  // modal
+  if($('#modalClose'))$('#modalClose').onclick=()=>{STATE.modal=null;render();};
+  if($('#modalBg'))$('#modalBg').onclick=e=>{if(e.target.id==='modalBg'){STATE.modal=null;render();}};
+  $('#view').querySelectorAll('.modact').forEach(b=>b.onclick=()=>{ const a=b.dataset.a; if(STATE.modal.type==='cell'){const f=STATE.modal.f,p=STATE.modal.p;decide(r=>r.family===f&&r.profile===p,a,'Page: '+f+' / '+p);} else {decide(matchPred,a,'Shortlisted (filters)');} });
+  // E view
+  if($('#eAud'))$('#eAud').onchange=e=>{STATE.eAud=e.target.value;render();};
+  $('#view').querySelectorAll('.eaudact').forEach(b=>b.onclick=()=>decide(r=>r.profile===STATE.eAud,b.dataset.a,'Audience: '+STATE.eAud));
+  $('#view').querySelectorAll('.emodact').forEach(b=>b.onclick=()=>decide(r=>(STATE.eAud==='all'||r.profile===STATE.eAud)&&primMod(r)===b.dataset.m,b.dataset.a,'Modifier: '+b.dataset.m));
+  $('#view').querySelectorAll('.etypeact').forEach(b=>b.onclick=()=>decide(r=>(STATE.eAud==='all'||r.profile===STATE.eAud)&&primMod(r)===b.dataset.m&&(r.comboType||'(no type)')===b.dataset.t,b.dataset.a,b.dataset.m+' / '+b.dataset.t));
   $('#view').querySelectorAll('.growact').forEach(b=>b.onclick=()=>decide(r=>r.family===b.dataset.f,b.dataset.a,'Type: '+b.dataset.f));
   $('#view').querySelectorAll('.gcolact').forEach(b=>b.onclick=()=>decide(r=>r.profile===b.dataset.p,b.dataset.a,'Audience: '+b.dataset.p));
   $('#view').querySelectorAll('.ftype').forEach(c=>c.onchange=()=>{const v=c.value;STATE.fTypes=c.checked?[...STATE.fTypes,v]:STATE.fTypes.filter(x=>x!==v);render();});
   $('#view').querySelectorAll('.faud').forEach(c=>c.onchange=()=>{const v=c.value;STATE.fAud=c.checked?[...STATE.fAud,v]:STATE.fAud.filter(x=>x!==v);render();});
   if($('#applyFilters'))$('#applyFilters').onclick=()=>{ STATE.rows.forEach(r=>{ if(r.pageType!==phase||r.status!=='pending')return; const m=(!STATE.fTypes.length||STATE.fTypes.includes(r.family))&&(!STATE.fAud.length||STATE.fAud.includes(r.profile)); if(m){r.status='selected';r.reason='Shortlisted (filters)';r.manual=true;} else {r.status='rejected';r.reason='Out of scope (filters)';r.manual=true;} }); toast('Applied filters'); renderStats(); render(); };
+  if($('#viewMatches'))$('#viewMatches').onclick=()=>{STATE.modal={type:'filter'};render();};
 
   // handlers
   $('#view').querySelectorAll('.phasetabs [data-p]').forEach(b=>b.onclick=()=>{STATE.phase=b.dataset.p;STATE.page=0;render();});
