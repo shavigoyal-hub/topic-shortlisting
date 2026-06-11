@@ -443,7 +443,8 @@ VIEWS.setup=function(){
 
   <div class="row-actions" style="margin-top:6px">
     <button class="btn" id="next" ${loaded?'':'disabled'}>Continue to Shortlist →</button>
-    <span style="color:var(--muted);font-size:12.5px">${loaded?'Edits re-apply on Continue.':'Upload your data sheet to begin.'}</span>
+    ${loaded?`<button class="btn ghost sm" id="clrSess" style="color:var(--red)">↺ Start over (clear saved data)</button>`:''}
+    <span style="color:var(--muted);font-size:12.5px">${loaded?'Auto-saved on this device — a refresh keeps your work. Use “Start over” to wipe it.':'Upload your data sheet to begin.'}</span>
   </div>`;
 
   // config editors (only present once a file is loaded)
