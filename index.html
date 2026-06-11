@@ -111,6 +111,25 @@
   .ichip{display:inline-block;background:var(--accent-soft);color:var(--accent-d);border-radius:6px;padding:1px 6px;font-size:10.5px;font-weight:600;margin:1px 3px 1px 0;white-space:nowrap}
   .ichip.mod{background:var(--amber-soft);color:var(--amber)}
   .ichip.fam{background:var(--navy);color:#fff;font-weight:700}
+  /* grid view */
+  .gridtbl{border-collapse:separate;border-spacing:0;font-size:12px}
+  .gridtbl th,.gridtbl td{border:1px solid var(--line);padding:6px 8px;text-align:center;white-space:nowrap}
+  .gridtbl thead th{background:#f3f4f6;position:sticky;top:0;font-size:11px;color:var(--ink);vertical-align:bottom}
+  .gridtbl .gcorner{text-align:left;color:var(--muted);font-weight:600}
+  .gridtbl .grow{text-align:left;font-weight:600;background:#fafbfc;position:sticky;left:0;z-index:1}
+  .ghbtns{display:inline-flex;gap:3px;margin-left:8px}
+  .ghbtns button{border:1px solid var(--line);background:#fff;border-radius:5px;font-size:11px;padding:0 5px;cursor:pointer;line-height:1.6}
+  .ghbtns button[data-a="select"]:hover{background:var(--green-soft);border-color:var(--green);color:var(--green)}
+  .ghbtns button[data-a="reject"]:hover{background:var(--red-soft);border-color:var(--red);color:var(--red)}
+  .gcell.haspen{cursor:pointer;color:var(--ink)}
+  .gcell.haspen:hover{background:var(--accent-soft);outline:2px solid var(--accent);outline-offset:-2px}
+  .gcell.empty{color:var(--line)}
+  .gcell.kept{background:var(--green-soft)}
+  .gsel{color:var(--green);font-size:10px;margin-left:3px;font-weight:700}
+  /* filters view */
+  .chk{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;cursor:pointer}
+  .chk input{width:16px;height:16px}
+  .muted{color:var(--muted)}
   /* groups view */
   .grp{border:1px solid var(--line);border-radius:10px;margin:8px 0;overflow:hidden;background:#fff}
   .grphead{display:flex;align-items:center;gap:12px;padding:10px 12px;flex-wrap:wrap}
@@ -243,7 +262,21 @@ const STATE = {
   groupSearch:'',
   groupPendingOnly:true,        // hide fully-decided combinations
   serpRunning:false, serpCancel:false, serpAuto:false,   // auto rankings fetch state (transient)
+  viewMode:'grid',              // grid (A) | filters (B) | profiles (C) | clusters (D)
+  fTypes:[], fAud:[],           // filters view: selected service types / audiences
 };
+const PROFILE_ORDER=['B2B / Corporate','Healthcare / Clinical','Aspiring Practitioner','Athlete / Sports','Local Seeker','Individual / Consumer','Researcher / Student','General','Unclassified'];
+function profileSort(a,b){const ia=PROFILE_ORDER.indexOf(a),ib=PROFILE_ORDER.indexOf(b);return (ia<0?98:ia)-(ib<0?98:ib)||a.localeCompare(b);}
+/* generic bulk decision over phase rows matching a predicate */
+function decide(pred, action, label){
+  let n=0; STATE.rows.forEach(r=>{ if(r.pageType!==STATE.phase||!pred(r))return;
+    if(action==='select'){ if(r.status==='pending'){r.status='selected';r.reason=label||'Shortlisted';r.manual=true;n++;} }
+    else if(action==='reject'){ if(r.status!=='rejected'){r.status='rejected';r.reason=label||'Not relevant';r.manual=true;n++;} }
+    else { r.status='pending';r.reason='';r.autoReason='';r.manual=false;n++; }
+  });
+  toast((action==='select'?'Kept ':action==='reject'?'Rejected ':'Reset ')+n+' topics');
+  renderStats(); render();
+}
 const PAGE_SIZE = 60;
 
 /* ============================ STEPS ============================ */
@@ -1171,10 +1204,66 @@ function renderShort(mode){
     </div>
   </div>`;
 
-  $('#view').innerHTML=`
-  <div class="pagehead"><h2>Shortlist — Service / Product</h2><p>Review by <b>customer profile (ICP)</b> → drill into a profile's <b>identifiers</b> → individual <b>topics</b>. Approve/reject at any level. <span style="color:var(--muted)">(Blogs & Category are skipped for now.)</span></p></div>
+  // shared rankings status (shown in every view's toolbar)
+  const serpStatus = STATE.serpRunning
+    ? `<span style="font-size:12.5px;font-weight:600;color:var(--accent)">⏳ Processing <span id="serpProg">…</span></span> <button class="btn sec sm" id="serpStop">Stop</button>`
+    : (()=>{const n=STATE.rows.filter(r=>r.status==='pending'&&!r.serpDone&&r.pageType==='Service').length;return n?`<button class="btn sec sm" id="serpAll" title="Analyse rankings to set audience/ICP">↻ Process topics (${n})</button>`:`<span style="font-size:12px;color:var(--green);font-weight:600">✓ Processed</span>`;})();
+  // ---------- A · GRID  (service type × audience) ----------
+  const famList=buildFamilies(all).sort((a,b)=>b.total-a.total).map(f=>f.key);
+  const profList=[...new Set(all.map(r=>r.profile))].sort(profileSort);
+  const cellRows=(f,p)=>all.filter(r=>r.family===f&&r.profile===p);
+  const cstat=rs=>({pen:rs.filter(r=>r.status==='pending').length,sel:rs.filter(r=>r.status==='selected').length,rej:rs.filter(r=>r.status==='rejected').length,total:rs.length});
+  const gridBody=`
+  <div class="tablewrap">
+    <div class="tbar"><b style="font-size:13px">Pick the pages to build</b><span style="color:var(--muted);font-size:12px;margin-left:8px">click a cell = keep that Type × Audience · row/col ✓✕ = bulk</span><span style="flex:1"></span>${serpStatus}<button class="btn sm" id="export">⤓ Export CSV</button></div>
+    <div class="scrollx" style="padding:4px 12px 12px">
+      <table class="gridtbl">
+        <thead><tr><th class="gcorner">Type ＼ Audience</th>${profList.map(p=>`<th class="gcol">${esc(p)}<div class="ghbtns"><button class="gcolact" data-p="${esc(p)}" data-a="select" title="Keep all ${esc(p)}">✓</button><button class="gcolact" data-p="${esc(p)}" data-a="reject" title="Reject all ${esc(p)}">✕</button></div></th>`).join('')}</tr></thead>
+        <tbody>${famList.map(f=>`<tr><th class="grow">${esc(f)}<span class="ghbtns"><button class="growact" data-f="${esc(f)}" data-a="select" title="Keep all ${esc(f)}">✓</button><button class="growact" data-f="${esc(f)}" data-a="reject" title="Reject all ${esc(f)}">✕</button></span></th>${profList.map(p=>{const s=cstat(cellRows(f,p));if(!s.total)return '<td class="gcell empty">·</td>';return `<td class="gcell ${s.sel&&!s.pen?'kept':''} ${s.pen?'haspen':''}" data-f="${esc(f)}" data-p="${esc(p)}" title="Keep ${s.pen} pending as a page">${s.pen?`<b>${s.pen}</b>`:''}${s.sel?`<span class="gsel">✓${s.sel}</span>`:''}${!s.pen&&!s.sel?`<span style="color:var(--muted)">${s.rej}✕</span>`:''}</td>`;}).join('')}</tr>`).join('')}</tbody>
+      </table>
+    </div>
+  </div>`;
 
-  ${icpBody}`;
+  // ---------- B · FILTERS  (two checklists) ----------
+  const famCnt=f=>all.filter(r=>r.family===f&&r.status==='pending').length;
+  const profCnt=p=>all.filter(r=>r.profile===p&&r.status==='pending').length;
+  const matchPred=r=>(!STATE.fTypes.length||STATE.fTypes.includes(r.family))&&(!STATE.fAud.length||STATE.fAud.includes(r.profile));
+  const matchN=all.filter(r=>r.status==='pending'&&matchPred(r)).length;
+  const filtersBody=`
+  <div class="tablewrap">
+    <div class="tbar"><b style="font-size:13px">Pick relevant service types &amp; audiences</b><span style="flex:1"></span>${serpStatus}<button class="btn sm" id="export">⤓ Export CSV</button></div>
+    <div style="padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:22px">
+      <div><div style="font-weight:700;margin-bottom:8px">Service types we offer</div>${famList.map(f=>`<label class="chk"><input type="checkbox" class="ftype" value="${esc(f)}" ${STATE.fTypes.includes(f)?'checked':''}> <span>${esc(f)}</span> <span class="muted">(${famCnt(f)})</span></label>`).join('')||'<span class="muted">none</span>'}</div>
+      <div><div style="font-weight:700;margin-bottom:8px">Audiences we serve (ICP)</div>${profList.map(p=>`<label class="chk"><input type="checkbox" class="faud" value="${esc(p)}" ${STATE.fAud.includes(p)?'checked':''}> <span>${esc(p)}</span> <span class="muted">(${profCnt(p)})</span></label>`).join('')}</div>
+    </div>
+    <div class="row-actions" style="padding:0 14px 16px">
+      <button class="btn" id="applyFilters">Keep ${matchN} matching · reject the rest</button>
+      <span class="muted" style="font-size:12.5px">Matches = service type ✓ <b>and</b> audience ✓. Empty list = “any”.</span>
+    </div>
+  </div>`;
+
+  const vm=STATE.viewMode;
+  const blurb={grid:'Each cell is a candidate page (a service type for an audience). Click cells to keep, or use the row/column ✓✕.',
+    filters:'Tick the service types and audiences that fit the client. Everything matching both becomes the shortlist.',
+    profiles:'Drill ICP → identifier → topic and approve/reject at any level.',
+    clusters:'Each row is a Type + Modifier cluster (a page candidate). Keep or reject whole clusters.'}[vm];
+  $('#view').innerHTML=`
+  <div class="pagehead"><h2>Shortlist — Service / Product <span style="font-weight:400;color:var(--muted);font-size:14px">→ pages to build</span></h2><p>${blurb}</p></div>
+  <div class="phasetabs" style="margin-bottom:14px">
+    <button class="vtab ${vm==='grid'?'on':''}" data-vm="grid">A · Grid</button>
+    <button class="vtab ${vm==='filters'?'on':''}" data-vm="filters">B · Filters</button>
+    <button class="vtab ${vm==='profiles'?'on':''}" data-vm="profiles">C · Profiles</button>
+    <button class="vtab ${vm==='clusters'?'on':''}" data-vm="clusters">D · Clusters</button>
+  </div>
+  ${vm==='grid'?gridBody:vm==='filters'?filtersBody:vm==='profiles'?icpBody:groupsBody}`;
+
+  $('#view').querySelectorAll('.vtab').forEach(b=>b.onclick=()=>{STATE.viewMode=b.dataset.vm;render();});
+  $('#view').querySelectorAll('.gcell.haspen').forEach(c=>c.onclick=()=>decide(r=>r.family===c.dataset.f&&r.profile===c.dataset.p,'select','Page: '+c.dataset.f+' / '+c.dataset.p));
+  $('#view').querySelectorAll('.growact').forEach(b=>b.onclick=()=>decide(r=>r.family===b.dataset.f,b.dataset.a,'Type: '+b.dataset.f));
+  $('#view').querySelectorAll('.gcolact').forEach(b=>b.onclick=()=>decide(r=>r.profile===b.dataset.p,b.dataset.a,'Audience: '+b.dataset.p));
+  $('#view').querySelectorAll('.ftype').forEach(c=>c.onchange=()=>{const v=c.value;STATE.fTypes=c.checked?[...STATE.fTypes,v]:STATE.fTypes.filter(x=>x!==v);render();});
+  $('#view').querySelectorAll('.faud').forEach(c=>c.onchange=()=>{const v=c.value;STATE.fAud=c.checked?[...STATE.fAud,v]:STATE.fAud.filter(x=>x!==v);render();});
+  if($('#applyFilters'))$('#applyFilters').onclick=()=>{ STATE.rows.forEach(r=>{ if(r.pageType!==phase||r.status!=='pending')return; const m=(!STATE.fTypes.length||STATE.fTypes.includes(r.family))&&(!STATE.fAud.length||STATE.fAud.includes(r.profile)); if(m){r.status='selected';r.reason='Shortlisted (filters)';r.manual=true;} else {r.status='rejected';r.reason='Out of scope (filters)';r.manual=true;} }); toast('Applied filters'); renderStats(); render(); };
 
   // handlers
   $('#view').querySelectorAll('.phasetabs [data-p]').forEach(b=>b.onclick=()=>{STATE.phase=b.dataset.p;STATE.page=0;render();});
