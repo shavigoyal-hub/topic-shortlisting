@@ -131,6 +131,11 @@
   .chk{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;cursor:pointer}
   .chk input{width:16px;height:16px}
   .muted{color:var(--muted)}
+  .fpill{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:16px;padding:3px 11px;font-size:12px;font-weight:600;cursor:pointer;background:#fff;color:var(--ink)}
+  .fpill:hover{border-color:var(--accent)}
+  .fpill.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .fpill.on .muted{color:#dfe2fb}
+  .fpill.aud.on{background:var(--blue);border-color:var(--blue)}
   /* modal */
   .modal{position:fixed;inset:0;background:rgba(12,12,48,.45);display:flex;align-items:center;justify-content:center;z-index:200;padding:24px}
   .modal-card{background:#fff;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.3);width:min(820px,100%);max-height:86vh;display:flex;flex-direction:column;overflow:hidden}
@@ -969,6 +974,7 @@ function pickMods(r){
   const extra=contentTokens(r.kw).find(w=>!hw.has(w));
   return extra ? [extra] : [];
 }
+function primMod(r){ return (r.comboMods&&r.comboMods[0]) || '(no modifier)'; }
 function counts(o){o.total=o.rows.length;o.sel=o.rows.filter(r=>r.status==='selected').length;o.rej=o.rows.filter(r=>r.status==='rejected').length;o.pen=o.total-o.sel-o.rej;}
 /* group phase rows by their merged identifier — single flat list */
 function buildGroups(rows){
@@ -1240,22 +1246,44 @@ function renderShort(mode){
   const profCnt=p=>all.filter(r=>r.profile===p&&r.status==='pending').length;
   const matchPred=r=>(!STATE.fTypes.length||STATE.fTypes.includes(r.family))&&(!STATE.fAud.length||STATE.fAud.includes(r.profile));
   const matchN=all.filter(r=>r.status==='pending'&&matchPred(r)).length;
+  // matching pending topics, sorted by the most-common modifier first
+  const matchRows=all.filter(r=>r.status==='pending'&&matchPred(r));
+  const modFreq={}; matchRows.forEach(r=>{const m=primMod(r);modFreq[m]=(modFreq[m]||0)+1;});
+  matchRows.sort((a,b)=>(modFreq[primMod(b)]-modFreq[primMod(a)])||primMod(a).localeCompare(primMod(b))||b.vol-a.vol);
   const filtersBody=`
   <div class="tablewrap">
     <div class="tbar"><b style="font-size:13px">Pick relevant service types &amp; audiences</b><span style="flex:1"></span>${serpStatus}<button class="btn sm" id="export">⤓ Export CSV</button></div>
-    <div style="padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:22px">
-      <div><div style="font-weight:700;margin-bottom:8px">Service types we offer</div>${famList.map(f=>`<label class="chk"><input type="checkbox" class="ftype" value="${esc(f)}" ${STATE.fTypes.includes(f)?'checked':''}> <span>${esc(f)}</span> <span class="muted">(${famCnt(f)})</span></label>`).join('')||'<span class="muted">none</span>'}</div>
-      <div><div style="font-weight:700;margin-bottom:8px">Audiences we serve (ICP)</div>${profList.map(p=>`<label class="chk"><input type="checkbox" class="faud" value="${esc(p)}" ${STATE.fAud.includes(p)?'checked':''}> <span>${esc(p)}</span> <span class="muted">(${profCnt(p)})</span></label>`).join('')}</div>
-    </div>
-    <div class="row-actions" style="padding:0 14px 16px">
+    <div style="padding:10px 14px;border-bottom:1px solid var(--line)">
+      <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:6px">
+        <b style="font-size:12px;width:78px">Types</b>
+        <button class="btn ghost sm" id="ftAll">All</button><button class="btn ghost sm" id="ftClear">Clear</button>
+        ${famList.map(f=>`<span class="fpill ${STATE.fTypes.includes(f)?'on':''}" data-ft="${esc(f)}">${esc(f)} <span class="muted">${famCnt(f)}</span></span>`).join('')}
+      </div>
+      <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:10px">
+        <b style="font-size:12px;width:78px">Audiences</b>
+        <button class="btn ghost sm" id="faAll">All</button><button class="btn ghost sm" id="faClear">Clear</button>
+        ${profList.map(p=>`<span class="fpill aud ${STATE.fAud.includes(p)?'on':''}" data-fa="${esc(p)}">${esc(p)} <span class="muted">${profCnt(p)}</span></span>`).join('')}
+      </div>
       <button class="btn" id="applyFilters">Keep ${matchN} matching · reject the rest</button>
-      <button class="btn sec" id="viewMatches">👁 View ${matchN} matching topics</button>
-      <span class="muted" style="font-size:12.5px">Matches = service type ✓ <b>and</b> audience ✓. Empty list = “any”.</span>
+      <span class="muted" style="font-size:12px;margin-left:8px">${matchN} matching topics shown below (empty filter = “any”).</span>
+    </div>
+    <div class="scrollx">
+      <table>
+        <thead><tr><th>Modifier</th><th>Audience</th><th>Type</th><th>Keyword — Topic</th><th>Vol</th><th>Decide</th></tr></thead>
+        <tbody>${matchRows.length?matchRows.slice(0,400).map(r=>`<tr>
+          <td>${r.modIds.map(m=>`<span class="ichip mod">${esc(m)}</span>`).join('')||'<span class="muted">—</span>'}</td>
+          <td><span class="ichip aud">${esc(r.profile)}</span></td>
+          <td><span class="ichip">${esc(r.comboType)}</span></td>
+          <td><span class="kw">${esc(r.kw)}</span>${r.topic?`<span class="muted" style="font-size:11.5px"> — ${esc(r.topic)}</span>`:''}</td>
+          <td>${r.vol.toLocaleString()}</td>
+          <td><span class="miniact"><button class="y" data-id="${r.id}" data-act="selected">Keep</button><button class="n" data-id="${r.id}" data-act="rejected">Reject</button></span></td>
+        </tr>`).join(''):'<tr><td colspan="6"><div class="empty">No matching topics.</div></td></tr>'}</tbody>
+      </table>
+      ${matchRows.length>400?`<div class="pager">Showing first 400 of ${matchRows.length}.</div>`:''}
     </div>
   </div>`;
 
   // ---------- E · MODIFIER → TYPE  (audience filter + select-all at each level) ----------
-  const primMod=r=>r.comboMods[0]||'(no modifier)';
   const eAll=all.filter(r=>STATE.eAud==='all'||r.profile===STATE.eAud);
   const eModMap=new Map(); eAll.forEach(r=>{const m=primMod(r); if(!eModMap.has(m))eModMap.set(m,[]); eModMap.get(m).push(r);});
   const eMods=[...eModMap.keys()].sort((a,b)=>a.localeCompare(b));   // modifier A→Z (primary)
@@ -1325,7 +1353,7 @@ function renderShort(mode){
   ${vm==='grid'?gridBody:vm==='filters'?filtersBody:vm==='profiles'?icpBody:vm==='table'?tableBodyE:groupsBody}
   ${modalHtml}`;
 
-  $('#view').querySelectorAll('.vtab').forEach(b=>b.onclick=()=>{STATE.viewMode=b.dataset.vm;render();});
+  $('#view').querySelectorAll('.vtab').forEach(b=>b.onclick=()=>{STATE.viewMode=b.dataset.vm;STATE.modal=null;render();});
   $('#view').querySelectorAll('.gcell.haspen').forEach(c=>c.onclick=()=>{STATE.modal={type:'cell',f:c.dataset.f,p:c.dataset.p};render();});
   // modal
   if($('#modalClose'))$('#modalClose').onclick=()=>{STATE.modal=null;render();};
@@ -1338,8 +1366,12 @@ function renderShort(mode){
   $('#view').querySelectorAll('.etypeact').forEach(b=>b.onclick=()=>decide(r=>(STATE.eAud==='all'||r.profile===STATE.eAud)&&primMod(r)===b.dataset.m&&(r.comboType||'(no type)')===b.dataset.t,b.dataset.a,b.dataset.m+' / '+b.dataset.t));
   $('#view').querySelectorAll('.growact').forEach(b=>b.onclick=()=>decide(r=>r.family===b.dataset.f,b.dataset.a,'Type: '+b.dataset.f));
   $('#view').querySelectorAll('.gcolact').forEach(b=>b.onclick=()=>decide(r=>r.profile===b.dataset.p,b.dataset.a,'Audience: '+b.dataset.p));
-  $('#view').querySelectorAll('.ftype').forEach(c=>c.onchange=()=>{const v=c.value;STATE.fTypes=c.checked?[...STATE.fTypes,v]:STATE.fTypes.filter(x=>x!==v);render();});
-  $('#view').querySelectorAll('.faud').forEach(c=>c.onchange=()=>{const v=c.value;STATE.fAud=c.checked?[...STATE.fAud,v]:STATE.fAud.filter(x=>x!==v);render();});
+  $('#view').querySelectorAll('.fpill[data-ft]').forEach(c=>c.onclick=()=>{const v=c.dataset.ft;STATE.fTypes=STATE.fTypes.includes(v)?STATE.fTypes.filter(x=>x!==v):[...STATE.fTypes,v];render();});
+  $('#view').querySelectorAll('.fpill[data-fa]').forEach(c=>c.onclick=()=>{const v=c.dataset.fa;STATE.fAud=STATE.fAud.includes(v)?STATE.fAud.filter(x=>x!==v):[...STATE.fAud,v];render();});
+  if($('#ftAll'))$('#ftAll').onclick=()=>{STATE.fTypes=famList.slice();render();};
+  if($('#ftClear'))$('#ftClear').onclick=()=>{STATE.fTypes=[];render();};
+  if($('#faAll'))$('#faAll').onclick=()=>{STATE.fAud=profList.slice();render();};
+  if($('#faClear'))$('#faClear').onclick=()=>{STATE.fAud=[];render();};
   if($('#applyFilters'))$('#applyFilters').onclick=()=>{ STATE.rows.forEach(r=>{ if(r.pageType!==phase||r.status!=='pending')return; const m=(!STATE.fTypes.length||STATE.fTypes.includes(r.family))&&(!STATE.fAud.length||STATE.fAud.includes(r.profile)); if(m){r.status='selected';r.reason='Shortlisted (filters)';r.manual=true;} else {r.status='rejected';r.reason='Out of scope (filters)';r.manual=true;} }); toast('Applied filters'); renderStats(); render(); };
   if($('#viewMatches'))$('#viewMatches').onclick=()=>{STATE.modal={type:'filter'};render();};
 
