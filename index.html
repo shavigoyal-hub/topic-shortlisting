@@ -115,7 +115,7 @@
   .grphead{display:flex;align-items:center;gap:12px;padding:10px 12px;flex-wrap:wrap}
   .caret{border:0;background:transparent;color:var(--accent);font-size:14px;cursor:pointer;padding:2px 6px;flex-shrink:0;width:26px}
   .caret:hover{color:var(--accent-d)}
-  .grpchips{display:flex;align-items:center;gap:1px;font-size:12px}
+  .grpchips{display:flex;align-items:center;gap:3px;font-size:12px;flex-wrap:wrap;flex:1;min-width:0}
   .grpchips .ichip{font-size:12px;padding:2px 8px}
   .plus{color:var(--muted);font-weight:700;margin:0 4px}
   .grpcounts{color:var(--muted);font-size:12px;font-weight:600}
@@ -1126,11 +1126,15 @@ function renderShort(mode){
               ${(g.sel||g.rej)?`<button class="btn ghost sm icpact" data-k="${esc(g.key)}" data-a="reset">Reset</button>`:''}
             </span>
           </div>
-          ${open?`<div class="grpbody">${subs.length?subs.map(sg=>{const so=!!STATE.groupExpanded['ICPID:'+g.key+'||'+sg.key];return `
+          ${open?`<div class="grpbody">${subs.length?subs.map(sg=>{const so=!!STATE.groupExpanded['ICPID:'+g.key+'||'+sg.key];
+            const fr=pendOnly?sg.rows.filter(r=>r.status==='pending'):sg.rows;
+            const ftypes=[...new Set(fr.flatMap(r=>r.typeIds))].filter(t=>norm(t)!==norm(sg.key)).slice(0,5);
+            const fmods=[...new Set(fr.flatMap(r=>r.modIds))].slice(0,8);
+            return `
             <div class="modrow">
               <div class="modhead">
                 <button class="caret gexp" data-k="ICPID:${esc(g.key)}||${esc(sg.key)}" title="${so?'Hide':'View'} topics">${so?'▾':'▸'}</button>
-                <span class="grpchips"><span class="ichip">${esc(sg.key)}</span></span>
+                <span class="grpchips"><span class="ichip" style="font-weight:700">${esc(sg.key)}</span>${ftypes.map(t=>`<span class="ichip">${esc(t)}</span>`).join('')}${fmods.map(m=>`<span class="ichip mod">${esc(m)}</span>`).join('')}</span>
                 <span class="grpcounts">${gcount(sg)}</span>
                 <span class="grpbtns">
                   <button class="btn sec sm icpgact" data-p="${esc(g.key)}" data-k="${esc(sg.key)}" data-a="select" ${sg.pen?'':'disabled'}>✓ Keep all</button>
