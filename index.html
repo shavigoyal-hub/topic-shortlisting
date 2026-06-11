@@ -958,8 +958,8 @@ function applyGroup(key,action){
 function renderShort(mode){
   STATE.shortView=mode;                // 'icp' (review profiles) or 'groups' (decide topics)
   const types=pageTypes();
-  if(!types.includes(STATE.phase))STATE.phase=types[0]||'Blog';
-  const phase=STATE.phase;
+  const phase='Service';               // Service / Product only for now — Blogs & Category skipped
+  STATE.phase=phase;
   let all=STATE.rows.filter(r=>r.pageType===phase);
   if(STATE.groupSearch){const s=norm(STATE.groupSearch); all=all.filter(r=>blob(r).includes(s)||norm(r.combo).includes(s)||norm(r.profile).includes(s));}  // global filter — keeps every level's counts consistent
   const cnt=arr=>({sel:arr.filter(r=>r.status==='selected').length,rej:arr.filter(r=>r.status==='rejected').length,pen:arr.filter(r=>r.status==='pending').length});
@@ -1093,7 +1093,10 @@ function renderShort(mode){
   </div>`;
 
   // ---------- BY ICP view body (approve / reject whole customer profiles) ----------
-  let icpGroups=buildProfileGroups(all).sort((a,b)=>(pendOnly?b.pen-a.pen:b.total-a.total)||b.total-a.total);
+  let icpGroups=buildProfileGroups(all).sort((a,b)=>{
+    if((a.key==='Unclassified')!==(b.key==='Unclassified')) return a.key==='Unclassified'?1:-1;   // awaiting-rankings bucket last
+    return (pendOnly?b.pen-a.pen:b.total-a.total)||b.total-a.total;
+  });
   const icpVisible=pendOnly?icpGroups.filter(g=>g.pen>0):icpGroups;
   const icpBody=`
   <div class="tablewrap">
@@ -1105,7 +1108,7 @@ function renderShort(mode){
       <input type="text" id="gsrch" placeholder="Find keyword / identifier…" value="${esc(STATE.groupSearch)}" style="width:200px">
       ${STATE.serpRunning
         ? `<span style="font-size:12.5px;font-weight:600;color:var(--accent)">⏳ Fetching rankings <span id="serpProg">…</span></span> <button class="btn sec sm" id="serpStop">Stop</button>`
-        : (()=>{const n=STATE.rows.filter(r=>r.status==='pending'&&!r.serpDone).length; return n?`<button class="btn sec sm" id="serpAll" title="Fetch top-10 rankings for pending keywords (auto-runs when deployed)">⌕ Get rankings (${n})</button>`:`<span style="font-size:12px;color:var(--green);font-weight:600">✓ Rankings fetched</span>`;})()}
+        : (()=>{const n=STATE.rows.filter(r=>r.status==='pending'&&!r.serpDone&&r.pageType==='Service').length; return n?`<button class="btn sec sm" id="serpAll" title="Fetch top-10 rankings for pending Service keywords (auto-runs when deployed)">⌕ Get rankings (${n})</button>`:`<span style="font-size:12px;color:var(--green);font-weight:600">✓ Rankings fetched</span>`;})()}
       <span style="flex:1"></span>
       <span style="color:var(--muted);font-size:12px">${icpVisible.length} profiles · ${all.length} topics${pendOnly?` · ${all.filter(r=>r.status!=='pending').length} decided (hidden)`:''}</span>
       <button class="btn sm" id="export">⤓ Export CSV</button>
@@ -1120,7 +1123,7 @@ function renderShort(mode){
           <div class="grphead">
             <button class="caret gexp" data-k="ICP:${esc(g.key)}" title="${open?'Hide':'View'} identifiers">${open?'▾':'▸'}</button>
             <span class="grpchips"><span class="ichip" style="background:var(--blue-soft);color:var(--blue)">${esc(g.key)}</span></span>
-            <span class="grpcounts">${gcount(g)}</span>
+            <span class="grpcounts">${g.key==='Unclassified'?`<span style="color:var(--amber)">⏳ <b>${g.pen}</b> awaiting rankings${STATE.serpRunning?' — fetching…':''}</span>`:gcount(g)}</span>
             <span class="grpbtns">
               <button class="btn sec sm icpact" data-k="${esc(g.key)}" data-a="select" ${g.pen?'':'disabled'}>✓ Approve all</button>
               <button class="btn sec sm icpact" data-k="${esc(g.key)}" data-a="reject" ${g.pen?'':'disabled'}>✕ Reject all</button>
@@ -1147,12 +1150,7 @@ function renderShort(mode){
   </div>`;
 
   $('#view').innerHTML=`
-  <div class="pagehead"><h2>Shortlist</h2><p>Review by <b>customer profile (ICP)</b> → drill into a profile's <b>identifiers</b> → individual <b>topics</b>. Approve/reject at any level. Work Service / Product first, then Blogs.</p></div>
-  <div class="phasetabs">
-    ${types.map((t,i)=>`<button class="${phase===t?'on':''}" data-p="${esc(t)}">${tabLabel(t,i)}</button>`).join('')}
-  </div>
-  ${isTrans&&transPend>0?`<div class="banner">Finish Service / Product topics first — <b>${transPend}</b> still to review. Then move to Blogs.</div>`:''}
-  ${isTrans&&transPend===0&&types.includes('Blog')?`<div class="banner">✓ Transactional phase complete. <button class="btn sm" id="toBlog" style="margin-left:auto">Move to Blogs →</button></div>`:''}
+  <div class="pagehead"><h2>Shortlist — Service / Product</h2><p>Review by <b>customer profile (ICP)</b> → drill into a profile's <b>identifiers</b> → individual <b>topics</b>. Approve/reject at any level. <span style="color:var(--muted)">(Blogs & Category are skipped for now.)</span></p></div>
 
   ${icpBody}`;
 
@@ -1160,12 +1158,13 @@ function renderShort(mode){
   $('#view').querySelectorAll('.phasetabs [data-p]').forEach(b=>b.onclick=()=>{STATE.phase=b.dataset.p;STATE.page=0;render();});
   if($('#toBlog'))$('#toBlog').onclick=()=>{STATE.phase='Blog';STATE.page=0;render();};
   if($('#export'))$('#export').onclick=exportCsv;
-  if($('#serpAll'))$('#serpAll').onclick=()=>fetchSerpBulk(STATE.rows.filter(r=>r.status==='pending'));
+  const svcPending=()=>STATE.rows.filter(r=>r.status==='pending'&&r.pageType==='Service');
+  if($('#serpAll'))$('#serpAll').onclick=()=>fetchSerpBulk(svcPending());
   if($('#serpStop'))$('#serpStop').onclick=()=>{STATE.serpCancel=true;};
   // auto-fetch rankings once per page load (only where a key or the /api proxy is available)
   const onServer = /^https?:$/.test(location.protocol) && !/^(localhost|127\.|0\.0\.0\.0|\[|$)/.test(location.hostname);
-  if((STATE.config.serperKey||onServer) && !STATE.serpAuto && !STATE.serpRunning && STATE.rows.some(r=>r.status==='pending'&&!r.serpDone)){
-    STATE.serpAuto=true; setTimeout(()=>fetchSerpBulk(STATE.rows.filter(r=>r.status==='pending'), true), 60);
+  if((STATE.config.serperKey||onServer) && !STATE.serpAuto && !STATE.serpRunning && svcPending().some(r=>!r.serpDone)){
+    STATE.serpAuto=true; setTimeout(()=>fetchSerpBulk(svcPending(), true), 60);
   }
   if($('#icpNext'))$('#icpNext').onclick=()=>go(2);
   if($('#gpend'))$('#gpend').onchange=e=>{STATE.groupPendingOnly=e.target.checked;render();};
