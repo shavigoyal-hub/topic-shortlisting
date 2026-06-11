@@ -1,0 +1,1225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Topic Shortlisting Tool</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --bg:#f7f8fa; --panel:#ffffff; --ink:#111827; --muted:#6b7280; --line:#e5e7eb;
+    --accent:#3b46f1; --accent-d:#2a33c4; --accent-soft:#ecedfe;
+    --red:#dc3a3a; --red-soft:#fdecec; --amber:#b9770e; --amber-soft:#fbf2e2;
+    --green:#15a06f; --green-soft:#e6f6ef; --blue:#475569; --blue-soft:#eef1f6;
+    --navy:#0c0c30; --shadow:0 1px 3px rgba(17,24,39,.07),0 6px 18px rgba(17,24,39,.05);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.5}
+  h1,h2,h3{margin:0;font-weight:650}
+  button{font-family:inherit;cursor:pointer}
+  input,select,textarea{font-family:inherit;font-size:14px}
+  .app{display:flex;min-height:100vh}
+  /* Sidebar */
+  .side{width:240px;background:var(--navy);color:#d4d6ef;flex-shrink:0;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+  .brand{padding:20px 18px;font-size:16px;font-weight:700;color:#fff;letter-spacing:-.2px;border-bottom:1px solid rgba(255,255,255,.1)}
+  .brand small{display:block;font-weight:400;font-size:11px;color:#9499d8;margin-top:3px;letter-spacing:.3px}
+  .steps{padding:10px 8px;flex:1;overflow:auto}
+  .step{display:flex;gap:11px;align-items:flex-start;padding:11px 12px;border-radius:9px;color:#b6b9e6;cursor:pointer;margin-bottom:2px}
+  .step:hover{background:rgba(255,255,255,.06)}
+  .step.active{background:var(--accent);color:#fff}
+  .step.done .num{background:#4954f3;color:#fff;border-color:#4954f3}
+  .step .num{width:22px;height:22px;border-radius:50%;border:1.5px solid #3a3f6e;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;margin-top:1px}
+  .step.active .num{background:#fff;color:var(--accent);border-color:#fff}
+  .step .lbl{font-size:13px;font-weight:600}
+  .step .sub{font-size:11px;opacity:.7;font-weight:400}
+  .side-foot{padding:14px 16px;font-size:11px;color:#7378b0;border-top:1px solid rgba(255,255,255,.1)}
+  /* Main */
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .topbar{background:var(--panel);border-bottom:1px solid var(--line);padding:14px 28px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:30}
+  .topbar .stat{display:flex;gap:22px}
+  .stat .s{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  .stat .v{font-size:18px;font-weight:700}
+  .v.green{color:var(--green)} .v.red{color:var(--red)} .v.amber{color:var(--amber)}
+  .content{padding:26px 28px;max-width:1180px;width:100%}
+  .pagehead{margin-bottom:18px}
+  .pagehead h2{font-size:21px;letter-spacing:-.3px}
+  .pagehead p{color:var(--muted);margin:6px 0 0;max-width:760px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:18px;box-shadow:var(--shadow)}
+  .card h3{font-size:15px;margin-bottom:4px}
+  .card .hint{color:var(--muted);font-size:12.5px;margin-bottom:14px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  label.fl{display:block;font-weight:600;font-size:12.5px;margin-bottom:6px}
+  input[type=text],input[type=url],select,textarea{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:#fff;outline:none}
+  input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:#fff}
+  .seg button{padding:9px 18px;border:0;background:#fff;color:var(--ink);font-weight:600;border-right:1px solid var(--line)}
+  .seg button:last-child{border-right:0}
+  .seg button.on{background:var(--accent);color:#fff}
+  .btn{background:var(--accent);color:#fff;border:0;padding:10px 18px;border-radius:9px;font-weight:650;font-size:13.5px}
+  .btn:hover{background:var(--accent-d)}
+  .btn.sec{background:#fff;color:var(--ink);border:1px solid var(--line)}
+  .btn.sec:hover{background:#f3f4f6}
+  .btn.ghost{background:transparent;color:var(--accent);padding:6px 10px}
+  .btn.sm{padding:6px 12px;font-size:12.5px}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .row-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  /* tags */
+  .tags{display:flex;flex-wrap:wrap;gap:7px;margin-top:8px}
+  .tag{display:inline-flex;align-items:center;gap:6px;background:var(--accent-soft);color:var(--accent-d);border-radius:7px;padding:4px 9px;font-size:12.5px;font-weight:600}
+  .tag.r{background:var(--red-soft);color:var(--red)}
+  .tag.b{background:var(--blue-soft);color:var(--blue)}
+  .tag x{cursor:pointer;font-weight:700;opacity:.6}
+  .tag x:hover{opacity:1}
+  .taginput{display:flex;gap:8px;margin-top:4px}
+  /* dropzone */
+  .drop{border:2px dashed var(--line);border-radius:12px;padding:40px;text-align:center;color:var(--muted);cursor:pointer;transition:.15s}
+  .drop:hover,.drop.over{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-d)}
+  .drop b{color:var(--ink)}
+  /* rules */
+  .rule{display:flex;align-items:center;gap:14px;padding:13px 4px;border-bottom:1px solid var(--line)}
+  .rule:last-child{border-bottom:0}
+  .sw{position:relative;display:inline-block;width:40px;height:23px;flex-shrink:0}
+  .sw input{opacity:0;width:0;height:0}
+  .sw .sl{position:absolute;inset:0;background:#cbd0db;border-radius:20px;transition:.2s}
+  .sw .sl:before{content:"";position:absolute;width:17px;height:17px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}
+  .sw input:checked+.sl{background:var(--accent)}
+  .sw input:checked+.sl:before{transform:translateX(17px)}
+  .rule .rt{flex:1}
+  .rule .rt b{font-size:13.5px}
+  .rule .rt span{display:block;color:var(--muted);font-size:12px}
+  .rule .cnt{font-weight:700;color:var(--red);min-width:64px;text-align:right;font-size:13px}
+  .rule .cnt.zero{color:var(--muted);font-weight:600}
+  /* table */
+  .tablewrap{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:var(--shadow)}
+  .tbar{display:flex;gap:10px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .tbar input[type=text]{width:230px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;padding:10px 12px;background:#f3f4f6;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px;position:sticky;top:0;border-bottom:1px solid var(--line);cursor:pointer;white-space:nowrap}
+  th:hover{color:var(--ink)}
+  td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  tr.rejected{background:#fdf2f2}
+  tr.selected{background:#eef6f1}
+  tr:hover{background:#f5f6f9}
+  .kw{font-weight:600}
+  .sub2{color:var(--muted);font-size:11.5px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;max-width:330px}
+  .pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700}
+  .pill.svc{background:var(--accent-soft);color:var(--accent-d)}
+  .pill.blog{background:var(--blue-soft);color:var(--blue)}
+  .pill.sel{background:var(--green-soft);color:var(--green)}
+  .pill.rej{background:var(--red-soft);color:var(--red)}
+  .pill.pend{background:#eef0f4;color:var(--muted)}
+  .ichip{display:inline-block;background:var(--accent-soft);color:var(--accent-d);border-radius:6px;padding:1px 6px;font-size:10.5px;font-weight:600;margin:1px 3px 1px 0;white-space:nowrap}
+  .ichip.mod{background:var(--amber-soft);color:var(--amber)}
+  /* groups view */
+  .grp{border:1px solid var(--line);border-radius:10px;margin:8px 0;overflow:hidden;background:#fff}
+  .grphead{display:flex;align-items:center;gap:12px;padding:10px 12px;flex-wrap:wrap}
+  .grpchips{display:flex;align-items:center;gap:1px;font-size:12px}
+  .grpchips .ichip{font-size:12px;padding:2px 8px}
+  .plus{color:var(--muted);font-weight:700;margin:0 4px}
+  .grpcounts{color:var(--muted);font-size:12px;font-weight:600}
+  .grpsample{padding:0 12px 11px;color:var(--muted);font-size:12px;font-style:italic}
+  .grpbtns{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
+  .tag-mixed{background:var(--amber-soft);color:var(--amber);border-radius:6px;padding:2px 8px;font-size:10.5px;font-weight:700;margin-left:7px}
+  .tag-clean{background:var(--green-soft);color:var(--green);border-radius:6px;padding:2px 8px;font-size:10.5px;font-weight:700;margin-left:7px}
+  .grpbody{border-top:1px solid var(--line);background:#fafbfc}
+  .modrow{border-bottom:1px solid var(--line)}
+  .modrow:last-child{border-bottom:0}
+  .modhead{display:flex;align-items:center;gap:12px;padding:9px 12px 9px 22px;flex-wrap:wrap}
+  .modhead .grpchips .plus{margin:0 4px 0 0}
+  .grplist{background:#fff;padding:2px 12px 2px 30px;max-height:300px;overflow:auto;border-top:1px dashed var(--line)}
+  .grpitem{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+  .grpitem:last-child{border-bottom:0}
+  .grpitem .pill{text-transform:capitalize;min-width:62px;text-align:center}
+  .gv{color:var(--muted);font-variant-numeric:tabular-nums}
+  .idcell{max-width:200px;line-height:1.7}
+  .profsel{padding:4px 6px;font-size:11.5px;border:1px solid var(--line);border-radius:6px;background:#fff;max-width:150px}
+  .serpcell{display:flex;flex-direction:column;gap:1px;max-width:210px;max-height:120px;overflow:auto}
+  .serpcell a{font-size:11px;color:var(--accent);text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .serpcell a:hover{text-decoration:underline}
+  .reason{font-size:11.5px;color:var(--red);max-width:200px}
+  .miniact{display:flex;gap:5px}
+  .miniact button{border:1px solid var(--line);background:#fff;border-radius:6px;padding:3px 8px;font-size:12px;font-weight:600}
+  .miniact button.y:hover{background:var(--green-soft);border-color:var(--green);color:var(--green)}
+  .miniact button.n:hover{background:var(--red-soft);border-color:var(--red);color:var(--red)}
+  /* identifiers */
+  .idgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:10px}
+  .idcard{border:1px solid var(--line);border-radius:10px;padding:12px}
+  .idcard .top{display:flex;justify-content:space-between;align-items:baseline}
+  .idcard .word{font-weight:700;font-size:14px}
+  .idcard .freq{font-size:11.5px;color:var(--muted)}
+  .idcard .bar{height:4px;background:#eef0f4;border-radius:3px;margin:8px 0 10px;overflow:hidden}
+  .idcard .bar i{display:block;height:100%;background:var(--accent)}
+  .idclass{display:flex;gap:4px;flex-wrap:wrap}
+  .idclass button{border:1px solid var(--line);background:#fff;border-radius:6px;padding:3px 7px;font-size:11px;font-weight:600;color:var(--muted)}
+  .idclass button.core.on{background:var(--green);color:#fff;border-color:var(--green)}
+  .idclass button.rej.on{background:var(--red);color:#fff;border-color:var(--red)}
+  .idclass button.brand.on{background:var(--blue);color:#fff;border-color:var(--blue)}
+  .idclass button.loc.on{background:var(--amber);color:#fff;border-color:var(--amber)}
+  /* questions */
+  .q{border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:12px}
+  .q .qh{font-weight:650;font-size:14px;margin-bottom:3px}
+  .q .qm{color:var(--muted);font-size:12.5px;margin-bottom:12px}
+  .q .qopts{display:flex;gap:8px;flex-wrap:wrap}
+  .q .qopts button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 14px;font-weight:600}
+  .q .qopts button.keep:hover{background:var(--green-soft);border-color:var(--green);color:var(--green)}
+  .q .qopts button.drop:hover{background:var(--red-soft);border-color:var(--red);color:var(--red)}
+  .q.answered{opacity:.55}
+  .q .ans{font-weight:700;margin-left:8px}
+  .empty{text-align:center;padding:50px 20px;color:var(--muted)}
+  .empty svg{opacity:.4;margin-bottom:10px}
+  .phasetabs{display:inline-flex;gap:6px;background:#eef0f4;padding:4px;border-radius:10px;margin-bottom:16px}
+  .phasetabs button{border:0;background:transparent;padding:8px 18px;border-radius:7px;font-weight:650;color:var(--muted)}
+  .phasetabs button.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+  .banner{background:var(--accent-soft);border:1px solid #c8caf9;color:var(--accent-d);padding:12px 16px;border-radius:10px;font-size:13px;margin-bottom:16px;display:flex;gap:10px;align-items:center}
+  .toast{position:fixed;bottom:22px;right:22px;background:var(--navy);color:#fff;padding:12px 18px;border-radius:10px;box-shadow:var(--shadow);font-weight:600;font-size:13px;opacity:0;transform:translateY(8px);transition:.2s;z-index:99}
+  .toast.show{opacity:1;transform:none}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:10px}
+  .legend span{display:inline-flex;align-items:center;gap:5px}
+  .dot{width:9px;height:9px;border-radius:3px;display:inline-block}
+  .scrollx{overflow-x:auto}
+  .pager{display:flex;gap:8px;align-items:center;justify-content:flex-end;padding:10px 14px;border-top:1px solid var(--line);color:var(--muted);font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- SIDEBAR -->
+  <aside class="side">
+    <div class="brand">Topic Shortlisting<small id="brandClient">Keyword → Topic curation</small></div>
+    <nav class="steps" id="stepNav"></nav>
+    <div class="side-foot">Local & private · auto-saved in this browser</div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="topbar">
+      <div><strong id="crumb" style="font-size:15px">Setup</strong></div>
+      <div class="stat" id="topStats"></div>
+    </div>
+    <div class="content" id="view"></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================ STATE ============================ */
+const STATE = {
+  step: 0,
+  config: {
+    offering: 'Both',            // Product | Services | Both
+    geoMode: 'restricted',       // restricted | national
+    geoLevel: 'state',           // state | city | region
+    locations: ['Washington','Seattle','Oregon'],   // demo defaults from data
+    industries: ['Healthcare','Financial services','Law firms','Tech firms'],
+    services: ['Corporate Mindfulness Training','Speaking Engagements','Mental Performance Coaching','Executive Mindfulness Retreat'],
+    website: 'https://www.frontgoose.com',
+    brand: ['frontgoose'],
+    competitors: ['mindvalley','headspace'],
+    serperKey: '',                 // leave blank → uses the Vercel /api/serp proxy (SERPER_KEY env var). Paste a key here only for local use.
+    serpGl: 'us',
+  },
+  detected: null,                  // {services,industries,competitors} counts from last upload
+  rules: {                       // enabled flags
+    zero:true, free:true, nearme:true, competitor:true, location:true,
+    info:true, jobs:true, person:false, format:true, lowrel:false,
+  },
+  lowRelThreshold: 1,
+  rows: [],                      // parsed AKR
+  identifiers: {},               // word -> {class}
+  majorIds: [],                  // top identifier words (auto)
+  questions: [],                 // generated Q&A
+  phase: 'Service',              // Service | Blog  (shortlist view)
+  sort: {key:'vol', dir:-1},
+  filter: 'all',
+  identFilter:'all',
+  profileFilter:'all',
+  search:'',
+  page:0,
+  shortView:'groups',           // groups | table
+  groupMode:'combo',            // type | mod | combo
+  groupExpanded:{},             // group key -> bool
+  groupSearch:'',
+  groupPendingOnly:true,        // hide fully-decided combinations
+};
+const PAGE_SIZE = 60;
+
+/* ============================ STEPS ============================ */
+const STEPS = [
+  {id:'setup',  lbl:'Setup & Upload',    sub:'Inputs + AKR file'},
+  {id:'short',  lbl:'Shortlist',         sub:'ICP → identifiers → topics'},
+];
+
+/* ============================ HELPERS ============================ */
+const $ = (s,el=document)=>el.querySelector(s);
+const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),1900);}
+function norm(s){return (s||'').toLowerCase();}
+const STOP = new Set(('a an the and or for of to in on at is are be vs with what how why best near me my your you i we is do does can it that this me near how-to what-is is-it'+
+  ' near-me top your near').split(/\s+/));
+
+/* US states for location detection */
+const US_STATES = ['alabama','alaska','arizona','arkansas','california','colorado','connecticut','delaware','florida','georgia','hawaii','idaho','illinois','indiana','iowa','kansas','kentucky','louisiana','maine','maryland','massachusetts','michigan','minnesota','mississippi','missouri','montana','nebraska','nevada','new hampshire','new jersey','new mexico','new york','north carolina','north dakota','ohio','oklahoma','oregon','pennsylvania','rhode island','south carolina','south dakota','tennessee','texas','utah','vermont','virginia','washington','west virginia','wisconsin','wyoming'];
+const BIG_CITIES = ['seattle','portland','atlanta','dallas','austin','houston','chicago','boston','denver','miami','phoenix','orlando','tacoma','onalaska','delaware','maryland','india','france','mumbai','burma','asia','usa','united states','uk','london','canada','toronto','nyc','new york'];
+/* modifier words — qualifiers/intent/format/audience that describe HOW/FOR-WHOM, not the offering itself */
+const MODIFIER_WORDS = new Set(['corporate','executive','executives','online','virtual','in-person','inperson','remote','hybrid','offsite','off-site',
+  'best','top','free','cheap','affordable','low-cost','budget','luxury','premium','private','group','public','open',
+  'beginner','beginners','advanced','intermediate','basic','intro','introductory','quick','short','intensive','immersive',
+  'guided','silent','daily','morning','evening','weekend','weekday','day','days','week','weeks','hour','hours','minute','minutes','annual','monthly','weekly',
+  'near','local','nearby','custom','customized','customised','tailored','bespoke','professional','expert','certified','certification','certificate','accredited','licensed',
+  'small','large','team','teams','employee','employees','staff','workplace','workforce','company','business','b2b',
+  'women','men','kids','senior','seniors','youth','student','students','new','popular','famous','rated','top-rated']);
+function identCategory(w){
+  if(MODIFIER_WORDS.has(w)) return 'mod';
+  if(US_STATES.includes(w)||BIG_CITIES.includes(w)) return 'mod';                       // geo = modifier
+  if(STATE.config.industries.some(i=>norm(i).split(/\s+/).includes(w))) return 'mod';   // audience/industry = modifier
+  return 'type';                                                                         // otherwise it's the offering noun
+}
+/* informational / DIY intent */
+const INFO_RX = /\b(how to|how-to|what is|what's|meaning|definition|define|youtube|you ?tube|video|videos|pdf|template|reddit|wiki|free download|guide|tutorial|at home|diy|recording|app|login|download|coupon|reviews?|quotes?|images?|examples?)\b/;
+/* job / education seeker intent */
+const JOBS_RX = /\b(jobs?|salary|salaries|hiring|career|careers|certification|certified|certificate|course|courses|degree|class schedule|teacher training|become a|how to become|exam|syllabus)\b/;
+/* wrong-format / commercial mismatch */
+const FORMAT_RX = /\b(login|sign in|app|apk|download|coupon|promo code|discount code|cracked|torrent|free pdf)\b/;
+
+/* ---- Customer Profile (ICP) classification — uses primary + secondary keywords ---- */
+const PROFILES = [
+  {name:'B2B / Corporate',       rxg:/\b(corporate|executives?|employees?|staff|workplace|workforce|compan(y|ies)|business(es)?|b2b|enterprise|organi[sz]ations?|teams?|hr|leadership|for work|office)\b/g},
+  {name:'Healthcare / Clinical', rxg:/\b(hospitals?|clinics?|clinical|patients?|therap(y|ist|ists)|nurs(e|es|ing)|medical|healthcare|psychologists?|psychiatr|wellbeing program)\b/g},
+  {name:'Aspiring Practitioner', rxg:/\b(certifications?|certified|certificate|teacher training|become an?|how to teach|train the trainer|courses?|diploma|licen[sc]e|academy|qualif|instructor)\b/g},
+  {name:'Local Seeker',          rxg:/\b(near me|nearby|in [a-z]+ city)\b/g},
+  {name:'Individual / Consumer', rxg:/\b(at home|for sleep|for anxiety|for stress|for beginners?|beginners?|personal|myself|my own|free|app|youtube|guided|self[- ]?guided)\b/g},
+  {name:'Researcher / Student',  rxg:/\b(what is|what's|meaning|definitions?|define|benefits?|history of|study|studies|statistics|examples?|how does|why (is|do|does))\b/g},
+];
+function classifyProfile(r){
+  const t=(r.kw+' '+(r.sec||'')).toLowerCase();
+  let best='General', bestN=0;
+  for(const p of PROFILES){ const m=t.match(p.rxg); const n=m?m.length:0; if(n>bestN){bestN=n;best=p.name;} }
+  return best;
+}
+/* generic sites that rank for almost everything — they DON'T indicate intent/ICP, so ignore them */
+const IGNORE_DOMAINS=/(wikipedia|wikihow|britannica|fandom|youtube|youtu\.be|vimeo|reddit|quora|stackexchange|stackoverflow|medium\.com|tumblr|facebook|instagram|tiktok|twitter|x\.com|pinterest|linkedin\.com|snapchat|threads\.net|discord|news\.ycombinator)/;
+/* ICP from the ACTUAL ranking domains — only meaningful commercial / institutional sites count */
+const DOMAIN_SIGNALS=[
+  {profile:'Healthcare / Clinical', rx:/(webmd|mayoclinic|nih\.gov|ncbi|clevelandclinic|healthline|psychologytoday|hopkinsmedicine|medicalnewstoday|psycom|verywellhealth|kaiserpermanente|patientcarelink)/},
+  {profile:'B2B / Corporate',       rx:/(g2\.com|capterra|gartner|forbes|hbr\.org|harvardbusiness|inc\.com|shrm|trustradius|techtarget|businessinsider|deloitte|mckinsey|gallup|cnbc|wsj\.com|workhuman|risepeople|bamboohr|gusto)/},
+  {profile:'Aspiring Practitioner', rx:/(udemy|coursera|edx\.org|yogaalliance|skillshare|teachable|\.edu\b)/},
+  {profile:'Local Seeker',          rx:/(yelp|tripadvisor|eventbrite|meetup|classpass|mindbody|maps\.google|booking\.com|thumbtack)/},
+  {profile:'Individual / Consumer', rx:/(amazon|etsy|headspace|calm\.com|insighttimer|target\.com|walmart)/},
+  {profile:'Researcher / Student',  rx:/(researchgate|jstor|scholar\.google|sciencedirect|springer|frontiersin|pubmed)/},
+];
+function isHomepage(u){ try{return new URL(u).pathname.replace(/\/+$/,'')==='';}catch(e){return false;} }
+function classifyProfileFromSerp(r){
+  if(!r.serpDone||!r.serp.length)return null;
+  const score={}; let meaningful=0;
+  r.serp.forEach(u=>{const h=hostOf(u);
+    if(IGNORE_DOMAINS.test(h)||isHomepage(u))return;   // skip generic/social/forum/video + homepages (navigational, not intent)
+    meaningful++;
+    DOMAIN_SIGNALS.forEach(d=>{ if(d.rx.test(h)) score[d.profile]=(score[d.profile]||0)+1; });});
+  const ranked=Object.entries(score).sort((a,b)=>b[1]-a[1]);
+  if(!ranked.length) return null;
+  const top=ranked[0][1], second=ranked[1]?ranked[1][1]:0;
+  // override the keyword guess only on a clear signal (≥2 meaningful matching domains, with a lead)
+  return (top>=2 && top>second) ? ranked[0][0] : null;
+}
+function classifyProfiles(){ STATE.rows.forEach(r=>{ if(!r.profileEdited) r.profile=classifyProfile(r); }); }
+function profileOptions(){ return [...PROFILES.map(p=>p.name), ...STATE.config.industries, 'General']; }
+
+/* ============================ RENDER SHELL ============================ */
+function renderNav(){
+  const done = i => i < STATE.step && (i!==1 || STATE.rows.length) ;
+  $('#stepNav').innerHTML = STEPS.map((s,i)=>`
+    <div class="step ${i===STATE.step?'active':''} ${i<STATE.step?'done':''}" data-i="${i}">
+      <div class="num">${i<STATE.step?'✓':i+1}</div>
+      <div><div class="lbl">${s.lbl}</div><div class="sub">${s.sub}</div></div>
+    </div>`).join('');
+  $('#stepNav').querySelectorAll('.step').forEach(el=>el.onclick=()=>go(+el.dataset.i));
+  $('#crumb').textContent = STEPS[STATE.step].lbl;
+  $('#brandClient').textContent = STATE.config.website.replace(/^https?:\/\/(www\.)?/,'').replace(/\/$/,'') || 'Keyword → Topic curation';
+}
+function renderStats(){
+  const r=STATE.rows;
+  if(!r.length){$('#topStats').innerHTML='';return;}
+  const sel=r.filter(x=>x.status==='selected').length;
+  const rej=r.filter(x=>x.status==='rejected').length;
+  const pen=r.length-sel-rej;
+  $('#topStats').innerHTML=`
+    <div><div class="s">Topics</div><div class="v">${r.length}</div></div>
+    <div><div class="s">Selected</div><div class="v green">${sel}</div></div>
+    <div><div class="s">Rejected</div><div class="v red">${rej}</div></div>
+    <div><div class="s">Pending</div><div class="v amber">${pen}</div></div>`;
+}
+function go(i){ if(i===1||STATE.rows.length||i===0){STATE.step=Math.max(0,Math.min(STEPS.length-1,i));render();} }
+function render(){ renderNav(); renderStats(); VIEWS[STEPS[STATE.step].id](); }
+
+/* ============================ VIEW: SETUP ============================ */
+const VIEWS={};
+VIEWS.setup=function(){
+  const c=STATE.config;
+  const d=STATE.detected, loaded=STATE.rows.length;
+  $('#view').innerHTML=`
+  <div class="pagehead"><h2>Setup & Upload</h2>
+    <p>Upload your <b>data sheet</b> once. We read the <b>Services</b>, <b>Industry</b>, <b>Competitors</b> and <b>AKR</b> tabs and auto-fill everything below — review &amp; edit if needed, then continue.</p></div>
+
+  <div class="card" style="border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)">
+    <h3>① Upload data sheet</h3>
+    <div class="hint">One <b>.xlsx</b> with tabs named <code>Services</code>, <code>Industry</code>, <code>Competitors</code>, <code>AKR</code> (extra tabs ignored). Or a plain <b>.csv</b> AKR — then fill the inputs below by hand. Secondary Keywords are ignored.</div>
+    <div class="drop" id="drop">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 16V4M12 4l-4 4M12 4l4 4M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+      <div style="margin-top:8px"><b>Click to choose</b> or drag your data sheet here</div>
+      <div style="font-size:12px;margin-top:4px">.xlsx (multi-tab) or .csv</div>
+    </div>
+    <input type="file" id="file" accept=".csv,.xlsx,.xls" style="display:none">
+    ${loaded?`<div class="banner" style="margin-top:14px">✓ Loaded <b>${STATE.rows.length}</b> topics · <b>${STATE.rows.filter(r=>r.status==='rejected').length}</b> auto-rejected · <b>${STATE.rows.filter(r=>r.status!=='rejected').length}</b> ready.
+      ${d?` &nbsp;Auto-filled: ${d.services?`<b>${d.services}</b> services · `:''}${d.industries?`<b>${d.industries}</b> industries · `:''}${d.competitors?`<b>${d.competitors}</b> competitors`:''}${!d.services&&!d.industries&&!d.competitors?'no Services/Industry/Competitors tabs found — fill inputs below':''}.`:''}</div>`:''}
+  </div>
+
+  ${loaded?`
+  <div class="pagehead" style="margin:22px 0 12px"><h3 style="font-size:16px">② Auto-filled inputs <span style="font-weight:400;color:var(--muted);font-size:13px">— edit anything that's off</span></h3></div>
+
+  <div class="card">
+    <h3>What does the client offer?</h3>
+    <div class="seg" id="segOffer">
+      ${['Product','Services','Both'].map(o=>`<button data-o="${o}" class="${c.offering===o?'on':''}">${o}</button>`).join('')}
+    </div>
+    <label class="fl" style="margin-top:14px">Services / offerings <span style="font-weight:400;color:var(--muted)">(from Services tab)</span></label>
+    <div class="taginput"><input type="text" id="svIn" placeholder="add a service"><button class="btn sec sm" id="svAdd">Add</button></div>
+    <div class="tags" id="svTags"></div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>Industries / ICP <span style="font-weight:400;color:var(--muted);font-size:12px">(from Industry tab)</span></h3>
+      <div class="hint">Keywords pointing at non-ICP audiences get flagged.</div>
+      <div class="taginput"><input type="text" id="indIn" placeholder="e.g. Hospital systems"><button class="btn sec sm" id="indAdd">Add</button></div>
+      <div class="tags" id="indTags"></div>
+    </div>
+    <div class="card">
+      <h3>Competitor / other brands <span style="font-weight:400;color:var(--muted);font-size:12px">(from Competitors tab)</span></h3>
+      <div class="hint">Branded searches for these are auto-rejected.</div>
+      <div class="taginput"><input type="text" id="coIn" placeholder="competitor name"><button class="btn sec sm" id="coAdd">Add</button></div>
+      <div class="tags" id="coTags"></div>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>Geography served <span style="font-weight:400;color:var(--muted);font-size:12px">(set manually)</span></h3>
+      <div class="seg" id="segGeo" style="margin-bottom:12px">
+        <button data-g="restricted" class="${c.geoMode==='restricted'?'on':''}">Specific locations</button>
+        <button data-g="national" class="${c.geoMode==='national'?'on':''}">National / no limit</button>
+      </div>
+      <div id="geoBox" style="${c.geoMode==='national'?'display:none':''}">
+        <label class="fl">Locations served</label>
+        <div class="taginput"><input type="text" id="locIn" placeholder="state / city / region"><button class="btn sec sm" id="locAdd">Add</button></div>
+        <div class="tags" id="locTags"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Client website &amp; brand</h3>
+      <label class="fl">Website URL</label>
+      <input type="url" id="site" value="${esc(c.website)}" placeholder="https://...">
+      <label class="fl" style="margin-top:12px">Brand name(s) — keep</label>
+      <div class="taginput"><input type="text" id="brIn" placeholder="brand term"><button class="btn sec sm" id="brAdd">Add</button></div>
+      <div class="tags" id="brTags"></div>
+      <div class="grid2" style="margin-top:14px;gap:10px">
+        <div><label class="fl">Serper API key <span style="font-weight:400;color:var(--muted)">(optional — leave blank on Vercel; set SERPER_KEY env var instead)</span></label>
+          <input type="text" id="serperKey" value="${esc(c.serperKey)}" placeholder="paste only for local use"></div>
+        <div><label class="fl">SERP country / location</label>
+          <input type="text" id="serpGl" value="${esc(c.serpGl)}" placeholder="us / in / uk or a city"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Session</h3>
+    <div class="hint">Your work auto-saves in this browser. Export a file to back up or move machines.</div>
+    <div class="row-actions">
+      <button class="btn sec sm" id="expSess">⤓ Export session file</button>
+      <button class="btn sec sm" id="impSess">⤒ Import session file</button>
+      <input type="file" id="sessFile" accept=".json" style="display:none">
+      <button class="btn ghost sm" id="clrSess" style="color:var(--red)">Start over</button>
+    </div>
+  </div>`:''}
+
+  <div class="row-actions" style="margin-top:6px">
+    <button class="btn" id="next" ${loaded?'':'disabled'}>Continue to Shortlist →</button>
+    <span style="color:var(--muted);font-size:12.5px">${loaded?'Edits re-apply on Continue.':'Upload your data sheet to begin.'}</span>
+  </div>`;
+
+  // config editors (only present once a file is loaded)
+  if(loaded){
+    $('#segOffer').querySelectorAll('button').forEach(b=>b.onclick=()=>{c.offering=b.dataset.o;VIEWS.setup();});
+    $('#segGeo').querySelectorAll('button').forEach(b=>b.onclick=()=>{c.geoMode=b.dataset.g;VIEWS.setup();});
+    bindTags('svIn','svAdd','svTags',c.services,'');
+    bindTags('indIn','indAdd','indTags',c.industries,'');
+    bindTags('brIn','brAdd','brTags',c.brand,'b');
+    bindTags('coIn','coAdd','coTags',c.competitors,'r');
+    if($('#locIn'))bindTags('locIn','locAdd','locTags',c.locations,'');
+    $('#site').onchange=e=>{c.website=e.target.value;renderNav();};
+    if($('#serperKey'))$('#serperKey').onchange=e=>c.serperKey=e.target.value.trim();
+    if($('#serpGl'))$('#serpGl').onchange=e=>c.serpGl=e.target.value.trim();
+  }
+  // upload (merged into this screen)
+  const fi=$('#file'), dz=$('#drop');
+  dz.onclick=()=>fi.click();
+  fi.onchange=e=>e.target.files[0]&&loadFile(e.target.files[0]);
+  ['dragover','dragenter'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add('over');}));
+  ['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove('over');}));
+  dz.addEventListener('drop',e=>e.dataTransfer.files[0]&&loadFile(e.dataTransfer.files[0]));
+  $('#next').onclick=()=>{ if(!STATE.rows.length)return; processRows(); saveState(); go(1); };
+  // session controls
+  if($('#expSess'))$('#expSess').onclick=exportSession;
+  if($('#impSess'))$('#impSess').onclick=()=>$('#sessFile').click();
+  if($('#sessFile'))$('#sessFile').onchange=e=>e.target.files[0]&&importSession(e.target.files[0]);
+  if($('#clrSess'))$('#clrSess').onclick=clearSession;
+};
+function bindTags(inId,addId,wrapId,arr,cls){
+  const wrap=$('#'+wrapId);
+  const paint=()=>{wrap.innerHTML=arr.map((t,i)=>`<span class="tag ${cls}">${esc(t)}<x data-i="${i}">×</x></span>`).join('')||'<span style="color:var(--muted);font-size:12px">none yet</span>';
+    wrap.querySelectorAll('x').forEach(x=>x.onclick=()=>{arr.splice(+x.dataset.i,1);paint();});};
+  const add=()=>{const v=$('#'+inId).value.trim();if(v){arr.push(v);$('#'+inId).value='';paint();}};
+  $('#'+addId).onclick=add;
+  $('#'+inId).onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();add();}};
+  paint();
+}
+
+/* ============================ FILE LOAD ============================ */
+function loadFile(file){
+  const ext=file.name.split('.').pop().toLowerCase();
+  const reader=new FileReader();
+  STATE.detected=null;
+  reader.onload=e=>{
+    try{
+      let aoa;
+      if(ext==='csv'){ aoa = csvToAoa(e.target.result); }
+      else { const wb=XLSX.read(e.target.result,{type:'array'});
+             autoPopulateFromWorkbook(wb);          // fill Services / Industry / Competitors tabs
+             aoa = pickAkrSheet(wb); }
+      ingest(aoa);
+      processRows();                     // auto identifiers + auto-reject, behind the scenes
+      saveState(); renderStats();
+      toast('Loaded '+STATE.rows.length+' topics');
+      VIEWS.setup();
+    }catch(err){alert('Could not parse file: '+err.message);}
+  };
+  if(ext==='csv')reader.readAsText(file); else reader.readAsArrayBuffer(file);
+}
+// pick the AKR sheet. Prefer a tab literally named "AKR" (highest trailing number, e.g. AKR2 over AKR1);
+// otherwise the sheet whose header has "primary keyword" with the most rows.
+function pickAkrSheet(wb){
+  const aoaOf=n=>XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,blankrows:false});
+  const named=wb.SheetNames.filter(n=>/akr/i.test(n));
+  if(named.length){
+    named.sort((a,b)=>(parseInt((b.match(/\d+/)||[0])[0])||0)-(parseInt((a.match(/\d+/)||[0])[0])||0));
+    return aoaOf(named[0]);
+  }
+  let best=null,bestRows=-1;
+  wb.SheetNames.forEach(n=>{ const aoa=aoaOf(n); if(!aoa.length)return;
+    const head=(aoa[0]||[]).map(h=>norm(h));
+    if(head.some(h=>h.includes('keyword')) && aoa.length>bestRows){best=aoa;bestRows=aoa.length;} });
+  return best || aoaOf(wb.SheetNames[0]);
+}
+// auto-fill config from the Services / Industry / Competitors tabs of one workbook
+function autoPopulateFromWorkbook(wb){
+  const c=STATE.config, det={services:0,industries:0,competitors:0};
+  const aoaOf=n=>XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,blankrows:false});
+  const colVals=(aoa,ci,startRow=1)=>{const out=[];for(let r=startRow;r<aoa.length;r++){const v=(aoa[r]||[])[ci];if(v!=null&&String(v).trim())out.push(String(v).replace(/\s+/g,' ').trim());}return out;};
+  wb.SheetNames.forEach(name=>{
+    const ln=norm(name);
+    if(/service/.test(ln)){
+      const aoa=aoaOf(name); if(!aoa.length)return;
+      const head=(aoa[0]||[]).map(h=>norm(h));
+      const di=head.findIndex(h=>h.includes('detail')); const ti=head.findIndex(h=>h.includes('type'));
+      // prefer the specific "Details" offerings; fall back to Service Type, then first column
+      let vals = di>=0 ? colVals(aoa,di) : (ti>=0 ? colVals(aoa,ti) : colVals(aoa,0));
+      vals=[...new Set(vals)];
+      if(vals.length){c.services=vals;det.services=vals.length;c.offering='Services';}
+    } else if(/industr/.test(ln)){
+      const aoa=aoaOf(name); const vals=[...new Set(colVals(aoa,0))];
+      if(vals.length){c.industries=vals;det.industries=vals.length;}
+    } else if(/competitor/.test(ln)){
+      const aoa=aoaOf(name); const vals=[...new Set(colVals(aoa,0))];
+      if(vals.length){c.competitors=vals;det.competitors=vals.length;}
+    }
+  });
+  STATE.detected=det;
+}
+function csvToAoa(text){
+  const rows=[];let row=[],cur='',q=false;
+  for(let i=0;i<text.length;i++){const ch=text[i];
+    if(q){ if(ch==='"'){ if(text[i+1]==='"'){cur+='"';i++;}else q=false;} else cur+=ch; }
+    else { if(ch==='"')q=true; else if(ch===','){row.push(cur);cur='';}
+           else if(ch==='\n'){row.push(cur);rows.push(row);row=[];cur='';}
+           else if(ch==='\r'){} else cur+=ch; } }
+  if(cur||row.length){row.push(cur);rows.push(row);}
+  return rows;
+}
+function ingest(aoa){
+  if(!aoa||!aoa.length)throw new Error('empty file');
+  const head=aoa[0].map(h=>norm(h).trim());
+  const find=(...keys)=>{for(const k of keys){const i=head.findIndex(h=>h.includes(k));if(i>=0)return i;}return -1;};
+  const ci={
+    kw:find('primary keyword','keyword'),
+    type:find('page type','type'),
+    topic:find('topic'),
+    sec:find('secondary'),
+    vol:find('search volume','volume'),
+    rel:find('relevance','score'),
+  };
+  if(ci.kw<0)ci.kw=0;
+  const out=[];
+  for(let r=1;r<aoa.length;r++){
+    const a=aoa[r]; if(!a)continue;
+    const kw=(a[ci.kw]||'').toString().trim();
+    if(!kw)continue;
+    const vol=parseInt((a[ci.vol]||'').toString().replace(/[^0-9]/g,''))||0;
+    let type=(a[ci.type]||'').toString().trim();
+    // only two phases: Service/Product (transactional) vs Blog (everything else, incl. Category)
+    type=/serv|product/i.test(type) ? 'Service' : 'Blog';
+    out.push({
+      id:r, kw, pageType:type,
+      topic:(a[ci.topic]||'').toString().trim(),
+      sec:(a[ci.sec]||'').toString().trim(),   // parsed but intentionally ignored everywhere
+      vol, rel:(a[ci.rel]||'').toString().trim(),
+      status:'pending', reason:'', autoReason:'', manual:false, idents:[], typeIds:[], modIds:[], combo:'', profile:'', profileEdited:false, serp:[], serpDone:false,
+    });
+  }
+  STATE.rows=out;
+  STATE.identifiers={}; STATE.questions=[]; STATE.majorIds=[];
+}
+/* Runs automatically after upload: build identifiers + auto-reject (both hidden from the UI). */
+function processRows(){
+  buildIdentifiers();
+  computeRowIdents();
+  classifyProfiles();          // customer-profile (ICP) per query, from primary + secondary keywords
+  runAutoReject();
+}
+
+/* ============================ REJECTION ENGINE ============================ */
+function blob(r){return norm(r.kw+' '+r.topic);}   /* secondary keywords intentionally ignored */
+function evalRow(r){
+  const c=STATE.config, R=STATE.rules, t=blob(r);
+  const hit=[];
+  if(R.zero && r.vol<=0) hit.push('Zero search volume');
+  if(R.free && /\bfree\b/.test(t)) hit.push('Free keyword');
+  if(R.nearme && /\bnear me\b/.test(t)) hit.push('"Near me" query');
+  if(R.competitor){const b=c.competitors.find(x=>x&&t.includes(norm(x)));if(b)hit.push('Other brand: '+b);}
+  if(R.location && c.geoMode==='restricted'){
+    const served=c.locations.map(norm);
+    const found=[...US_STATES,...BIG_CITIES].filter(loc=>new RegExp('\\b'+loc.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b').test(t));
+    const unserved=found.filter(loc=>!served.some(s=>s.includes(loc)||loc.includes(s)));
+    if(unserved.length && !found.some(loc=>served.some(s=>s.includes(loc)||loc.includes(s))))
+      hit.push('Location not served: '+unserved[0]);
+  }
+  if(R.info){
+    // only reject informational on transactional pages (Service/Product/Category). keep for blogs.
+    if(r.pageType!=='Blog' && INFO_RX.test(t)) hit.push('Informational/DIY intent');
+  }
+  if(R.jobs && JOBS_RX.test(t)) hit.push('Job / education-seeker intent');
+  if(R.format && FORMAT_RX.test(t)) hit.push('Wrong-format / login/app intent');
+  if(R.lowrel){const n=parseFloat(r.rel);if(!isNaN(n)&&n<=STATE.lowRelThreshold)hit.push('Low relevance score ('+r.rel+')');}
+  // identifier-driven rejection
+  const idRej=Object.keys(STATE.identifiers).filter(w=>STATE.identifiers[w]==='rej'||STATE.identifiers[w]==='brand'||STATE.identifiers[w]==='loc');
+  for(const w of idRej){ if(new RegExp('\\b'+w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b').test(t)){
+      const lbl=STATE.identifiers[w]; hit.push((lbl==='brand'?'Other brand identifier: ':lbl==='loc'?'Unserved location identifier: ':'Irrelevant identifier: ')+w); break; } }
+  return hit;
+}
+function runAutoReject(){
+  let n=0;
+  STATE.rows.forEach(r=>{
+    if(r.manual)return;            // don't override manual decisions
+    const hit=evalRow(r);
+    if(hit.length){r.status='rejected';r.autoReason=hit.join('; ');r.reason=r.autoReason;n++;}
+    else if(r.status==='rejected'&&!r.manual){r.status='pending';r.reason='';r.autoReason='';}
+  });
+  return n;
+}
+function ruleCount(key){
+  const saved=JSON.stringify(STATE.rules);
+  const obj=JSON.parse(saved); Object.keys(obj).forEach(k=>obj[k]=false); obj[key]=true;
+  const real=STATE.rules; STATE.rules=obj;
+  let n=0; STATE.rows.forEach(r=>{if(evalRow(r).length)n++;});
+  STATE.rules=real; return n;
+}
+
+/* ============================ VIEW: REJECT ============================ */
+VIEWS.reject=function(){
+  const R=STATE.rules;
+  const ruleDefs=[
+    ['zero','Remove zero-volume rows','Topics with 0 total search volume — no traffic upside.'],
+    ['free','Reject "free" keywords','Searchers wanting free resources rarely convert to paid services.'],
+    ['nearme','Reject "near me" queries','Hyperlocal intent that is hard to win and often off-geo.'],
+    ['competitor','Reject other / competitor brand terms','Branded searches for '+(STATE.config.competitors.join(', ')||'competitors')+'.'],
+    ['location','Reject locations not served','Geo terms outside '+(STATE.config.geoMode==='national'?'(national — off)':STATE.config.locations.join(', ')||'served list')+'.'],
+    ['info','Reject informational/DIY intent (Service pages)','"how to", "what is", youtube, pdf, at-home — keeps blog intent, drops it from service topics.'],
+    ['jobs','Reject job / education-seeker intent','jobs, salary, certification, courses — wrong audience for the ICP.'],
+    ['format','Reject wrong-format intent','login, app, download, coupon — not content opportunities.'],
+    ['lowrel','Reject low relevance score','Drops rows at or below a relevance threshold.'],
+  ];
+  $('#view').innerHTML=`
+  <div class="pagehead"><h2>Auto-Reject Rules</h2>
+    <p>Toggle the rules to apply. Every rejected row gets a <b>reason</b> you can review and override in the shortlist. Manual decisions are never overwritten by a re-run.</p></div>
+  <div class="card">
+    <h3>Rules</h3>
+    <div class="hint">Counts show how many topics each rule would reject on its own (overlaps possible).</div>
+    <div id="ruleList">
+      ${ruleDefs.map(([k,t,d])=>`
+        <div class="rule">
+          <label class="sw"><input type="checkbox" data-k="${k}" ${R[k]?'checked':''}><span class="sl"></span></label>
+          <div class="rt"><b>${t}</b><span>${esc(d)}</span>${k==='lowrel'?`<div style="margin-top:6px">threshold ≤ <input type="number" id="relTh" value="${STATE.lowRelThreshold}" style="width:60px;padding:4px 6px;display:inline-block"></div>`:''}</div>
+          <div class="cnt ${ruleCount(k)?'':'zero'}">${ruleCount(k).toLocaleString()}</div>
+        </div>`).join('')}
+    </div>
+  </div>
+  <div class="card">
+    <h3>More ways to reject (ideas)</h3>
+    <div class="hint">Beyond the toggles above, these are also worth considering — some are handled in later steps.</div>
+    <ul style="margin:0;padding-left:18px;color:var(--ink);font-size:13px;line-height:1.9">
+      <li><b>Duplicate / near-duplicate topics</b> — same topic mapped to multiple primary keywords (keep highest volume).</li>
+      <li><b>Specific person / author names</b> (e.g. "deepak chopra", "jennifer piercy") — branded to individuals, not the client.</li>
+      <li><b>Non-ICP audience</b> — keywords aimed at consumers when the client sells B2B (or vice-versa). Handled in <b>Relevance Q&A</b>.</li>
+      <li><b>Out-of-scope service category</b> — services the client doesn't offer. Driven by <b>Word Identifiers</b>.</li>
+      <li><b>Non-English / wrong-language</b> queries.</li>
+      <li><b>Pure-research / academic</b> intent ("study", "statistics", "history of").</li>
+      <li><b>Seasonal / event one-offs</b> with no evergreen value.</li>
+      <li><b>Extremely long-tail, ultra-low volume</b> below a floor (e.g. &lt; 10) once zero-volume is handled.</li>
+    </ul>
+    <label class="sw" style="margin-top:14px;display:inline-flex;align-items:center;gap:10px;width:auto">
+      <span style="position:relative;width:40px;height:23px"><input type="checkbox" data-k="person" ${R.person?'checked':''} id="swPerson"><span class="sl" style="position:absolute;inset:0;background:${R.person?'var(--accent)':'#cbd0db'};border-radius:20px"></span></span>
+    </label>
+    <span style="font-weight:600">Also reject specific-person/author name terms</span>
+    <span class="cnt" style="margin-left:8px;color:var(--red)">${ruleCount('person')||''}</span>
+  </div>
+  <div class="row-actions">
+    <button class="btn" id="apply">Apply rules & reject</button>
+    <button class="btn sec" id="next">Continue to Identifiers →</button>
+    <span id="applyMsg" style="color:var(--muted);font-size:12.5px"></span>
+  </div>`;
+  // person rule uses PERSON detection
+  $('#ruleList').querySelectorAll('input[type=checkbox]').forEach(cb=>cb.onchange=()=>{STATE.rules[cb.dataset.k]=cb.checked;VIEWS.reject();});
+  if($('#relTh'))$('#relTh').onchange=e=>{STATE.lowRelThreshold=+e.target.value;VIEWS.reject();};
+  if($('#swPerson'))$('#swPerson').onchange=e=>{STATE.rules.person=e.target.checked;VIEWS.reject();};
+  $('#apply').onclick=()=>{const n=runAutoReject();renderStats();$('#applyMsg').textContent=`Rejected ${n} topics. ${STATE.rows.length-n} remain for review.`;toast('Rejected '+n+' topics');VIEWS.reject();};
+  $('#next').onclick=()=>{buildIdentifiers();go(3);};
+};
+// add person rule into engine
+const PERSON_RX=/\b(deepak chopra|jennifer piercy|rod stryker|sara raymond|ally boothroyd|lizzy hill|kristen rose|sn goenka|goenka|shawn achor|steve wolf)\b/;
+const _evalOrig=evalRow;
+evalRow=function(r){const hit=_evalOrig(r);if(STATE.rules.person&&PERSON_RX.test(blob(r)))hit.push('Specific person/author name');return hit;};
+
+/* ============================ IDENTIFIERS (auto, hidden) ============================ */
+/* Service/Product TYPE identifiers are multi-word PHRASES ("mindfulness training",
+   "keynote speaker", "yoga retreat") — seeded from the Services tab + frequent
+   two-word phrases in the keywords. Falls back to single words when no phrase fits. */
+const rxEsc=s=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+function contentTokens(s){ return (String(s).toLowerCase().match(/[a-z][a-z'-]{1,}/g)||[]).filter(w=>!STOP.has(w)&&w.length>=3); }
+function buildIdentifiers(){
+  const uni={}, bi={}, seed=new Set();
+  // seed type-phrases from the Services tab (adjacent content words that are both "type")
+  (STATE.config.services||[]).forEach(s=>{const t=contentTokens(s);for(let i=0;i<t.length-1;i++){if(identCategory(t[i])==='type'&&identCategory(t[i+1])==='type')seed.add(t[i]+' '+t[i+1]);}});
+  STATE.rows.forEach(r=>{
+    const t=contentTokens(r.kw), su=new Set(), sb=new Set();
+    t.forEach(w=>{ if(!su.has(w)){su.add(w);uni[w]=(uni[w]||0)+1;} });
+    for(let i=0;i<t.length-1;i++){ if(identCategory(t[i])==='type'&&identCategory(t[i+1])==='type'){const b=t[i]+' '+t[i+1]; if(!sb.has(b)){sb.add(b);bi[b]=(bi[b]||0)+1;}} }
+  });
+  seed.forEach(b=>{ if(!bi[b])bi[b]=2; });           // ensure known service phrases are recognised
+  STATE._freq=uni;
+  // type PHRASES: frequent 2-word offerings (appear in >=3 topics), most common first
+  STATE.majorPhrases=Object.entries(bi).filter(([,n])=>n>=3).sort((a,b)=>b[1]-a[1]).slice(0,60).map(([p])=>p);
+  seed.forEach(p=>{ if(!STATE.majorPhrases.includes(p))STATE.majorPhrases.push(p); });   // always keep service-tab phrases
+  // type WORDS: fallback single offering nouns
+  STATE.majorTypeWords=Object.entries(uni).filter(([w])=>identCategory(w)==='type').sort((a,b)=>b[1]-a[1]).slice(0,30).map(([w])=>w);
+  // ranking list for pickType: phrases first (more specific), then single words
+  STATE.majorIds=[...STATE.majorPhrases, ...STATE.majorTypeWords];
+}
+/* Tag each row: TYPE = phrases present (else single offering word); MODIFIER = any qualifier word. */
+function computeRowIdents(){
+  const phrases=STATE.majorPhrases||[], words=STATE.majorTypeWords||[];
+  STATE.rows.forEach(r=>{
+    const kw=' '+r.kw.toLowerCase()+' ';
+    const has=p=>new RegExp('(^|\\s)'+rxEsc(p)+'(\\s|$)').test(kw);
+    let typ=phrases.filter(has);                       // prefer multi-word phrases
+    if(!typ.length)typ=words.filter(has);              // fall back to single words
+    r.typeIds=typ;
+    const toks=[...new Set(r.kw.toLowerCase().match(/[a-z][a-z'-]{1,}/g)||[])];
+    r.modIds=toks.filter(t=>!STOP.has(t)&&identCategory(t)==='mod');
+    r.idents=[...r.typeIds,...r.modIds];
+  });
+  // identifier = service TYPE + one or more MODIFIERS
+  STATE.rows.forEach(r=>{
+    r.comboType = r.typeIds[0] || '(no type)';
+    r.comboMods = pickMods(r);                       // array — can be multiple
+    r.combo = r.comboMods.length ? r.comboType+' + '+r.comboMods.join(' + ') : r.comboType;
+  });
+}
+VIEWS.ident=function(){
+  buildIdentifiers();
+  const freq=STATE._freq||{};
+  const entries=Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,60);
+  const max=entries.length?entries[0][1]:1;
+  // auto-suggest classes
+  entries.forEach(([w])=>{ if(STATE.identifiers[w])return;
+    if(STATE.config.competitors.some(c=>norm(c)===w))STATE.identifiers[w]='brand';
+    else if(US_STATES.includes(w)||BIG_CITIES.includes(w))STATE.identifiers[w]='loc';
+  });
+  $('#view').innerHTML=`
+  <div class="pagehead"><h2>Word Identifiers</h2>
+    <p>Every <b>word</b> (not full keyword) across all primary + secondary keywords, counted by how many topics it appears in. Classify the major identifiers — your choices bulk-drive selection & rejection in the shortlist.</p></div>
+  <div class="banner">Tip: mark <b>Core</b> = must-have relevant words, <b>Irrelevant</b>/<b>Other brand</b>/<b>Off-geo</b> = reject any topic containing them. Then re-run rejection.</div>
+  <div class="card">
+    <h3>Top identifiers <span style="font-weight:400;color:var(--muted)">(${entries.length} of ${Object.keys(freq).length} unique words)</span></h3>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--green)"></i>Core / relevant</span>
+      <span><i class="dot" style="background:var(--red)"></i>Irrelevant — reject</span>
+      <span><i class="dot" style="background:var(--blue)"></i>Other brand — reject</span>
+      <span><i class="dot" style="background:var(--amber)"></i>Off-geo location — reject</span>
+    </div>
+    <div class="idgrid" style="margin-top:14px">
+      ${entries.map(([w,n])=>{const cl=STATE.identifiers[w]||'';return `
+        <div class="idcard">
+          <div class="top"><span class="word">${esc(w)}</span><span class="freq">${n} topics</span></div>
+          <div class="bar"><i style="width:${Math.round(n/max*100)}%"></i></div>
+          <div class="idclass">
+            <button class="core ${cl==='core'?'on':''}" data-w="${esc(w)}" data-c="core">Core</button>
+            <button class="rej ${cl==='rej'?'on':''}" data-w="${esc(w)}" data-c="rej">Reject</button>
+            <button class="brand ${cl==='brand'?'on':''}" data-w="${esc(w)}" data-c="brand">Brand</button>
+            <button class="loc ${cl==='loc'?'on':''}" data-w="${esc(w)}" data-c="loc">Geo</button>
+          </div>
+        </div>`;}).join('')}
+    </div>
+  </div>
+  <div class="row-actions">
+    <button class="btn" id="applyId">Apply identifier rejections</button>
+    <button class="btn sec" id="next">Continue to Relevance Q&A →</button>
+    <span id="idMsg" style="color:var(--muted);font-size:12.5px"></span>
+  </div>`;
+  $('#view').querySelectorAll('.idclass button').forEach(b=>b.onclick=()=>{
+    const w=b.dataset.w,c=b.dataset.c;
+    STATE.identifiers[w]=STATE.identifiers[w]===c?'':c;
+    VIEWS.ident();
+  });
+  $('#applyId').onclick=()=>{const n=runAutoReject();renderStats();$('#idMsg').textContent='Re-ran rejection — '+n+' topics rejected total.';toast('Applied identifiers');};
+  $('#next').onclick=()=>{buildQuestions();go(4);};
+};
+
+/* ============================ VIEW: Q&A ============================ */
+function buildQuestions(){
+  if(STATE.questions.length)return;
+  const freq=STATE._freq||{};
+  const c=STATE.config;
+  const qs=[];
+  // industry questions
+  c.industries.forEach(ind=>{const key=norm(ind).split(/\s+/)[0];
+    qs.push({id:'ind:'+ind, type:'keep-or-drop', word:key,
+      h:`Is "${ind}" a relevant audience?`,
+      m:`Keep = select every still-pending topic with "${key}". Drop = reject them all.`});});
+  // top identifiers — the biggest topic groups to decide in bulk
+  STATE.majorIds.slice(0,14)
+    .filter(w=>!c.industries.some(i=>norm(i).includes(w)))
+    .forEach(w=>qs.push({id:'w:'+w, type:'keep-or-drop', word:w,
+      h:`Is "${w}" relevant to what the client offers?`,
+      m:`Keep selects all pending "${w}" topics; Drop rejects every "${w}" topic.`}));
+  STATE.questions=qs.map(q=>({...q,answer:null,kept:0,dropped:0}));
+}
+function countWord(w){const rx=new RegExp('\\b'+w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b');return STATE.rows.filter(r=>rx.test(blob(r))).length;}
+VIEWS.ask=function(){
+  buildQuestions();
+  const qs=STATE.questions;
+  $('#view').innerHTML=`
+  <div class="pagehead"><h2>Relevance Q&A</h2>
+    <p>Decide the biggest topic groups in one click. <b>Select all</b> marks every pending topic in that group as selected; <b>Reject all</b> rejects the whole group. Auto-rejected rows (zero-volume, off-geo…) stay rejected. Optional — skip any you'd rather handle by hand.</p></div>
+  <div class="card">
+    <h3>Questions <span style="font-weight:400;color:var(--muted)">(${qs.filter(q=>q.answer).length}/${qs.length} answered)</span></h3>
+    ${qs.length?qs.map((q,i)=>`
+      <div class="q ${q.answer?'answered':''}">
+        <div class="qh">${esc(q.h)}${q.answer==='keep'?`<span class="ans" style="color:var(--green)">✓ Kept ${q.kept} selected</span>`:q.answer==='drop'?`<span class="ans" style="color:var(--red)">✕ Dropped ${q.dropped}</span>`:q.answer==='skip'?`<span class="ans" style="color:var(--muted)">Skipped</span>`:''}</div>
+        <div class="qm">${esc(q.m)}</div>
+        ${q.answer?`<button class="btn ghost sm" data-i="${i}" data-a="undo" style="padding:2px 0">Undo</button>`:`<div class="qopts"><button class="keep" data-i="${i}" data-a="keep">Relevant — select all</button><button class="drop" data-i="${i}" data-a="drop">Not relevant — reject all</button><button data-i="${i}" data-a="skip" style="color:var(--muted)">Skip</button></div>`}
+      </div>`).join(''):'<div class="empty">No questions generated. Add industries in Setup to generate audience questions.</div>'}
+  </div>
+  <div class="row-actions">
+    <button class="btn" id="next">Continue to Shortlist →</button>
+  </div>`;
+  $('#view').querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>{
+    const q=STATE.questions[+b.dataset.i], a=b.dataset.a;
+    const rx=new RegExp('\\b'+q.word.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b');
+    if(a==='undo'){ q.answer=null;q.kept=0;q.dropped=0;VIEWS.ask();return; }
+    if(a==='skip'){q.answer='skip';VIEWS.ask();return;}
+    q.answer=a; q.kept=0; q.dropped=0;
+    STATE.rows.forEach(r=>{ if(!rx.test(blob(r)))return;
+      if(a==='drop'){ if(r.status!=='rejected'){r.status='rejected';r.reason='Q&A: "'+q.word+'" not relevant';r.manual=true;} q.dropped++; }
+      else { // keep = bulk-SELECT this group (only promote pending; auto-rejected stay rejected)
+        if(r.status==='pending'){r.status='selected';r.reason='Q&A: "'+q.word+'" relevant';r.manual=true;q.kept++;} }
+    });
+    toast(a==='drop'?('Rejected '+q.dropped+' "'+q.word+'" topics'):('Selected '+q.kept+' "'+q.word+'" topics'));
+    renderStats();VIEWS.ask();
+  });
+  $('#next').onclick=()=>go(2);
+};
+
+/* ============================ VIEW: SHORTLIST ============================ */
+function pageTypes(){
+  const set=[...new Set(STATE.rows.map(r=>r.pageType))];
+  // transactional first (Service/Product/Category…), Blog last
+  return set.sort((a,b)=>(a==='Blog')-(b==='Blog')||a.localeCompare(b));
+}
+/* ---- merged identifiers: one combined "qualifier + service-type" phrase per topic ---- */
+const WEDGE=new Set(['corporate','executive','executives','team','teams','employee','employees','staff','workplace','workforce','company','business','b2b']);
+/* the MODIFIER half of the identifier — can be MULTIPLE modifiers (e.g. corporate + online).
+   Uses all lexicon modifiers present (B2B/wedge first), else the salient extra word. */
+function pickMods(r){
+  if(r.modIds.length){
+    return [...r.modIds].sort((a,b)=>(WEDGE.has(b)-WEDGE.has(a))||a.localeCompare(b));  // wedge first, then alpha (stable key)
+  }
+  const head=r.typeIds[0]||''; const hw=new Set(head.split(' '));
+  const extra=contentTokens(r.kw).find(w=>!hw.has(w));
+  return extra ? [extra] : [];
+}
+function counts(o){o.total=o.rows.length;o.sel=o.rows.filter(r=>r.status==='selected').length;o.rej=o.rows.filter(r=>r.status==='rejected').length;o.pen=o.total-o.sel-o.rej;}
+/* group phase rows by their merged identifier — single flat list */
+function buildGroups(rows){
+  const m=new Map();
+  rows.forEach(r=>{const k=r.combo||'(no identifier)'; if(!m.has(k))m.set(k,{key:k,type:r.comboType,mods:r.comboMods||[],rows:[]}); m.get(k).rows.push(r);});
+  const arr=[...m.values()]; arr.forEach(counts);
+  arr.sort((a,b)=>b.total-a.total);
+  return arr;
+}
+/* group phase rows by Customer Profile (ICP) */
+function buildProfileGroups(rows){
+  const m=new Map();
+  rows.forEach(r=>{const k=r.profile||'General'; if(!m.has(k))m.set(k,{key:k,rows:[]}); m.get(k).rows.push(r);});
+  const arr=[...m.values()]; arr.forEach(counts);
+  return arr;
+}
+function applyProfileGroup(profile,key,action){
+  const rows=STATE.rows.filter(r=>r.pageType===STATE.phase && r.profile===profile && (r.combo||'(no identifier)')===key);
+  let n=0;
+  rows.forEach(r=>{
+    if(action==='select'){ if(r.status==='pending'){r.status='selected';r.reason='ICP '+profile+' · '+key;r.manual=true;n++;} }
+    else if(action==='reject'){ if(r.status!=='rejected'){r.status='rejected';r.reason='ICP '+profile+' · '+key;r.manual=true;n++;} }
+    else { r.status='pending';r.reason='';r.autoReason='';r.manual=false;n++; }
+  });
+  toast((action==='select'?'Kept ':action==='reject'?'Rejected ':'Reset ')+n+' · '+key);
+  renderStats();render();
+}
+function applyProfile(profile,action){
+  const rows=STATE.rows.filter(r=>r.pageType===STATE.phase && r.profile===profile);
+  let n=0;
+  rows.forEach(r=>{
+    if(action==='select'){ if(r.status==='pending'){r.status='selected';r.reason='ICP approved: '+profile;r.manual=true;n++;} }
+    else if(action==='reject'){ if(r.status!=='rejected'){r.status='rejected';r.reason='ICP not relevant: '+profile;r.manual=true;n++;} }
+    else { r.status='pending';r.reason='';r.autoReason='';r.manual=false;n++; }
+  });
+  toast((action==='select'?'Approved ':action==='reject'?'Rejected ':'Reset ')+n+' · '+profile);
+  renderStats();render();
+}
+function applyGroup(key,action){
+  const g=buildGroups(STATE.rows.filter(r=>r.pageType===STATE.phase)).find(x=>x.key===key);
+  if(!g)return; let n=0;
+  g.rows.forEach(r=>{
+    if(action==='select'){ if(r.status==='pending'){r.status='selected';r.reason='Group: '+key;r.manual=true;n++;} }
+    else if(action==='reject'){ if(r.status!=='rejected'){r.status='rejected';r.reason='Group: '+key;r.manual=true;n++;} }
+    else { r.status='pending';r.reason='';r.autoReason='';r.manual=false;n++; }
+  });
+  toast((action==='select'?'Selected ':action==='reject'?'Rejected ':'Reset ')+n+' · '+key);
+  renderStats();render();
+}
+function renderShort(mode){
+  STATE.shortView=mode;                // 'icp' (review profiles) or 'groups' (decide topics)
+  const types=pageTypes();
+  if(!types.includes(STATE.phase))STATE.phase=types[0]||'Blog';
+  const phase=STATE.phase;
+  let all=STATE.rows.filter(r=>r.pageType===phase);
+  if(STATE.groupSearch){const s=norm(STATE.groupSearch); all=all.filter(r=>blob(r).includes(s)||norm(r.combo).includes(s)||norm(r.profile).includes(s));}  // global filter — keeps every level's counts consistent
+  const cnt=arr=>({sel:arr.filter(r=>r.status==='selected').length,rej:arr.filter(r=>r.status==='rejected').length,pen:arr.filter(r=>r.status==='pending').length});
+  const ca=cnt(all);
+  const transPend=STATE.rows.filter(r=>r.pageType!=='Blog'&&r.status==='pending').length;
+  const isTrans=phase!=='Blog';
+  const tabLabel=(t,i)=>`${'①②③④⑤'[i]||(i+1)+'.'} ${t==='Blog'?'Blogs':t+(t==='Service'?' / Product':'')} (${STATE.rows.filter(r=>r.pageType===t).length})`;
+
+  // ---------- TABLE view body ----------
+  const idCount={}; all.forEach(r=>r.idents.forEach(w=>idCount[w]=(idCount[w]||0)+1));
+  if(STATE.identFilter!=='all'&&!idCount[STATE.identFilter])STATE.identFilter='all';
+  const idOptions=Object.entries(idCount).sort((a,b)=>b[1]-a[1]).map(([w,n])=>`<option value="${esc(w)}" ${STATE.identFilter===w?'selected':''}>${esc(w)} (${n})</option>`).join('');
+  let rows=all.slice();
+  if(STATE.search){const s=norm(STATE.search);rows=rows.filter(r=>blob(r).includes(s));}
+  if(STATE.filter!=='all')rows=rows.filter(r=>r.status===STATE.filter);
+  if(STATE.identFilter!=='all')rows=rows.filter(r=>r.idents.includes(STATE.identFilter));
+  if(STATE.profileFilter!=='all')rows=rows.filter(r=>r.profile===STATE.profileFilter);
+  const profCounts={}; all.forEach(r=>profCounts[r.profile]=(profCounts[r.profile]||0)+1);
+  const profOpts=Object.entries(profCounts).sort((a,b)=>b[1]-a[1]).map(([p,n])=>`<option value="${esc(p)}" ${STATE.profileFilter===p?'selected':''}>${esc(p)} (${n})</option>`).join('');
+  const profSelect=r=>`<select class="profsel" data-id="${r.id}">${profileOptions().map(p=>`<option ${r.profile===p?'selected':''}>${esc(p)}</option>`).join('')}</select>`;
+  const {key,dir}=STATE.sort;
+  rows.sort((a,b)=>{let x,y; if(key==='vol'){x=a.vol;y=b.vol;} else if(key==='rel'){x=parseFloat(a.rel)||0;y=parseFloat(b.rel)||0;} else {x=norm(a[key]);y=norm(b[key]);} return x<y?dir:x>y?-dir:0;});
+  const total=rows.length, pages=Math.max(1,Math.ceil(total/PAGE_SIZE));
+  STATE.page=Math.min(STATE.page,pages-1);
+  const view=rows.slice(STATE.page*PAGE_SIZE,(STATE.page+1)*PAGE_SIZE);
+  const tableBody=`
+  <div class="tablewrap">
+    <div class="tbar">
+      <input type="text" id="srch" placeholder="Search keyword / topic…" value="${esc(STATE.search)}">
+      <select id="filt">
+        ${[['all','All ('+all.length+')'],['pending','Pending ('+ca.pen+')'],['selected','Selected ('+ca.sel+')'],['rejected','Rejected ('+ca.rej+')']].map(([v,l])=>`<option value="${v}" ${STATE.filter===v?'selected':''}>${l}</option>`).join('')}
+      </select>
+      <select id="identFilt" title="Filter by identifier">
+        <option value="all" ${STATE.identFilter==='all'?'selected':''}>All identifiers</option>
+        ${idOptions}
+      </select>
+      <select id="profFilt" title="Filter by customer profile">
+        <option value="all" ${STATE.profileFilter==='all'?'selected':''}>All profiles</option>
+        ${profOpts}
+      </select>
+      <button class="btn sec sm" id="selAllVis">Select all shown</button>
+      <button class="btn sec sm" id="rejAllVis">Reject all shown</button>
+      <button class="btn sec sm" id="serpVis" title="Fetch top-10 Google rankings for the topics shown">⌕ Rankings: shown</button>
+      <button class="btn sm" id="serpAll" title="Fetch top-10 rankings for all PENDING keywords (rejected are skipped) and auto-set ICP from who ranks">⌕ Rankings: all pending${(()=>{const n=STATE.rows.filter(r=>r.status==='pending'&&!r.serpDone).length;return n?' ('+n+')':'';})()}</button>
+      <span style="flex:1"></span>
+      <button class="btn sm" id="export">⤓ Export CSV</button>
+    </div>
+    <div class="scrollx">
+    <table>
+      <thead><tr>
+        <th data-s="kw">Primary Keyword</th>
+        <th data-s="topic">Topic</th>
+        <th>Service / Product Type</th>
+        <th>Modifier</th>
+        <th data-s="profile">Customer Profile</th>
+        <th data-s="vol">Volume</th>
+        <th data-s="rel">Rel.</th>
+        <th data-s="status">Status</th>
+        <th>Reason</th>
+        <th>Decide</th>
+        <th>Top-10 Rankings</th>
+      </tr></thead>
+      <tbody>
+      ${view.length?view.map(r=>`
+        <tr class="${r.status==='rejected'?'rejected':r.status==='selected'?'selected':''}">
+          <td class="kw">${esc(r.kw)}</td>
+          <td>${esc(r.topic)}</td>
+          <td><div class="idcell">${r.typeIds.map(w=>`<span class="ichip">${esc(w)}</span>`).join('')||'<span style="color:var(--muted)">—</span>'}</div></td>
+          <td><div class="idcell">${r.modIds.map(w=>`<span class="ichip mod">${esc(w)}</span>`).join('')||'<span style="color:var(--muted)">—</span>'}</div></td>
+          <td>${profSelect(r)}</td>
+          <td>${r.vol.toLocaleString()}</td>
+          <td>${esc(r.rel)}</td>
+          <td><span class="pill ${r.status==='selected'?'sel':r.status==='rejected'?'rej':'pend'}">${r.status}</span></td>
+          <td><div class="reason" contenteditable data-id="${r.id}">${esc(r.reason)}</div></td>
+          <td><div class="miniact"><button class="y" data-id="${r.id}" data-act="selected">Keep</button><button class="n" data-id="${r.id}" data-act="rejected">Reject</button></div></td>
+          <td>${r.serpDone?`<div class="serpcell">${r.serp.length?r.serp.map((u,i)=>`<a href="${esc(u)}" target="_blank" title="${esc(u)}">${i+1}. ${esc(hostOf(u))}</a>`).join(''):'<span style="color:var(--muted)">no results</span>'}</div>`:(r.status==='rejected'?'<span style="color:var(--muted)">—</span>':`<button class="btn sec sm serpbtn" data-id="${r.id}">Get top-10</button>`)}</td>
+        </tr>`).join(''):`<tr><td colspan="11"><div class="empty">No topics match.</div></td></tr>`}
+      </tbody>
+    </table>
+    </div>
+    <div class="pager">
+      <span>${total} topics · page ${STATE.page+1}/${pages}</span>
+      <button class="btn sec sm" id="prev" ${STATE.page===0?'disabled':''}>‹ Prev</button>
+      <button class="btn sec sm" id="nextp" ${STATE.page>=pages-1?'disabled':''}>Next ›</button>
+    </div>
+  </div>`;
+
+  // ---------- GROUPS view body (flat list of merged identifiers) ----------
+  const pendOnly=STATE.groupPendingOnly;
+  const groupsAll=buildGroups(all);
+  let visible=groupsAll;
+  if(STATE.groupSearch){const s=norm(STATE.groupSearch);visible=visible.filter(g=>norm(g.key).includes(s));}
+  if(pendOnly)visible=visible.filter(g=>g.pen>0);
+  visible=visible.slice().sort((a,b)=>(pendOnly?b.pen-a.pen:b.total-a.total)||b.total-a.total);  // biggest bucket on top
+  const shownG=visible.slice(0,150);
+  const decidedCount=groupsAll.filter(g=>g.pen===0).length;
+  // when reviewing (pending-only) lead with the count that matters: how many to review
+  const gcount=g=>pendOnly
+    ? `<b>${g.pen}</b> to review${g.total>g.pen?` <span style="color:var(--muted);font-weight:400">of ${g.total} · ${g.rej?g.rej+' rejected':''}${g.rej&&g.sel?', ':''}${g.sel?g.sel+' kept':''} hidden</span>`:''}`
+    : `<b>${g.total}</b> topics · <span style="color:var(--green)">${g.sel}✓</span> <span style="color:var(--red)">${g.rej}✕</span> <span style="color:var(--amber)">${g.pen} pending</span>`;
+  const topicList=rows=>`<div class="grplist">${rows.slice().sort((a,b)=>b.vol-a.vol).map(r=>`<div class="grpitem">${pendOnly?'':`<span class="pill ${r.status==='selected'?'sel':r.status==='rejected'?'rej':'pend'}">${r.status}</span>`}<span class="kw" style="flex:1">${esc(r.kw)}</span><span class="gv">${r.vol.toLocaleString()}</span><span class="miniact"><button class="y" data-id="${r.id}" data-act="selected">Keep</button><button class="n" data-id="${r.id}" data-act="rejected">Reject</button></span></div>`).join('')}</div>`;
+  const groupsBody=`
+  <div class="tablewrap">
+    <div class="tbar">
+      <input type="text" id="gsrch" placeholder="Filter identifiers…" value="${esc(STATE.groupSearch)}">
+      <label style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;white-space:nowrap">
+        <span class="sw" style="width:38px;height:21px"><input type="checkbox" id="gpend" ${pendOnly?'checked':''}><span class="sl"></span></span>
+        Pending only
+      </label>
+      <span style="flex:1"></span>
+      <span style="color:var(--muted);font-size:12px">${visible.length} to review${decidedCount&&pendOnly?` · ${decidedCount} done`:''}</span>
+      <button class="btn sm" id="export">⤓ Export CSV</button>
+    </div>
+    <div style="padding:8px 14px 12px">
+      ${shownG.length?shownG.map(g=>{const open=!!STATE.groupExpanded[g.key];return `
+        <div class="grp">
+          <div class="grphead">
+            <span class="grpchips"><span class="ichip">${esc(g.type)}</span>${(g.mods||[]).map(m=>`<span class="plus">+</span><span class="ichip mod">${esc(m)}</span>`).join('')}</span>
+            <span class="grpcounts">${gcount(g)}</span>
+            <span class="grpbtns">
+              <button class="btn sec sm gact" data-k="${esc(g.key)}" data-a="select" ${g.pen?'':'disabled'}>✓ Keep all</button>
+              <button class="btn sec sm gact" data-k="${esc(g.key)}" data-a="reject" ${g.pen?'':'disabled'}>✕ Reject all</button>
+              <button class="btn ghost sm gexp" data-k="${esc(g.key)}">${open?'Hide':'View'}</button>
+              ${(g.sel||g.rej)?`<button class="btn ghost sm gact" data-k="${esc(g.key)}" data-a="reset">Reset</button>`:''}
+            </span>
+          </div>
+          ${open?topicList(pendOnly?g.rows.filter(r=>r.status==='pending'):g.rows):''}
+        </div>`;}).join(''):`<div class="empty">${groupsAll.length&&pendOnly?'🎉 Everything in this phase is decided. Turn off “Pending only” to revisit, or move to the next phase.':'No identifiers match.'}</div>`}
+    </div>
+    ${visible.length>shownG.length?`<div class="pager">Showing top ${shownG.length} of ${visible.length} — use the filter to narrow.</div>`:''}
+  </div>`;
+
+  // ---------- BY ICP view body (approve / reject whole customer profiles) ----------
+  let icpGroups=buildProfileGroups(all).sort((a,b)=>(pendOnly?b.pen-a.pen:b.total-a.total)||b.total-a.total);
+  const icpVisible=pendOnly?icpGroups.filter(g=>g.pen>0):icpGroups;
+  const icpBody=`
+  <div class="tablewrap">
+    <div class="tbar">
+      <label style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;white-space:nowrap">
+        <span class="sw" style="width:38px;height:21px"><input type="checkbox" id="gpend" ${pendOnly?'checked':''}><span class="sl"></span></span>
+        Pending only
+      </label>
+      <input type="text" id="gsrch" placeholder="Find keyword / identifier…" value="${esc(STATE.groupSearch)}" style="width:200px">
+      <button class="btn sec sm" id="serpAll" title="Fetch top-10 rankings for all PENDING keywords and auto-set ICP from who ranks">⌕ Rankings: all pending${(()=>{const n=STATE.rows.filter(r=>r.status==='pending'&&!r.serpDone).length;return n?' ('+n+')':'';})()}</button>
+      <span style="flex:1"></span>
+      <span style="color:var(--muted);font-size:12px">${icpVisible.length} profiles · ${all.length} topics${pendOnly?` · ${all.filter(r=>r.status!=='pending').length} decided (hidden)`:''}</span>
+      <button class="btn sm" id="export">⤓ Export CSV</button>
+    </div>
+    <div style="padding:8px 14px 12px">
+      <div class="banner" style="margin:0 0 12px">👤 <b>Review by customer profile (ICP), then drill to topics.</b> Run <b>Rankings: all pending</b> first (sets ICP from who ranks). For each profile: <b>✓ Approve all</b> if it's the buyer, <b>✕ Reject all</b> if not, or <b>View identifiers</b> to refine. Turn off <b>Pending only</b> to see every topic.</div>
+      ${icpVisible.length?icpVisible.map(g=>{
+        const open=!!STATE.groupExpanded['ICP:'+g.key];
+        const sample=(pendOnly?g.rows.filter(r=>r.status==='pending'):g.rows).slice().sort((a,b)=>b.vol-a.vol).slice(0,2).map(r=>r.kw);
+        let subs=[]; if(open){ subs=buildGroups(g.rows); if(pendOnly)subs=subs.filter(s=>s.pen>0); subs.sort((a,b)=>(pendOnly?b.pen-a.pen:b.total-a.total)||b.total-a.total); }
+        return `
+        <div class="grp">
+          <div class="grphead">
+            <span class="grpchips"><span class="ichip" style="background:var(--blue-soft);color:var(--blue)">${esc(g.key)}</span></span>
+            <span class="grpcounts">${gcount(g)}</span>
+            <span class="grpbtns">
+              <button class="btn sec sm icpact" data-k="${esc(g.key)}" data-a="select" ${g.pen?'':'disabled'}>✓ Approve all</button>
+              <button class="btn sec sm icpact" data-k="${esc(g.key)}" data-a="reject" ${g.pen?'':'disabled'}>✕ Reject all</button>
+              <button class="btn ghost sm gexp" data-k="ICP:${esc(g.key)}">${open?'Hide':'View identifiers'}</button>
+              ${(g.sel||g.rej)?`<button class="btn ghost sm icpact" data-k="${esc(g.key)}" data-a="reset">Reset</button>`:''}
+            </span>
+          </div>
+          ${sample.length?`<div class="grpsample">e.g. ${sample.map(s=>`“${esc(s)}”`).join('  ·  ')}</div>`:''}
+          ${open?`<div class="grpbody">${subs.length?subs.map(sg=>{const so=!!STATE.groupExpanded['ICPID:'+g.key+'||'+sg.key];return `
+            <div class="modrow">
+              <div class="modhead">
+                <span class="grpchips"><span class="plus">↳</span><span class="ichip">${esc(sg.type)}</span>${(sg.mods||[]).map(m=>`<span class="plus">+</span><span class="ichip mod">${esc(m)}</span>`).join('')}</span>
+                <span class="grpcounts">${gcount(sg)}</span>
+                <span class="grpbtns">
+                  <button class="btn sec sm icpgact" data-p="${esc(g.key)}" data-k="${esc(sg.key)}" data-a="select" ${sg.pen?'':'disabled'}>✓ Keep all</button>
+                  <button class="btn sec sm icpgact" data-p="${esc(g.key)}" data-k="${esc(sg.key)}" data-a="reject" ${sg.pen?'':'disabled'}>✕ Reject all</button>
+                  <button class="btn ghost sm gexp" data-k="ICPID:${esc(g.key)}||${esc(sg.key)}">${so?'Hide':'View'}</button>
+                  ${(sg.sel||sg.rej)?`<button class="btn ghost sm icpgact" data-p="${esc(g.key)}" data-k="${esc(sg.key)}" data-a="reset">Reset</button>`:''}
+                </span>
+              </div>
+              ${so?topicList(pendOnly?sg.rows.filter(r=>r.status==='pending'):sg.rows):''}
+            </div>`;}).join(''):'<div class="empty" style="padding:18px">No identifiers match here.</div>'}</div>`:''}
+        </div>`;}).join(''):`<div class="empty">${icpGroups.length&&pendOnly?'🎉 Every profile in this phase is decided. Turn off “Pending only” to see all topics.':'No profiles.'}</div>`}
+    </div>
+  </div>`;
+
+  $('#view').innerHTML=`
+  <div class="pagehead"><h2>Shortlist</h2><p>Review by <b>customer profile (ICP)</b> → drill into a profile's <b>identifiers</b> → individual <b>topics</b>. Approve/reject at any level. Work Service / Product first, then Blogs.</p></div>
+  <div class="phasetabs">
+    ${types.map((t,i)=>`<button class="${phase===t?'on':''}" data-p="${esc(t)}">${tabLabel(t,i)}</button>`).join('')}
+  </div>
+  ${isTrans&&transPend>0?`<div class="banner">Finish Service / Product topics first — <b>${transPend}</b> still to review. Then move to Blogs.</div>`:''}
+  ${isTrans&&transPend===0&&types.includes('Blog')?`<div class="banner">✓ Transactional phase complete. <button class="btn sm" id="toBlog" style="margin-left:auto">Move to Blogs →</button></div>`:''}
+
+  ${icpBody}`;
+
+  // handlers
+  $('#view').querySelectorAll('.phasetabs [data-p]').forEach(b=>b.onclick=()=>{STATE.phase=b.dataset.p;STATE.page=0;render();});
+  if($('#toBlog'))$('#toBlog').onclick=()=>{STATE.phase='Blog';STATE.page=0;render();};
+  if($('#export'))$('#export').onclick=exportCsv;
+  if($('#serpAll'))$('#serpAll').onclick=()=>fetchSerpBulk(STATE.rows.filter(r=>r.status==='pending'));
+  if($('#icpNext'))$('#icpNext').onclick=()=>go(2);
+  if($('#gpend'))$('#gpend').onchange=e=>{STATE.groupPendingOnly=e.target.checked;render();};
+  if($('#gsrch'))$('#gsrch').oninput=e=>{STATE.groupSearch=e.target.value;render();};
+  $('#view').querySelectorAll('.gexp').forEach(b=>b.onclick=()=>{STATE.groupExpanded[b.dataset.k]=!STATE.groupExpanded[b.dataset.k];render();});
+  $('#view').querySelectorAll('.gact').forEach(b=>b.onclick=()=>applyGroup(b.dataset.k, b.dataset.a));
+  $('#view').querySelectorAll('.icpact').forEach(b=>b.onclick=()=>applyProfile(b.dataset.k, b.dataset.a));
+  $('#view').querySelectorAll('.icpgact').forEach(b=>b.onclick=()=>applyProfileGroup(b.dataset.p, b.dataset.k, b.dataset.a));
+  $('#view').querySelectorAll('.grpitem .miniact button').forEach(b=>b.onclick=()=>{
+    const r=STATE.rows.find(x=>x.id==b.dataset.id); r.status=b.dataset.act; r.manual=true;
+    if(b.dataset.act==='selected'&&/^Group|ICP|identifier|brand|Location|Zero|Free|Near|Informational|Job|Wrong|relevance|person/i.test(r.reason))r.reason='';
+    renderStats();render();
+  });
+}
+VIEWS.short=()=>renderShort('icp');
+/* ============================ SERP (Serper.dev) ============================ */
+function hostOf(u){ try{return new URL(u).hostname.replace(/^www\./,'');}catch(e){return u;} }
+async function fetchSerp(r){
+  const key=(STATE.config.serperKey||'').trim(), gl=(STATE.config.serpGl||'').trim();
+  let res;
+  if(key){
+    // direct call with a key entered in Setup (works anywhere, incl. opening the file locally)
+    const payload={q:r.kw,num:10,page:1};
+    if(/^[a-z]{2}$/i.test(gl)) payload.gl=gl.toLowerCase(); else if(gl) payload.location=gl;
+    res=await fetch('https://google.serper.dev/search',{method:'POST',headers:{'X-API-KEY':key,'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  } else {
+    // no key in the app → use the server-side proxy (Vercel function reads SERPER_KEY env var)
+    res=await fetch('/api/serp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q:r.kw,gl})});
+  }
+  if(!res.ok) throw new Error('Serper '+res.status+(key?'':' (set SERPER_KEY in Vercel, or paste a key in Setup)'));
+  const j=await res.json();
+  r.serp=(j.organic||[]).slice(0,10).map(o=>o.link||''); r.serpDone=true;
+  if(!r.profileEdited){ const p=classifyProfileFromSerp(r); if(p) r.profile=p; }   // decide ICP from rankings
+}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function fetchSerpBulk(rows){
+  rows=rows.filter(r=>!r.serpDone && r.status!=='rejected');   // never spend calls on rejected topics
+  if(!rows.length){toast('Nothing to fetch (rejected topics are skipped)');return;}
+  if(rows.length>60 && !confirm(`Fetch top-10 rankings for ${rows.length} keywords? That's ${rows.length} Serper calls.`))return;
+  let done=0,err=0;
+  for(const r of rows){
+    try{ await fetchSerp(r); }catch(e){ err++; if(err===1)toast('SERP error: '+e.message); }
+    done++; if(done%5===0||done===rows.length){toast('Rankings '+done+'/'+rows.length); renderStats();}
+    await sleep(300);
+  }
+  saveState(); toast('Rankings done · '+done+' fetched'+(err?' · '+err+' errors':'')); render();
+}
+function exportCsv(){
+  const cols=['Primary Keyword','Page Type','Topic','Total Search Volume','Relevance Score','Service/Product Type','Modifier','Customer Profile','Decision','Approved','Rejected','Reason'];
+  for(let i=1;i<=10;i++)cols.push('URL_'+i);
+  const q=s=>'"'+String(s==null?'':s).replace(/"/g,'""')+'"';
+  const decLabel=s=>s==='selected'?'Approved':s==='rejected'?'Rejected':'Pending';
+  const lines=[cols.join(',')];
+  STATE.rows.forEach(r=>lines.push([
+    r.kw, r.pageType, r.topic, r.vol, r.rel,
+    r.typeIds.join('; '),                       // identifier columns — each can hold more than one
+    r.modIds.join('; '),
+    r.profile,
+    decLabel(r.status),                         // Decision: Approved / Rejected / Pending
+    r.status==='selected'?'Yes':'No',           // Approved
+    r.status==='rejected'?'Yes':'No',           // Rejected
+    r.reason,                                   // reason for whatever was decided (approve or reject)
+    ...Array.from({length:10},(_,i)=>(r.serp||[])[i]||'')
+  ].map(q).join(',')));
+  const blob=new Blob([lines.join('\n')],{type:'text/csv'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='shortlist.csv';a.click();
+  toast('Exported '+STATE.rows.length+' rows');
+}
+
+/* ============================ PERSISTENCE ============================ */
+const LS_KEY='topicShortlist.v1';
+function saveState(){ try{ if(!STATE.rows.length)return; localStorage.setItem(LS_KEY, JSON.stringify(STATE)); }catch(e){} }
+function loadState(){ try{ const s=localStorage.getItem(LS_KEY); if(!s)return false; Object.assign(STATE, JSON.parse(s)); return !!(STATE.rows&&STATE.rows.length); }catch(e){return false;} }
+function clearSession(){ if(confirm('Start over? This clears the loaded AKR and all decisions on this device.')){ localStorage.removeItem(LS_KEY); STATE.rows=[]; STATE.step=0; location.reload(); } }
+function exportSession(){
+  const blob=new Blob([JSON.stringify(STATE)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='topic-session.json';a.click();
+  toast('Session saved to file');
+}
+function importSession(file){
+  const r=new FileReader();
+  r.onload=e=>{ try{ Object.assign(STATE, JSON.parse(e.target.result)); saveState(); toast('Session loaded'); render(); }catch(err){ alert('Invalid session file'); } };
+  r.readAsText(file);
+}
+// autosave: periodic + on tab hide / unload (no per-handler instrumentation needed)
+setInterval(saveState, 4000);
+window.addEventListener('beforeunload', saveState);
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden) saveState(); });
+
+/* ============================ BOOT ============================ */
+loadState();
+render();
+</script>
+</body>
+</html>

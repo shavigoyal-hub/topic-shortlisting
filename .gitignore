@@ -1,0 +1,7 @@
+node_modules/
+.vercel/
+.DS_Store
+*.log
+# never commit local data / sessions
+*.csv
+*.xlsx
