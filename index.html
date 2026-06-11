@@ -609,7 +609,8 @@ function ingest(aoa){
 function processRows(){
   buildIdentifiers();
   computeRowIdents();
-  classifyProfiles();          // customer-profile (ICP) per query, from primary + secondary keywords
+  applySerpCache();            // restore previously-fetched rankings (no API calls)
+  classifyProfiles();          // customer-profile (ICP) per query
   runAutoReject();
 }
 
@@ -1201,28 +1202,42 @@ function renderShort(mode){
 VIEWS.short=()=>renderShort('icp');
 /* ============================ SERP (Serper.dev) ============================ */
 function hostOf(u){ try{return new URL(u).hostname.replace(/^www\./,'');}catch(e){return u;} }
+/* persistent keyword→rankings cache (survives reloads AND re-uploads; separate from the session) */
+const SERP_CACHE_KEY='topicShortlist.serpCache.v1';
+let SERP_CACHE={};
+function loadSerpCache(){ try{SERP_CACHE=JSON.parse(localStorage.getItem(SERP_CACHE_KEY)||'{}');}catch(e){SERP_CACHE={};} }
+function saveSerpCache(){ try{localStorage.setItem(SERP_CACHE_KEY, JSON.stringify(SERP_CACHE));}catch(e){} }
+/* apply SERP results to a row: set ICP from page titles + reject branded queries */
+function applySerpResult(r){
+  if(!r.profileEdited) r.profile = classifyProfileFromSerp(r) || classifyProfile(r);
+  const brand=serpBrandHit(r);
+  if(brand && !r.manual && r.status!=='rejected'){ r.status='rejected'; r.reason='Branded query — results dominated by '+brand; r.manual=true; }
+}
+/* restore cached rankings onto rows with no API call (called on upload/process) */
+function applySerpCache(){
+  STATE.rows.forEach(r=>{ if(r.serpDone)return; const c=SERP_CACHE[r.kw]; if(c){ r.serp=c.serp||[]; r.serpTitles=c.titles||[]; r.serpDone=true; applySerpResult(r); } });
+}
 async function fetchSerp(r){
+  const cached=SERP_CACHE[r.kw];
+  if(cached){ r.serp=cached.serp||[]; r.serpTitles=cached.titles||[]; r.serpDone=true; applySerpResult(r); return {cached:true}; }
   const key=(STATE.config.serperKey||'').trim(), gl=(STATE.config.serpGl||'').trim();
   let res;
   if(key){
-    // direct call with a key entered in Setup (works anywhere, incl. opening the file locally)
     const payload={q:r.kw,num:10,page:1};
     if(/^[a-z]{2}$/i.test(gl)) payload.gl=gl.toLowerCase(); else if(gl) payload.location=gl;
     res=await fetch('https://google.serper.dev/search',{method:'POST',headers:{'X-API-KEY':key,'Content-Type':'application/json'},body:JSON.stringify(payload)});
   } else {
-    // no key in the app → use the server-side proxy (Vercel function reads SERPER_KEY env var)
     res=await fetch('/api/serp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q:r.kw,gl})});
   }
   if(!res.ok) throw new Error('Serper '+res.status+(key?'':' (set SERPER_KEY in Vercel, or paste a key in Setup)'));
   const j=await res.json();
   const items=(j.organic||[]).slice(0,10);
   r.serp=items.map(o=>o.link||'');
-  // titles + snippets of the MEANINGFUL ranking pages (skip generic/social/forum/video + homepages)
   r.serpTitles=items.filter(o=>{const h=hostOf(o.link||'');return !IGNORE_DOMAINS.test(h)&&!isHomepage(o.link||'');}).map(o=>((o.title||'')+' '+(o.snippet||'')).trim());
   r.serpDone=true;
-  if(!r.profileEdited) r.profile = classifyProfileFromSerp(r) || classifyProfile(r);   // ICP from what the ranking pages are about
-  const brand=serpBrandHit(r);                                                          // branded/navigational query → reject
-  if(brand && !r.manual && r.status!=='rejected'){ r.status='rejected'; r.reason='Branded query — results dominated by '+brand; }
+  SERP_CACHE[r.kw]={serp:r.serp,titles:r.serpTitles}; saveSerpCache();   // cache by keyword
+  applySerpResult(r);
+  return {cached:false};
 }
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function fetchSerpBulk(rows, auto){
@@ -1233,11 +1248,12 @@ async function fetchSerpBulk(rows, auto){
   let done=0,err=0;
   for(const r of rows){
     if(STATE.serpCancel)break;
-    try{ await fetchSerp(r); }catch(e){ err++; if(err===1)toast('SERP error: '+e.message); }
+    let hit=false;
+    try{ const o=await fetchSerp(r); hit=o&&o.cached; }catch(e){ err++; if(err===1)toast('SERP error: '+e.message); }
     done++;
     const pe=document.getElementById('serpProg'); if(pe)pe.textContent=done+'/'+rows.length;
-    if(done%10===0)renderStats();
-    await sleep(300);
+    if(done%10===0){renderStats();saveState();}
+    if(!hit) await sleep(300);   // no rate-limit wait for cached results
   }
   STATE.serpRunning=false;
   saveState(); toast('Rankings '+(STATE.serpCancel?'stopped at '+done:'done · '+done+' fetched')+(err?' · '+err+' errors':'')); render();
@@ -1263,7 +1279,10 @@ function exportCsv(){
 
 /* ============================ PERSISTENCE ============================ */
 const LS_KEY='topicShortlist.v1';
-function saveState(){ try{ if(!STATE.rows.length)return; localStorage.setItem(LS_KEY, JSON.stringify(STATE)); }catch(e){} }
+function saveState(){ try{ if(!STATE.rows.length)return;
+  // strip the bulky per-row rankings (kept in the separate SERP cache) so the session stays small
+  const slim={...STATE, rows:STATE.rows.map(r=>{const o={...r}; delete o.serp; delete o.serpTitles; return o;})};
+  localStorage.setItem(LS_KEY, JSON.stringify(slim)); }catch(e){} }
 function loadState(){ try{ const s=localStorage.getItem(LS_KEY); if(!s)return false; const p=JSON.parse(s);
   const rules={...STATE.rules, ...(p.rules||{})};      // merge so new default flags (e.g. org) survive an old session
   const config={...STATE.config, ...(p.config||{})};
@@ -1286,6 +1305,7 @@ window.addEventListener('beforeunload', saveState);
 document.addEventListener('visibilitychange', ()=>{ if(document.hidden) saveState(); });
 
 /* ============================ BOOT ============================ */
+loadSerpCache();
 loadState();
 STATE.serpRunning=false; STATE.serpCancel=false; STATE.serpAuto=false;   // reset transient rankings flags each load
 render();
