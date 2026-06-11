@@ -422,6 +422,10 @@ VIEWS.setup=function(){
         <div class="taginput"><input type="text" id="locIn" placeholder="state / city / region"><button class="btn sec sm" id="locAdd">Add</button></div>
         <div class="tags" id="locTags"></div>
       </div>
+      <div id="natBox" style="${c.geoMode==='national'?'':'display:none'}">
+        <label class="fl">Country <span style="font-weight:400;color:var(--muted)">(for rankings, e.g. us, uk, in)</span></label>
+        <input type="text" id="natCountry" value="${esc(c.serpGl||'us')}" placeholder="us">
+      </div>
     </div>
     <div class="card">
       <h3>Client website &amp; brand</h3>
@@ -430,12 +434,6 @@ VIEWS.setup=function(){
       <label class="fl" style="margin-top:12px">Brand name(s) — keep</label>
       <div class="taginput"><input type="text" id="brIn" placeholder="brand term"><button class="btn sec sm" id="brAdd">Add</button></div>
       <div class="tags" id="brTags"></div>
-      <div class="grid2" style="margin-top:14px;gap:10px">
-        <div><label class="fl">Serper API key <span style="font-weight:400;color:var(--muted)">(optional — leave blank on Vercel; set SERPER_KEY env var instead)</span></label>
-          <input type="text" id="serperKey" value="${esc(c.serperKey)}" placeholder="paste only for local use"></div>
-        <div><label class="fl">SERP country / location</label>
-          <input type="text" id="serpGl" value="${esc(c.serpGl)}" placeholder="us / in / uk or a city"></div>
-      </div>
     </div>
   </div>
 
@@ -457,8 +455,7 @@ VIEWS.setup=function(){
     bindTags('coIn','coAdd','coTags',c.competitors,'r');
     if($('#locIn'))bindTags('locIn','locAdd','locTags',c.locations,'');
     $('#site').onchange=e=>{c.website=e.target.value;renderNav();};
-    if($('#serperKey'))$('#serperKey').onchange=e=>c.serperKey=e.target.value.trim();
-    if($('#serpGl'))$('#serpGl').onchange=e=>c.serpGl=e.target.value.trim();
+    if($('#natCountry'))$('#natCountry').onchange=e=>c.serpGl=e.target.value.trim()||'us';
   }
   // upload (merged into this screen)
   const fi=$('#file'), dz=$('#drop');
@@ -1060,7 +1057,7 @@ function renderShort(mode){
   const gcount=g=>pendOnly
     ? `<b>${g.pen}</b> to review${g.total>g.pen?` <span style="color:var(--muted);font-weight:400">of ${g.total} · ${g.rej?g.rej+' rejected':''}${g.rej&&g.sel?', ':''}${g.sel?g.sel+' kept':''} hidden</span>`:''}`
     : `<b>${g.total}</b> topics · <span style="color:var(--green)">${g.sel}✓</span> <span style="color:var(--red)">${g.rej}✕</span> <span style="color:var(--amber)">${g.pen} pending</span>`;
-  const topicList=rows=>`<div class="grplist">${rows.slice().sort((a,b)=>b.vol-a.vol).map(r=>`<div class="grpitem">${pendOnly?'':`<span class="pill ${r.status==='selected'?'sel':r.status==='rejected'?'rej':'pend'}">${r.status}</span>`}<span class="kw" style="flex:1">${esc(r.kw)}</span><span class="gv">${r.vol.toLocaleString()}</span><span class="miniact"><button class="y" data-id="${r.id}" data-act="selected">Keep</button><button class="n" data-id="${r.id}" data-act="rejected">Reject</button></span></div>`).join('')}</div>`;
+  const topicList=rows=>`<div class="grplist">${rows.slice().sort((a,b)=>b.vol-a.vol).map(r=>`<div class="grpitem">${pendOnly?'':`<span class="pill ${r.status==='selected'?'sel':r.status==='rejected'?'rej':'pend'}">${r.status}</span>`}<span style="flex:1;min-width:0"><span class="kw">${esc(r.kw)}</span>${r.topic?`<span style="color:var(--muted);font-size:11.5px"> — ${esc(r.topic)}</span>`:''}<span class="idcell" style="display:block">${r.typeIds.map(w=>`<span class="ichip">${esc(w)}</span>`).join('')}${r.modIds.map(w=>`<span class="ichip mod">${esc(w)}</span>`).join('')}</span></span><span class="gv">${r.vol.toLocaleString()}</span><span class="miniact"><button class="y" data-id="${r.id}" data-act="selected">Keep</button><button class="n" data-id="${r.id}" data-act="rejected">Reject</button></span></div>`).join('')}</div>`;
   const groupsBody=`
   <div class="tablewrap">
     <div class="tbar">
@@ -1107,8 +1104,8 @@ function renderShort(mode){
       </label>
       <input type="text" id="gsrch" placeholder="Find keyword / identifier…" value="${esc(STATE.groupSearch)}" style="width:200px">
       ${STATE.serpRunning
-        ? `<span style="font-size:12.5px;font-weight:600;color:var(--accent)">⏳ Fetching rankings <span id="serpProg">…</span></span> <button class="btn sec sm" id="serpStop">Stop</button>`
-        : (()=>{const n=STATE.rows.filter(r=>r.status==='pending'&&!r.serpDone&&r.pageType==='Service').length; return n?`<button class="btn sec sm" id="serpAll" title="Fetch top-10 rankings for pending Service keywords (auto-runs when deployed)">⌕ Get rankings (${n})</button>`:`<span style="font-size:12px;color:var(--green);font-weight:600">✓ Rankings fetched</span>`;})()}
+        ? `<span style="font-size:12.5px;font-weight:600;color:var(--accent)">⏳ Processing topics <span id="serpProg">…</span></span> <button class="btn sec sm" id="serpStop">Stop</button>`
+        : (()=>{const n=STATE.rows.filter(r=>r.status==='pending'&&!r.serpDone&&r.pageType==='Service').length; return n?`<button class="btn sec sm" id="serpAll" title="Process pending topics (analyse rankings to set the ICP)">↻ Process topics (${n})</button>`:`<span style="font-size:12px;color:var(--green);font-weight:600">✓ Topics processed</span>`;})()}
       <span style="flex:1"></span>
       <span style="color:var(--muted);font-size:12px">${icpVisible.length} profiles · ${all.length} topics${pendOnly?` · ${all.filter(r=>r.status!=='pending').length} decided (hidden)`:''}</span>
       <button class="btn sm" id="export">⤓ Export CSV</button>
@@ -1116,7 +1113,6 @@ function renderShort(mode){
     <div style="padding:8px 14px 12px">
       ${icpVisible.length?icpVisible.map(g=>{
         const open=!!STATE.groupExpanded['ICP:'+g.key];
-        const sample=(pendOnly?g.rows.filter(r=>r.status==='pending'):g.rows).slice().sort((a,b)=>b.vol-a.vol).slice(0,2).map(r=>r.kw);
         let subs=[]; if(open){ subs=buildFamilies(g.rows); if(pendOnly)subs=subs.filter(s=>s.pen>0); subs.sort((a,b)=>(pendOnly?b.pen-a.pen:b.total-a.total)||b.total-a.total); }
         return `
         <div class="grp">
@@ -1130,7 +1126,6 @@ function renderShort(mode){
               ${(g.sel||g.rej)?`<button class="btn ghost sm icpact" data-k="${esc(g.key)}" data-a="reset">Reset</button>`:''}
             </span>
           </div>
-          ${sample.length?`<div class="grpsample">e.g. ${sample.map(s=>`“${esc(s)}”`).join('  ·  ')}</div>`:''}
           ${open?`<div class="grpbody">${subs.length?subs.map(sg=>{const so=!!STATE.groupExpanded['ICPID:'+g.key+'||'+sg.key];return `
             <div class="modrow">
               <div class="modhead">
@@ -1222,21 +1217,17 @@ async function fetchSerpBulk(rows, auto){
   saveState(); toast('Rankings '+(STATE.serpCancel?'stopped at '+done:'done · '+done+' fetched')+(err?' · '+err+' errors':'')); render();
 }
 function exportCsv(){
-  const cols=['Primary Keyword','Page Type','Topic','Total Search Volume','Relevance Score','Service/Product Type','Modifier','Customer Profile','Decision','Approved','Rejected','Reason'];
-  for(let i=1;i<=10;i++)cols.push('URL_'+i);
+  const cols=['Primary Keyword','Secondary Keywords','Page Type','Topic','Total Search Volume','Relevance Score','Service/Product Type','Modifier','Customer Profile','Decision','Reason'];
   const q=s=>'"'+String(s==null?'':s).replace(/"/g,'""')+'"';
   const decLabel=s=>s==='selected'?'Approved':s==='rejected'?'Rejected':'Pending';
   const lines=[cols.join(',')];
   STATE.rows.forEach(r=>lines.push([
-    r.kw, r.pageType, r.topic, r.vol, r.rel,
+    r.kw, r.sec, r.pageType, r.topic, r.vol, r.rel,
     r.typeIds.join('; '),                       // identifier columns — each can hold more than one
     r.modIds.join('; '),
     r.profile,
     decLabel(r.status),                         // Decision: Approved / Rejected / Pending
-    r.status==='selected'?'Yes':'No',           // Approved
-    r.status==='rejected'?'Yes':'No',           // Rejected
-    r.reason,                                   // reason for whatever was decided (approve or reject)
-    ...Array.from({length:10},(_,i)=>(r.serp||[])[i]||'')
+    r.reason
   ].map(q).join(',')));
   const blob=new Blob([lines.join('\n')],{type:'text/csv'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
