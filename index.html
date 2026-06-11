@@ -840,9 +840,9 @@ const TYPE_FAMILIES=[
   ['Programs',                      /\bprograms?\b/],
 ];
 function familyOf(r){
-  const t=(r.kw+' '+r.topic).toLowerCase();
+  const t=r.kw.toLowerCase();                       // keyword only — topic text over-matches (e.g. "...business leaders")
   for(const [name,rx] of TYPE_FAMILIES){ if(rx.test(t)) return name; }
-  const ty=r.typeIds[0]; return ty?ty[0].toUpperCase()+ty.slice(1):'Other';
+  return 'Other';                                   // unknown service words collapse to Other (less clutter)
 }
 /* group rows by family (counts via counts()) */
 function buildFamilies(rows){
@@ -1225,8 +1225,10 @@ function renderShort(mode){
     ? `<span style="font-size:12.5px;font-weight:600;color:var(--accent)">⏳ Processing <span id="serpProg">…</span></span> <button class="btn sec sm" id="serpStop">Stop</button>`
     : (()=>{const n=STATE.rows.filter(r=>r.status==='pending'&&!r.serpDone&&r.pageType==='Service').length;return n?`<button class="btn sec sm" id="serpAll" title="Analyse rankings to set audience/ICP">↻ Process topics (${n})</button>`:`<span style="font-size:12px;color:var(--green);font-weight:600">✓ Processed</span>`;})();
   // ---------- A · GRID  (service type × audience) ----------
-  const famList=buildFamilies(all).sort((a,b)=>b.total-a.total).map(f=>f.key);
-  const profList=[...new Set(all.map(r=>r.profile))].sort(profileSort);
+  const pendN=f=>all.filter(r=>r.family===f&&r.status==='pending').length;
+  const pendP=p=>all.filter(r=>r.profile===p&&r.status==='pending').length;
+  const famList=buildFamilies(all).sort((a,b)=>b.total-a.total).map(f=>f.key).filter(f=>pendN(f)>0);   // hide zero-topic options
+  const profList=[...new Set(all.map(r=>r.profile))].filter(p=>pendP(p)>0).sort(profileSort);
   const cellRows=(f,p)=>all.filter(r=>r.family===f&&r.profile===p);
   const cstat=rs=>({pen:rs.filter(r=>r.status==='pending').length,sel:rs.filter(r=>r.status==='selected').length,rej:rs.filter(r=>r.status==='rejected').length,total:rs.length});
   const gridBody=`
@@ -1273,7 +1275,7 @@ function renderShort(mode){
         <tbody>${matchRows.length?matchRows.slice(0,400).map(r=>`<tr>
           <td>${r.modIds.map(m=>`<span class="ichip mod">${esc(m)}</span>`).join('')||'<span class="muted">—</span>'}</td>
           <td><span class="ichip aud">${esc(r.profile)}</span></td>
-          <td><span class="ichip">${esc(r.comboType)}</span></td>
+          <td><span class="ichip">${esc(r.family)}</span></td>
           <td><span class="kw">${esc(r.kw)}</span>${r.topic?`<span class="muted" style="font-size:11.5px"> — ${esc(r.topic)}</span>`:''}</td>
           <td>${r.vol.toLocaleString()}</td>
           <td><span class="miniact"><button class="y" data-id="${r.id}" data-act="selected">Keep</button><button class="n" data-id="${r.id}" data-act="rejected">Reject</button></span></td>
