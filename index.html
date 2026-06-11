@@ -319,6 +319,23 @@ const DOMAIN_SIGNALS=[
   {profile:'Researcher / Student',  rx:/(researchgate|jstor|scholar\.google|sciencedirect|springer|frontiersin|pubmed)/},
 ];
 function isHomepage(u){ try{return new URL(u).pathname.replace(/\/+$/,'')==='';}catch(e){return false;} }
+/* generic words that don't indicate a brand (so they don't trigger brand-detection) */
+const NONDISTINCT=new Set([...STOP, ...MODIFIER_WORDS,
+  'leadership','retreat','retreats','coaching','coach','training','trainings','workshop','workshops','speaker','speakers','speaking','keynote','keynotes','meditation','meditations','yoga','mindfulness','mindful','mindset','conference','conferences','summit','summits','development','program','programs','wellness','wellbeing','performance','session','sessions','services','service','event','events','class','classes','course','courses','team','teams','company','companies','2024','2025','2026','2023','best','top','near','online']);
+/* detect a BRANDED / navigational query from the SERP: one brand dominates the results,
+   or a distinctive keyword word matches a top ranking domain (e.g. "soulful" → soulfulleadership.com). */
+function serpBrandHit(r){
+  if(!r.serpDone || !(r.serp||[]).length) return null;
+  const domains=(r.serp||[]).map(hostOf).filter(h=>h && !IGNORE_DOMAINS.test(h));
+  if(!domains.length) return null;
+  const cnt={}; domains.forEach(h=>cnt[h]=(cnt[h]||0)+1);
+  const dom=Object.entries(cnt).sort((a,b)=>b[1]-a[1])[0];
+  if(dom && dom[1]>=3) return dom[0];                               // one site owns the results → navigational/brand
+  const top3=domains.slice(0,3);                                   // a distinctive keyword word is in a top domain
+  const toks=(r.kw.toLowerCase().match(/[a-z][a-z'-]{3,}/g)||[]).filter(w=>!NONDISTINCT.has(w));
+  for(const t of toks){ const tt=t.replace(/[^a-z0-9]/g,''); if(tt.length<4)continue; const hit=top3.find(h=>h.replace(/[^a-z0-9]/g,'').includes(tt)); if(hit)return hit; }
+  return null;
+}
 /* read the ICP from WHAT THE RANKING PAGES ARE ABOUT — score their titles+snippets with the profile lexicon */
 function classifyProfileFromSerp(r){
   if(!r.serpDone) return null;
@@ -1201,6 +1218,8 @@ async function fetchSerp(r){
   r.serpTitles=items.filter(o=>{const h=hostOf(o.link||'');return !IGNORE_DOMAINS.test(h)&&!isHomepage(o.link||'');}).map(o=>((o.title||'')+' '+(o.snippet||'')).trim());
   r.serpDone=true;
   if(!r.profileEdited) r.profile = classifyProfileFromSerp(r) || classifyProfile(r);   // ICP from what the ranking pages are about
+  const brand=serpBrandHit(r);                                                          // branded/navigational query → reject
+  if(brand && !r.manual && r.status!=='rejected'){ r.status='rejected'; r.reason='Branded query — results dominated by '+brand; }
 }
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function fetchSerpBulk(rows, auto){
