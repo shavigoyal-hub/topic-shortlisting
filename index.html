@@ -239,6 +239,11 @@
   .cellx.expanded{white-space:normal;overflow:visible}
   .cellx.tp{color:var(--muted);font-size:12px}
   th.fsort .ar{color:var(--accent);font-size:10px}
+  .rej-badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;text-transform:uppercase;letter-spacing:.3px;white-space:nowrap}
+  .rej-badge.pre{background:var(--amber-soft);color:var(--amber)}
+  .rej-badge.dec{background:var(--blue-soft);color:var(--blue)}
+  .btn.ghost.sm.pillsort{font-size:10.5px;padding:3px 7px;opacity:.75}
+  .btn.ghost.sm.pillsort:hover{opacity:1}
   /* identifiers */
   .idgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:10px}
   .idcard{border:1px solid var(--line);border-radius:10px;padding:12px}
@@ -393,6 +398,7 @@ const STATE = {
   eAud:'all',                   // E view: audience filter
   fSearch:'',                   // filters view: keyword/topic text filter
   fSort:{key:'',dir:-1},        // filters view: '' (default) | 'kw' | 'vol'
+  fPillSort:{aud:'count',type:'count',mod:'count'},  // filter chip order: 'count' | 'az'
   history:[],                   // action log (session-only): {ts,label,n,changed:[{id,from}]}
 };
 const PROFILE_ORDER=['B2B / Corporate','Healthcare / Clinical','Aspiring Practitioner','Athlete / Sports','Local Seeker','Individual / Consumer','Researcher / Student','General','Unclassified'];
@@ -1168,6 +1174,7 @@ function applyGroup(key,action){
   _commit(msg,_b); toast(msg);
   renderStats();render();
 }
+function rejInfo(r){ return r.autoReason ? {type:'Pre-rule', detail:r.autoReason} : {type:'Decision', detail:r.reason||'Not relevant'}; }
 function secList(r){ return (r.sec||'').split(/[\n,;|]+/).map(s=>s.trim()).filter(Boolean); }
 function secCell(r){ const s=secList(r); if(!s.length)return '<span class="muted">—</span>'; const txt=s.join(', '); return `<span class="seccell" title="${esc(txt)}">${esc(txt)}</span>`; }
 function renderShort(mode){
@@ -1208,9 +1215,10 @@ function renderShort(mode){
   const profCnt=p=>pend.filter(r=>r.profile===p&&typeMatch(r)&&modMatch(r)).length;
   const famCnt=f=>pend.filter(r=>r.family===f&&audMatch(r)&&modMatch(r)).length;
   const modCnt=m=>pend.filter(r=>r.modIds.includes(m)&&audMatch(r)&&typeMatch(r)).length;
-  const audOpts=[...new Set(pend.map(r=>r.profile))].sort(profileSort).filter(p=>profCnt(p)>0||STATE.fAud.includes(p));
-  const typeOpts=[...new Set(pend.map(r=>r.family))].filter(f=>famCnt(f)>0||STATE.fTypes.includes(f)).sort((a,b)=>famCnt(b)-famCnt(a));
-  const modOpts=[...new Set(pend.flatMap(r=>r.modIds))].map(m=>[m,modCnt(m)]).filter(([m,n])=>n>0||STATE.fMods.includes(m)).sort((a,b)=>b[1]-a[1]).slice(0,30);
+  const ps=STATE.fPillSort;
+  const audOpts=[...new Set(pend.map(r=>r.profile))].filter(p=>profCnt(p)>0||STATE.fAud.includes(p)).sort(ps.aud==='az'?(a,b)=>a.localeCompare(b):profileSort);
+  const typeOpts=[...new Set(pend.map(r=>r.family))].filter(f=>famCnt(f)>0||STATE.fTypes.includes(f)).sort(ps.type==='az'?(a,b)=>a.localeCompare(b):(a,b)=>famCnt(b)-famCnt(a));
+  const modOpts=[...new Set(pend.flatMap(r=>r.modIds))].map(m=>[m,modCnt(m)]).filter(([m,n])=>n>0||STATE.fMods.includes(m)).sort(ps.mod==='az'?(a,b)=>a[0].localeCompare(b[0]):(a,b)=>b[1]-a[1]).slice(0,30);
   const matchRows=pend.filter(matchPred);
   const matchN=matchRows.length;
   const fs=STATE.fSort;
@@ -1221,14 +1229,14 @@ function renderShort(mode){
   const sortAr=k=>fs.key===k?`<span class="ar">${fs.dir===1?'▲':'▼'}</span>`:'';
   const shown=matchRows.slice(0,400);
   const nChecked=shown.filter(r=>STATE.checked[r.id]).length;
-  const filterRow=(label,allId,clrId,html,sep)=>`<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;${sep?'padding-bottom:9px;margin-bottom:9px;border-bottom:1px solid var(--line)':'margin-bottom:6px'}"><b style="font-size:12px;width:82px">${label}</b><button class="btn ghost sm" id="${allId}">All</button><button class="btn ghost sm" id="${clrId}">Clear</button>${html}</div>`;
+  const filterRow=(label,allId,clrId,html,sep,azKey)=>`<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;${sep?'padding-bottom:9px;margin-bottom:9px;border-bottom:1px solid var(--line)':'margin-bottom:6px'}"><b style="font-size:12px;width:82px">${label}</b><button class="btn ghost sm" id="${allId}">All</button><button class="btn ghost sm" id="${clrId}">Clear</button><button class="btn ghost sm pillsort" data-ax="${azKey}" title="Toggle order">${ps[azKey]==='az'?'A–Z ✓':'A–Z'}</button>${html}</div>`;
   const filtersBody=`
   <div class="tablewrap">
     <div class="tbar"><b style="font-size:13px">Pick relevant audiences, types &amp; modifiers</b><span style="flex:1"></span>${serpStatus}<button class="btn sm" id="export">⤓ Export CSV</button></div>
     <div style="padding:10px 14px;border-bottom:1px solid var(--line)">
-      ${filterRow('Audiences','faAll','faClear',audOpts.map(p=>`<span class="fpill aud ${STATE.fAud.includes(p)?'on':''}" data-fa="${esc(p)}">${esc(p)} <span class="muted">${profCnt(p)}</span></span>`).join(''),true)}
-      ${filterRow('Types','ftAll','ftClear',typeOpts.map(f=>`<span class="fpill type ${STATE.fTypes.includes(f)?'on':''}" data-ft="${esc(f)}">${esc(f)} <span class="muted">${famCnt(f)}</span></span>`).join(''),true)}
-      ${filterRow('Modifiers','fmAll','fmClear',modOpts.map(([m,n])=>`<span class="fpill mod ${STATE.fMods.includes(m)?'on':''}" data-fm="${esc(m)}">${esc(m)} <span class="muted">${n}</span></span>`).join('')||'<span class="muted" style="font-size:12px">none</span>')}
+      ${filterRow('Audiences','faAll','faClear',audOpts.map(p=>`<span class="fpill aud ${STATE.fAud.includes(p)?'on':''}" data-fa="${esc(p)}">${esc(p)} <span class="muted">${profCnt(p)}</span></span>`).join(''),true,'aud')}
+      ${filterRow('Types','ftAll','ftClear',typeOpts.map(f=>`<span class="fpill type ${STATE.fTypes.includes(f)?'on':''}" data-ft="${esc(f)}">${esc(f)} <span class="muted">${famCnt(f)}</span></span>`).join(''),true,'type')}
+      ${filterRow('Modifiers','fmAll','fmClear',modOpts.map(([m,n])=>`<span class="fpill mod ${STATE.fMods.includes(m)?'on':''}" data-fm="${esc(m)}">${esc(m)} <span class="muted">${n}</span></span>`).join('')||'<span class="muted" style="font-size:12px">none</span>',false,'mod')}
       <div style="margin-top:8px"><button class="btn" id="applyFilters">Keep ${matchN} matching · reject the rest</button>
       <button class="btn ghost sm" id="resetAll" style="margin-left:6px"${(STATE.fAud.length||STATE.fTypes.length||STATE.fMods.length||nChecked)?'':' disabled'}>↺ Reset selection</button>
       <span class="muted" style="font-size:12px;margin-left:8px">${matchN} matching topics shown below (empty filter = “any”).</span></div>
@@ -1304,6 +1312,31 @@ function renderShort(mode){
     </div>
   </div>`;
 
+  // ---------- REJECTED · everything rejected, with reason + why ----------
+  const rejRows=STATE.rows.filter(r=>r.status==='rejected')
+    .sort((a,b)=>{const ta=rejInfo(a).type,tb=rejInfo(b).type; return ta.localeCompare(tb)||b.vol-a.vol;});
+  const nPre=rejRows.filter(r=>rejInfo(r).type==='Pre-rule').length;
+  const rejectedBody=`
+  <div class="tablewrap">
+    <div class="tbar"><b style="font-size:13px">${rejRows.length} topic${rejRows.length===1?'':'s'} rejected</b>
+      <span class="muted" style="font-size:12px">· ${nPre} by pre-rule · ${rejRows.length-nPre} by decision</span>
+      <span style="flex:1"></span><button class="btn sec sm" id="export" title="Export every topic with its decision">⤓ Export all</button></div>
+    <div class="scrollx">
+      <table class="ftbl" style="min-width:880px">
+        <thead><tr><th style="width:92px">Audience</th><th style="width:120px">Product / Service Type</th><th style="width:188px">Keyword</th><th>Topic</th><th style="width:96px">Why</th><th>Reason</th><th style="width:84px"></th></tr></thead>
+        <tbody>${rejRows.length?rejRows.map(r=>{const ri=rejInfo(r);return `<tr>
+          <td><span class="ichip aud">${esc(r.profile)}</span></td>
+          <td><span class="ichip fam2" title="${esc(r.family)}">${esc(r.family)}</span></td>
+          <td><span class="cellx kw" title="${esc(r.kw)}">${esc(r.kw)}</span></td>
+          <td>${r.topic?`<span class="cellx tp" title="${esc(r.topic)}">${esc(r.topic)}</span>`:'<span class="muted">—</span>'}</td>
+          <td><span class="rej-badge ${ri.type==='Pre-rule'?'pre':'dec'}">${ri.type}</span></td>
+          <td><span class="cellx tp" title="${esc(ri.detail)}">${esc(ri.detail)}</span></td>
+          <td><span class="miniact"><button class="y" data-id="${r.id}" data-act="pending" title="Restore to pending">↩ Restore</button></span></td>
+        </tr>`;}).join(''):'<tr><td colspan="7"><div class="empty">Nothing rejected yet.</div></td></tr>'}</tbody>
+      </table>
+    </div>
+  </div>`;
+
   // topic popup (B filter matches)
   let modalHtml='';
   if(STATE.modal){
@@ -1318,18 +1351,20 @@ function renderShort(mode){
       <div class="modal-body">${topicList(list)}</div></div></div>`;
   }
 
-  let vm=STATE.viewMode; if(!['filters','selected','history'].includes(vm))vm=STATE.viewMode='filters';
+  let vm=STATE.viewMode; if(!['filters','selected','rejected','history'].includes(vm))vm=STATE.viewMode='filters';
   const blurb={filters:'Tick the audiences, types and modifiers that fit the client, then keep or reject the matching topics.',
     selected:'Every topic you have kept, updating live. Remove any that slipped in.',
+    rejected:'Every topic rejected — by a pre-rule (auto, with the rule shown) or by your decision. Restore any back to pending.',
     history:'Every keep / reject / reset action you took this session. Undo any of them to restore the previous status.'}[vm];
   $('#view').innerHTML=`
   <div class="pagehead"><h2>Shortlist — Service / Product <span style="font-weight:400;color:var(--muted);font-size:14px">→ pages to build</span></h2><p>${blurb}</p></div>
   <div class="phasetabs" style="margin-bottom:14px">
     <button class="vtab ${vm==='filters'?'on':''}" data-vm="filters">Filter &amp; pick</button>
     <button class="vtab ${vm==='selected'?'on':''}" data-vm="selected">✓ Selected (${selRows.length})</button>
+    <button class="vtab ${vm==='rejected'?'on':''}" data-vm="rejected">✕ Rejected (${rejRows.length})</button>
     <button class="vtab ${vm==='history'?'on':''}" data-vm="history">↻ History (${hist.length})</button>
   </div>
-  ${vm==='selected'?selectedBody:vm==='history'?historyBody:filtersBody}
+  ${vm==='selected'?selectedBody:vm==='rejected'?rejectedBody:vm==='history'?historyBody:filtersBody}
   ${modalHtml}`;
 
   $('#view').querySelectorAll('.vtab').forEach(b=>b.onclick=()=>{STATE.viewMode=b.dataset.vm;STATE.modal=null;render();});
@@ -1346,6 +1381,7 @@ function renderShort(mode){
   if($('#faClear'))$('#faClear').onclick=()=>{STATE.fAud=[];render();};
   if($('#fmAll'))$('#fmAll').onclick=()=>{STATE.fMods=[...new Set(STATE.rows.filter(r=>r.pageType===phase&&r.status==='pending').flatMap(r=>r.modIds))];render();};
   if($('#fmClear'))$('#fmClear').onclick=()=>{STATE.fMods=[];render();};
+  $('#view').querySelectorAll('.pillsort').forEach(b=>b.onclick=()=>{const ax=b.dataset.ax;STATE.fPillSort[ax]=STATE.fPillSort[ax]==='az'?'count':'az';render();});
   // checkbox multi-select
   $('#view').querySelectorAll('.chk-row').forEach(c=>c.onchange=()=>{ if(c.checked)STATE.checked[c.dataset.id]=true; else delete STATE.checked[c.dataset.id]; const n=[...document.querySelectorAll('.chk-row:checked')].length; const k=$('#keepChecked'),rj=$('#rejChecked'); if(k){k.textContent='✓ Keep checked ('+n+')';k.disabled=!n;} if(rj){rj.textContent='✕ Reject checked ('+n+')';rj.disabled=!n;} });
   if($('#chkAll'))$('#chkAll').onchange=e=>{ document.querySelectorAll('.chk-row').forEach(c=>{c.checked=e.target.checked; if(e.target.checked)STATE.checked[c.dataset.id]=true; else delete STATE.checked[c.dataset.id];}); const n=e.target.checked?document.querySelectorAll('.chk-row').length:0; const k=$('#keepChecked'),rj=$('#rejChecked'); if(k){k.textContent='✓ Keep checked ('+n+')';k.disabled=!n;} if(rj){rj.textContent='✕ Reject checked ('+n+')';rj.disabled=!n;} };
@@ -1378,8 +1414,9 @@ function renderShort(mode){
   $('#view').querySelectorAll('.miniact button[data-id]').forEach(b=>b.onclick=()=>{
     const _b=_snap();
     const r=STATE.rows.find(x=>x.id==b.dataset.id); r.status=b.dataset.act; r.manual=true;
-    if(b.dataset.act==='selected'&&/^Group|ICP|Page|Shortlisted|Out of scope|identifier|brand|Location|Zero|Free|Near|Informational|Job|Wrong|relevance|person|Other/i.test(r.reason))r.reason='';
-    _commit((b.dataset.act==='selected'?'Kept':b.dataset.act==='rejected'?'Rejected':'Moved')+' 1 · '+r.kw, _b);
+    if(b.dataset.act==='pending'){ r.reason=''; r.autoReason=''; r.manual=false; }   // clean restore
+    else if(b.dataset.act==='selected'&&/^Group|ICP|Page|Shortlisted|Out of scope|identifier|brand|Location|Zero|Free|Near|Informational|Job|Wrong|relevance|person|Other/i.test(r.reason))r.reason='';
+    _commit((b.dataset.act==='selected'?'Kept':b.dataset.act==='rejected'?'Rejected':'Restored')+' 1 · '+r.kw, _b);
     renderStats();render();
   });
   if($('#undoLast'))$('#undoLast').onclick=()=>undoEntry(0);
