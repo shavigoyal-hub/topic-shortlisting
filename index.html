@@ -1315,27 +1315,6 @@ function renderShort(mode){
     </div>
   </div>`;
 
-  // ---------- HISTORY · session action log with undo ----------
-  const fmtTime=ts=>{const d=new Date(ts);const p=x=>String(x).padStart(2,'0');return p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());};
-  const hist=STATE.history;
-  const historyBody=`
-  <div class="tablewrap">
-    <div class="tbar"><b style="font-size:13px">${hist.length} action${hist.length===1?'':'s'} this session</b>
-      <span class="muted" style="font-size:12px">· newest first · undo restores each topic's previous status</span>
-      <span style="flex:1"></span>${hist.length?'<button class="btn sec sm" id="undoLast">↩ Undo last</button>':''}</div>
-    <div class="scrollx">
-      <table class="ftbl" style="min-width:560px">
-        <thead><tr><th style="width:90px">Time</th><th>Action</th><th style="width:80px">Topics</th><th style="width:96px"></th></tr></thead>
-        <tbody>${hist.length?hist.map((e,i)=>`<tr>
-          <td class="muted" style="font-variant-numeric:tabular-nums">${fmtTime(e.ts)}</td>
-          <td>${esc(e.label)}</td>
-          <td><b>${e.n}</b></td>
-          <td><button class="btn ghost sm hundo" data-i="${i}">↩ Undo</button></td>
-        </tr>`).join(''):'<tr><td colspan="4"><div class="empty">No actions yet — keep or reject some topics and they will be logged here so you can undo.</div></td></tr>'}</tbody>
-      </table>
-    </div>
-  </div>`;
-
   // ---------- REJECTED · everything rejected, with reason + why + per-column filters ----------
   const rejAll=STATE.rows.filter(r=>r.status==='rejected');
   const nPre=rejAll.filter(r=>rejInfo(r).type==='Pre-rule').length;
@@ -1390,20 +1369,18 @@ function renderShort(mode){
       <div class="modal-body">${topicList(list)}</div></div></div>`;
   }
 
-  let vm=STATE.viewMode; if(!['filters','selected','rejected','history'].includes(vm))vm=STATE.viewMode='filters';
+  let vm=STATE.viewMode; if(!['filters','selected','rejected'].includes(vm))vm=STATE.viewMode='filters';
   const blurb={filters:'Tick the audiences, types and modifiers that fit the client, then keep or reject the matching topics.',
     selected:'Every topic you have kept, updating live. Remove any that slipped in.',
-    rejected:'Every topic rejected — by a pre-rule (auto, with the rule shown) or by your decision. Restore any back to pending.',
-    history:'Every keep / reject / reset action you took this session. Undo any of them to restore the previous status.'}[vm];
+    rejected:'Every topic rejected — by a pre-rule (auto, with the rule shown) or by your decision. Restore any back to pending.'}[vm];
   $('#view').innerHTML=`
   <div class="pagehead"><h2>Shortlist — Service / Product <span style="font-weight:400;color:var(--muted);font-size:14px">→ pages to build</span></h2><p>${blurb}</p></div>
   <div class="phasetabs" style="margin-bottom:14px">
     <button class="vtab ${vm==='filters'?'on':''}" data-vm="filters">Filter &amp; pick</button>
     <button class="vtab ${vm==='selected'?'on':''}" data-vm="selected">✓ Selected (${selRows.length})</button>
     <button class="vtab ${vm==='rejected'?'on':''}" data-vm="rejected">✕ Rejected (${rejRows.length})</button>
-    <button class="vtab ${vm==='history'?'on':''}" data-vm="history">↻ History (${hist.length})</button>
   </div>
-  ${vm==='selected'?selectedBody:vm==='rejected'?rejectedBody:vm==='history'?historyBody:filtersBody}
+  ${vm==='selected'?selectedBody:vm==='rejected'?rejectedBody:filtersBody}
   ${modalHtml}`;
 
   $('#view').querySelectorAll('.vtab').forEach(b=>b.onclick=()=>{STATE.viewMode=b.dataset.vm;STATE.modal=null;render();});
@@ -1477,8 +1454,6 @@ function renderShort(mode){
     _commit((b.dataset.act==='selected'?'Kept':b.dataset.act==='rejected'?'Rejected':'Restored')+' 1 · '+r.kw, _b);
     renderStats();render();
   });
-  if($('#undoLast'))$('#undoLast').onclick=()=>undoEntry(0);
-  $('#view').querySelectorAll('.hundo').forEach(b=>b.onclick=()=>undoEntry(+b.dataset.i));
 }
 VIEWS.short=()=>renderShort('icp');
 /* ---- keyboard review: K keep · R reject · U undo · ↑↓ move ---- */
