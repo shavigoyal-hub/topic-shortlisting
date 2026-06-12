@@ -238,6 +238,10 @@
   .cellx{display:block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
   .cellx.expanded{white-space:normal;overflow:visible}
   .cellx.tp{color:var(--muted);font-size:12px}
+  .ichip.aud.audx{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom;cursor:pointer}
+  .ichip.aud.audx.expanded{white-space:normal;overflow:visible}
+  tr.rowfocus>td{background:#eef0ff !important}
+  tr.rowfocus>td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
   th.fsort .ar{color:var(--accent);font-size:10px}
   .rej-badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;text-transform:uppercase;letter-spacing:.3px;white-space:nowrap}
   .rej-badge.pre{background:var(--amber-soft);color:var(--amber)}
@@ -328,6 +332,13 @@
         <div class="admin-row"><button class="btn sec sm" id="aExp">⤓ Export session</button><label class="btn sec sm" style="cursor:pointer">⤒ Import session<input type="file" id="aImp" accept="application/json" hidden></label><button class="btn sec sm" id="aClr" style="color:var(--red);border-color:#f3c2c2">Clear all data</button></div>
         <div class="admin-msg" id="sessMsg"></div>
       </div>
+      <div class="admin-sec">
+        <h4>Activity log <span class="admin-badge ok" id="actCount"></span></h4>
+        <p>Every keep / reject / reset / undo recorded on this browser — across all projects &amp; sessions.</p>
+        <div id="actList" style="max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:8px"></div>
+        <div class="admin-row" style="margin-top:10px"><button class="btn sec sm" id="actExport">⤓ Export log (CSV)</button><button class="btn sec sm" id="actClear" style="color:var(--red);border-color:#f3c2c2">Clear log</button></div>
+        <div class="admin-msg" id="actMsg"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -399,6 +410,8 @@ const STATE = {
   fSearch:'',                   // filters view: keyword/topic text filter
   fSort:{key:'',dir:-1},        // filters view: '' (default) | 'kw' | 'vol'
   fPillSort:{aud:'count',type:'count',mod:'count'},  // filter chip order: 'count' | 'az'
+  rejFilter:{aud:'all',type:'all',why:'all',reason:'all',q:''},  // rejected tab column filters
+  focusIdx:0,                   // keyboard-focused row index in the filters table
   history:[],                   // action log (session-only): {ts,label,n,changed:[{id,from}]}
 };
 const PROFILE_ORDER=['B2B / Corporate','Healthcare / Clinical','Aspiring Practitioner','Athlete / Sports','Local Seeker','Individual / Consumer','Researcher / Student','General','Unclassified'];
@@ -411,11 +424,11 @@ function _commit(label, before){
   for(let i=0;i<STATE.rows.length;i++){ const r=STATE.rows[i], b=before[i];
     if(b&&(b.status!==r.status||b.reason!==r.reason||b.manual!==r.manual)) changed.push({id:r.id, from:{status:b.status,reason:b.reason,autoReason:b.autoReason,manual:b.manual}});
   }
-  if(changed.length){ STATE.history.unshift({ts:Date.now(), label, n:changed.length, changed}); if(STATE.history.length>60)STATE.history.length=60; }
+  if(changed.length){ STATE.history.unshift({ts:Date.now(), label, n:changed.length, changed}); if(STATE.history.length>60)STATE.history.length=60; logActivity(label, changed.length); }
 }
 function undoEntry(i){ const e=STATE.history[i]; if(!e)return;
   e.changed.forEach(c=>{ const r=STATE.rows.find(x=>x.id===c.id); if(r){ r.status=c.from.status; r.reason=c.from.reason; r.autoReason=c.from.autoReason; r.manual=c.from.manual; } });
-  STATE.history.splice(i,1); toast('Undone: '+e.label); renderStats(); render();
+  STATE.history.splice(i,1); logActivity('Undo: '+e.label, e.n); toast('Undone: '+e.label); renderStats(); render();
 }
 function decide(pred, action, label){
   const _b=_snap();
@@ -1174,7 +1187,11 @@ function applyGroup(key,action){
   _commit(msg,_b); toast(msg);
   renderStats();render();
 }
-function rejInfo(r){ return r.autoReason ? {type:'Pre-rule', detail:r.autoReason} : {type:'Decision', detail:r.reason||'Not relevant'}; }
+function rejInfo(r){
+  if(/^Branded query/i.test(r.reason||'')||/^Branded query/i.test(r.autoReason||'')) return {type:'Pre-rule', detail:'Branded query'};
+  if(r.autoReason) return {type:'Pre-rule', detail:r.autoReason};
+  return {type:'Decision', detail:r.reason||'Not relevant'};
+}
 function secList(r){ return (r.sec||'').split(/[\n,;|]+/).map(s=>s.trim()).filter(Boolean); }
 function secCell(r){ const s=secList(r); if(!s.length)return '<span class="muted">—</span>'; const txt=s.join(', '); return `<span class="seccell" title="${esc(txt)}">${esc(txt)}</span>`; }
 function renderShort(mode){
@@ -1229,10 +1246,17 @@ function renderShort(mode){
   const sortAr=k=>fs.key===k?`<span class="ar">${fs.dir===1?'▲':'▼'}</span>`:'';
   const shown=matchRows.slice(0,400);
   const nChecked=shown.filter(r=>STATE.checked[r.id]).length;
+  const totalAll=all.length, decided=all.filter(r=>r.status!=='pending').length, pct=totalAll?Math.round(decided/totalAll*100):0;
   const filterRow=(label,allId,clrId,html,sep,azKey)=>`<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;${sep?'padding-bottom:9px;margin-bottom:9px;border-bottom:1px solid var(--line)':'margin-bottom:6px'}"><b style="font-size:12px;width:82px">${label}</b><button class="btn ghost sm" id="${allId}">All</button><button class="btn ghost sm" id="${clrId}">Clear</button><button class="btn ghost sm pillsort" data-ax="${azKey}" title="Toggle order">${ps[azKey]==='az'?'A–Z ✓':'A–Z'}</button>${html}</div>`;
   const filtersBody=`
   <div class="tablewrap">
-    <div class="tbar"><b style="font-size:13px">Pick relevant audiences, types &amp; modifiers</b><span style="flex:1"></span>${serpStatus}<button class="btn sm" id="export">⤓ Export CSV</button></div>
+    <div class="tbar"><b style="font-size:13px">Pick relevant audiences, types &amp; modifiers</b><span style="flex:1"></span>${serpStatus}<button class="btn sec sm" id="smartSuggest" title="Pre-tick the types &amp; audience that match this client's configured services">✨ Smart suggest</button><button class="btn sm" id="export">⤓ Export CSV</button></div>
+    <div style="padding:8px 14px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px">
+      <span class="muted" style="font-size:12px;white-space:nowrap"><b style="color:var(--ink)">${decided}</b> of ${totalAll} reviewed</span>
+      <div style="flex:1;height:7px;background:var(--line);border-radius:4px;overflow:hidden"><div style="width:${pct}%;height:100%;background:var(--accent);transition:width .2s"></div></div>
+      <span class="muted" style="font-size:12px">${pct}%</span>
+      <span class="muted" style="font-size:11px;white-space:nowrap;border-left:1px solid var(--line);padding-left:12px">⌨ <b>K</b> keep · <b>R</b> reject · <b>U</b> undo · <b>↑↓</b> move</span>
+    </div>
     <div style="padding:10px 14px;border-bottom:1px solid var(--line)">
       ${filterRow('Audiences','faAll','faClear',audOpts.map(p=>`<span class="fpill aud ${STATE.fAud.includes(p)?'on':''}" data-fa="${esc(p)}">${esc(p)} <span class="muted">${profCnt(p)}</span></span>`).join(''),true,'aud')}
       ${filterRow('Types','ftAll','ftClear',typeOpts.map(f=>`<span class="fpill type ${STATE.fTypes.includes(f)?'on':''}" data-ft="${esc(f)}">${esc(f)} <span class="muted">${famCnt(f)}</span></span>`).join(''),true,'type')}
@@ -1250,10 +1274,10 @@ function renderShort(mode){
     </div>
     <div class="scrollx">
       <table class="ftbl">
-        <thead><tr><th style="width:30px"></th><th style="width:96px">Audience</th><th style="width:124px">Product / Service Type</th><th style="width:78px">Modifier</th><th class="fsort" data-fk="kw" style="width:188px">Keyword ${sortAr('kw')}</th><th>Topic</th><th class="fsort" data-fk="vol" style="width:58px">Vol ${sortAr('vol')}</th><th style="width:74px">Decide</th></tr></thead>
-        <tbody>${shown.length?shown.map(r=>`<tr data-kwt="${esc((r.kw+' '+(r.topic||'')).toLowerCase())}">
+        <thead><tr><th style="width:30px"></th><th style="width:96px">Audience</th><th style="width:124px">Product / Service Type</th><th style="width:78px">Modifier</th><th class="fsort" data-fk="kw" style="width:236px">Keyword ${sortAr('kw')}</th><th style="min-width:120px">Topic</th><th class="fsort" data-fk="vol" style="width:58px">Vol ${sortAr('vol')}</th><th style="width:74px">Decide</th></tr></thead>
+        <tbody>${shown.length?shown.map(r=>`<tr data-rid="${r.id}" data-kwt="${esc((r.kw+' '+(r.topic||'')).toLowerCase())}">
           <td><input type="checkbox" class="chk-row" data-id="${r.id}" ${STATE.checked[r.id]?'checked':''}></td>
-          <td><span class="ichip aud">${esc(r.profile)}</span></td>
+          <td><span class="ichip aud audx" title="${esc(r.profile)}">${esc(r.profile)}</span></td>
           <td><span class="ichip fam2" title="${esc(r.family)}">${esc(r.family)}</span></td>
           <td>${r.modIds.map(m=>`<span class="ichip mod">${esc(m)}</span>`).join('')||'<span class="muted">—</span>'}</td>
           <td><span class="cellx kw" title="${esc(r.kw)}">${esc(r.kw)}</span></td>
@@ -1279,7 +1303,7 @@ function renderShort(mode){
       <table class="ftbl">
         <thead><tr><th style="width:96px">Audience</th><th style="width:124px">Product / Service Type</th><th style="width:82px">Modifier</th><th style="width:210px">Keyword</th><th>Topic</th><th style="width:62px">Vol</th><th style="width:84px"></th></tr></thead>
         <tbody>${selRows.length?selRows.map(r=>`<tr>
-          <td><span class="ichip aud">${esc(r.profile)}</span></td>
+          <td><span class="ichip aud audx" title="${esc(r.profile)}">${esc(r.profile)}</span></td>
           <td><span class="ichip fam2" title="${esc(r.family)}">${esc(r.family)}</span></td>
           <td>${r.modIds.map(m=>`<span class="ichip mod">${esc(m)}</span>`).join('')||'<span class="muted">—</span>'}</td>
           <td><span class="cellx kw" title="${esc(r.kw)}">${esc(r.kw)}</span></td>
@@ -1312,27 +1336,42 @@ function renderShort(mode){
     </div>
   </div>`;
 
-  // ---------- REJECTED · everything rejected, with reason + why ----------
-  const rejRows=STATE.rows.filter(r=>r.status==='rejected')
-    .sort((a,b)=>{const ta=rejInfo(a).type,tb=rejInfo(b).type; return ta.localeCompare(tb)||b.vol-a.vol;});
-  const nPre=rejRows.filter(r=>rejInfo(r).type==='Pre-rule').length;
+  // ---------- REJECTED · everything rejected, with reason + why + per-column filters ----------
+  const rejAll=STATE.rows.filter(r=>r.status==='rejected');
+  const nPre=rejAll.filter(r=>rejInfo(r).type==='Pre-rule').length;
+  const rf=STATE.rejFilter;
+  const rejAudOpts=[...new Set(rejAll.map(r=>r.profile))].sort(profileSort);
+  const rejTypeOpts=[...new Set(rejAll.map(r=>r.family))].sort();
+  const rejReasonOpts=[...new Set(rejAll.map(r=>rejInfo(r).detail))].sort();
+  const rejRows=rejAll.filter(r=>{const ri=rejInfo(r);const q=rf.q.toLowerCase();
+    return (rf.aud==='all'||r.profile===rf.aud)&&(rf.type==='all'||r.family===rf.type)&&(rf.why==='all'||ri.type===rf.why)&&(rf.reason==='all'||ri.detail===rf.reason)&&(!q||(r.kw+' '+(r.topic||'')).toLowerCase().includes(q));
+  }).sort((a,b)=>{const ta=rejInfo(a).type,tb=rejInfo(b).type; return ta.localeCompare(tb)||b.vol-a.vol;});
+  const rejSel=(id,val,opts,label)=>`<select id="${id}" style="padding:5px 8px;border:1px solid var(--line);border-radius:7px;font-size:12px"><option value="all" ${val==='all'?'selected':''}>${label}</option>${opts.map(o=>`<option value="${esc(o)}" ${val===o?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
   const rejectedBody=`
   <div class="tablewrap">
-    <div class="tbar"><b style="font-size:13px">${rejRows.length} topic${rejRows.length===1?'':'s'} rejected</b>
-      <span class="muted" style="font-size:12px">· ${nPre} by pre-rule · ${rejRows.length-nPre} by decision</span>
+    <div class="tbar"><b style="font-size:13px">${rejAll.length} rejected</b>
+      <span class="muted" style="font-size:12px">· ${nPre} pre-rule · ${rejAll.length-nPre} decision${rejRows.length!==rejAll.length?` · ${rejRows.length} shown`:''}</span>
       <span style="flex:1"></span><button class="btn sec sm" id="export" title="Export every topic with its decision">⤓ Export all</button></div>
+    <div class="tbar" style="border-bottom:1px solid var(--line);flex-wrap:wrap;gap:7px">
+      <input type="text" id="rejQ" placeholder="🔎 keyword / topic…" value="${esc(rf.q)}" style="width:180px;padding:6px 9px;border:1px solid var(--line);border-radius:7px;font-size:12px">
+      ${rejSel('rejAud',rf.aud,rejAudOpts,'All audiences')}
+      ${rejSel('rejType',rf.type,rejTypeOpts,'All types')}
+      ${rejSel('rejWhy',rf.why,['Pre-rule','Decision'],'All reasons (why)')}
+      ${rejSel('rejReason',rf.reason,rejReasonOpts,'Any reason')}
+      ${(rf.aud!=='all'||rf.type!=='all'||rf.why!=='all'||rf.reason!=='all'||rf.q)?`<button class="btn ghost sm" id="rejClear">Clear filters</button>`:''}
+    </div>
     <div class="scrollx">
       <table class="ftbl" style="min-width:880px">
-        <thead><tr><th style="width:92px">Audience</th><th style="width:120px">Product / Service Type</th><th style="width:188px">Keyword</th><th>Topic</th><th style="width:96px">Why</th><th>Reason</th><th style="width:84px"></th></tr></thead>
+        <thead><tr><th style="width:92px">Audience</th><th style="width:120px">Product / Service Type</th><th style="width:200px">Keyword</th><th>Topic</th><th style="width:96px">Why</th><th style="width:170px">Reason</th><th style="width:84px"></th></tr></thead>
         <tbody>${rejRows.length?rejRows.map(r=>{const ri=rejInfo(r);return `<tr>
-          <td><span class="ichip aud">${esc(r.profile)}</span></td>
+          <td><span class="ichip aud audx" title="${esc(r.profile)}">${esc(r.profile)}</span></td>
           <td><span class="ichip fam2" title="${esc(r.family)}">${esc(r.family)}</span></td>
           <td><span class="cellx kw" title="${esc(r.kw)}">${esc(r.kw)}</span></td>
           <td>${r.topic?`<span class="cellx tp" title="${esc(r.topic)}">${esc(r.topic)}</span>`:'<span class="muted">—</span>'}</td>
           <td><span class="rej-badge ${ri.type==='Pre-rule'?'pre':'dec'}">${ri.type}</span></td>
           <td><span class="cellx tp" title="${esc(ri.detail)}">${esc(ri.detail)}</span></td>
           <td><span class="miniact"><button class="y" data-id="${r.id}" data-act="pending" title="Restore to pending">↩ Restore</button></span></td>
-        </tr>`;}).join(''):'<tr><td colspan="7"><div class="empty">Nothing rejected yet.</div></td></tr>'}</tbody>
+        </tr>`;}).join(''):`<tr><td colspan="7"><div class="empty">${rejAll.length?'No rejected topics match these filters.':'Nothing rejected yet.'}</div></td></tr>`}</tbody>
       </table>
     </div>
   </div>`;
@@ -1382,6 +1421,25 @@ function renderShort(mode){
   if($('#fmAll'))$('#fmAll').onclick=()=>{STATE.fMods=[...new Set(STATE.rows.filter(r=>r.pageType===phase&&r.status==='pending').flatMap(r=>r.modIds))];render();};
   if($('#fmClear'))$('#fmClear').onclick=()=>{STATE.fMods=[];render();};
   $('#view').querySelectorAll('.pillsort').forEach(b=>b.onclick=()=>{const ax=b.dataset.ax;STATE.fPillSort[ax]=STATE.fPillSort[ax]==='az'?'count':'az';render();});
+  // rejected-tab column filters
+  if($('#rejAud'))$('#rejAud').onchange=e=>{STATE.rejFilter.aud=e.target.value;render();};
+  if($('#rejType'))$('#rejType').onchange=e=>{STATE.rejFilter.type=e.target.value;render();};
+  if($('#rejWhy'))$('#rejWhy').onchange=e=>{STATE.rejFilter.why=e.target.value;render();};
+  if($('#rejReason'))$('#rejReason').onchange=e=>{STATE.rejFilter.reason=e.target.value;render();};
+  if($('#rejClear'))$('#rejClear').onclick=()=>{STATE.rejFilter={aud:'all',type:'all',why:'all',reason:'all',q:''};render();};
+  if($('#rejQ')){const ri=$('#rejQ');ri.oninput=()=>{STATE.rejFilter.q=ri.value;$('#view').querySelectorAll('.ftbl tbody tr').forEach(tr=>{const t=tr.textContent.toLowerCase();tr.style.display=(!ri.value||t.includes(ri.value.toLowerCase()))?'':'none';});};}
+  // Smart suggest — pre-tick types/audience that match the client's configured services
+  if($('#smartSuggest'))$('#smartSuggest').onclick=()=>{
+    const svcTokens=new Set((STATE.config.services||[]).flatMap(s=>norm(s).split(/[^a-z0-9]+/)).filter(w=>w.length>3));
+    const tokOf=str=>norm(str).split(/[^a-z0-9]+/).filter(w=>w.length>3);
+    STATE.fTypes=typeOpts.filter(f=>tokOf(f).some(t=>svcTokens.has(t)||[...svcTokens].some(s=>s.includes(t)||t.includes(s))));
+    STATE.fAud=audOpts.filter(p=>/b2b|corporate/i.test(p));
+    STATE.fSearch='';STATE.fMods=[];
+    toast('Smart suggest: '+STATE.fTypes.length+' type'+(STATE.fTypes.length===1?'':'s')+(STATE.fAud.length?' · '+STATE.fAud.length+' audience':'')+(STATE.fTypes.length?'':' — no clear match, pick manually'));
+    render();
+  };
+  // keyboard-focus highlight for current filter row (refocus after each render)
+  if(vm==='filters') refocusFilter();
   // checkbox multi-select
   $('#view').querySelectorAll('.chk-row').forEach(c=>c.onchange=()=>{ if(c.checked)STATE.checked[c.dataset.id]=true; else delete STATE.checked[c.dataset.id]; const n=[...document.querySelectorAll('.chk-row:checked')].length; const k=$('#keepChecked'),rj=$('#rejChecked'); if(k){k.textContent='✓ Keep checked ('+n+')';k.disabled=!n;} if(rj){rj.textContent='✕ Reject checked ('+n+')';rj.disabled=!n;} });
   if($('#chkAll'))$('#chkAll').onchange=e=>{ document.querySelectorAll('.chk-row').forEach(c=>{c.checked=e.target.checked; if(e.target.checked)STATE.checked[c.dataset.id]=true; else delete STATE.checked[c.dataset.id];}); const n=e.target.checked?document.querySelectorAll('.chk-row').length:0; const k=$('#keepChecked'),rj=$('#rejChecked'); if(k){k.textContent='✓ Keep checked ('+n+')';k.disabled=!n;} if(rj){rj.textContent='✕ Reject checked ('+n+')';rj.disabled=!n;} };
@@ -1389,7 +1447,7 @@ function renderShort(mode){
   if($('#keepChecked'))$('#keepChecked').onclick=()=>applyChecked('select');
   if($('#rejChecked'))$('#rejChecked').onclick=()=>applyChecked('reject');
   if($('#resetAll'))$('#resetAll').onclick=()=>{ STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.checked={}; toast('Selection reset'); render(); };
-  $('#view').querySelectorAll('.seccell,.cellx').forEach(c=>c.onclick=()=>c.classList.toggle('expanded'));
+  $('#view').querySelectorAll('.seccell,.cellx,.audx').forEach(c=>c.onclick=()=>c.classList.toggle('expanded'));
   // sortable headers (Keyword A→Z, Vol)
   $('#view').querySelectorAll('th.fsort').forEach(th=>th.onclick=()=>{ const k=th.dataset.fk; if(STATE.fSort.key===k)STATE.fSort.dir*=-1; else STATE.fSort={key:k,dir:k==='kw'?1:-1}; render(); });
   // keyword/topic text filter — hides non-matching rows live (no re-render, keeps focus)
@@ -1423,6 +1481,23 @@ function renderShort(mode){
   $('#view').querySelectorAll('.hundo').forEach(b=>b.onclick=()=>undoEntry(+b.dataset.i));
 }
 VIEWS.short=()=>renderShort('icp');
+/* ---- keyboard review: K keep · R reject · U undo · ↑↓ move ---- */
+function visFilterRows(){ return [...document.querySelectorAll('.ftbl tbody tr[data-rid]')].filter(tr=>tr.style.display!=='none'); }
+function refocusFilter(){ const vis=visFilterRows(); document.querySelectorAll('tr.rowfocus').forEach(t=>t.classList.remove('rowfocus')); if(!vis.length)return; STATE.focusIdx=Math.max(0,Math.min(STATE.focusIdx||0,vis.length-1)); const tr=vis[STATE.focusIdx]; tr.classList.add('rowfocus'); tr.scrollIntoView({block:'nearest'}); }
+function decideFocused(status){ const vis=visFilterRows(); const tr=vis[STATE.focusIdx]; if(!tr)return; const r=STATE.rows.find(x=>x.id===+tr.dataset.rid); if(!r)return; const _b=_snap(); r.status=status; r.reason=status==='selected'?'Shortlisted':'Not relevant'; r.manual=true; _commit((status==='selected'?'Kept':'Rejected')+' 1 · '+r.kw,_b); renderStats(); render(); }
+document.addEventListener('keydown',e=>{
+  if(!(STEPS[STATE.step]&&STEPS[STATE.step].id==='short')||STATE.viewMode!=='filters')return;
+  const ae=document.activeElement; if(ae&&(/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)||ae.isContentEditable))return;
+  const k=e.key;
+  if(k==='ArrowDown'){e.preventDefault();STATE.focusIdx=(STATE.focusIdx||0)+1;refocusFilter();}
+  else if(k==='ArrowUp'){e.preventDefault();STATE.focusIdx=Math.max(0,(STATE.focusIdx||0)-1);refocusFilter();}
+  else if(k==='k'||k==='K'){e.preventDefault();decideFocused('selected');}
+  else if(k==='r'||k==='R'){e.preventDefault();decideFocused('rejected');}
+  else if(k==='u'||k==='U'){e.preventDefault();undoEntry(0);}
+});
+/* ---- persistent activity log (admin) ---- */
+const ACTIVITY_LS='topicShortlist.activity';
+function logActivity(label,n){ try{ const a=JSON.parse(localStorage.getItem(ACTIVITY_LS)||'[]'); a.unshift({ts:Date.now(),label,n,site:(STATE.config&&STATE.config.website)||''}); if(a.length>500)a.length=500; localStorage.setItem(ACTIVITY_LS,JSON.stringify(a)); }catch(e){} }
 /* ============================ SERP (Serper.dev) ============================ */
 function hostOf(u){ try{return new URL(u).hostname.replace(/^www\./,'');}catch(e){return u;} }
 /* persistent keyword→rankings cache (survives reloads AND re-uploads; separate from the session) */
@@ -1434,7 +1509,7 @@ function saveSerpCache(){ try{localStorage.setItem(SERP_CACHE_KEY, JSON.stringif
 function applySerpResult(r){
   if(!r.profileEdited) r.profile = classifyProfileFromSerp(r) || classifyProfile(r);
   const brand=serpBrandHit(r);
-  if(brand && !r.manual && r.status!=='rejected'){ r.status='rejected'; r.reason='Branded query — results dominated by '+brand; r.manual=true; }
+  if(brand && !r.manual && r.status!=='rejected'){ r.status='rejected'; r.reason='Branded query'; r.autoReason='Branded query'; r.manual=true; }
 }
 /* restore cached rankings onto rows with no API call (called on upload/process) */
 function applySerpCache(){
@@ -1575,7 +1650,12 @@ function adminPopulate(){
   const n=(STATE.rows||[]).length;
   const sel=(STATE.rows||[]).filter(r=>r.status==='selected').length, rej=(STATE.rows||[]).filter(r=>r.status==='rejected').length;
   document.getElementById('sessInfo').textContent=n?`${n} topics loaded · ${sel} selected · ${rej} rejected · ${n-sel-rej} pending`:'No session loaded on this browser.';
-  ['pwMsg','serpMsg','sessMsg'].forEach(id=>document.getElementById(id).textContent='');
+  // activity log
+  let acts=[]; try{acts=JSON.parse(localStorage.getItem(ACTIVITY_LS)||'[]');}catch(e){}
+  document.getElementById('actCount').textContent=acts.length;
+  const f2=x=>String(x).padStart(2,'0');
+  document.getElementById('actList').innerHTML = acts.length?acts.slice(0,200).map(a=>{const d=new Date(a.ts);const ds=`${d.getFullYear()}-${f2(d.getMonth()+1)}-${f2(d.getDate())} ${f2(d.getHours())}:${f2(d.getMinutes())}`;const site=(a.site||'').replace(/^https?:\/\/(www\.)?/,'').replace(/\/$/,''); return `<div style="display:flex;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line);font-size:12px"><span class="muted" style="white-space:nowrap;font-variant-numeric:tabular-nums">${ds}</span><span style="flex:1">${esc(a.label)}</span>${site?`<span class="muted" style="white-space:nowrap">${esc(site)}</span>`:''}</div>`;}).join(''):'<div style="padding:14px;color:var(--muted);font-size:12px">No activity recorded yet.</div>';
+  ['pwMsg','serpMsg','sessMsg','actMsg'].forEach(id=>document.getElementById(id).textContent='');
 }
 function openAdmin(){
   document.getElementById('admin').style.display='flex';
@@ -1620,6 +1700,8 @@ function initAdmin(){
   document.getElementById('aExp').onclick=()=>{ if((STATE.rows||[]).length)exportSession(); else { const m=document.getElementById('sessMsg'); m.style.color='var(--red)'; m.textContent='Nothing to export — no session loaded.'; } };
   document.getElementById('aImp').onchange=e=>e.target.files[0]&&importSession(e.target.files[0]);
   document.getElementById('aClr').onclick=clearSession;
+  document.getElementById('actExport').onclick=()=>{ let acts=[]; try{acts=JSON.parse(localStorage.getItem(ACTIVITY_LS)||'[]');}catch(e){} if(!acts.length){const m=document.getElementById('actMsg');m.style.color='var(--red)';m.textContent='Log is empty.';return;} const q=s=>'"'+String(s==null?'':s).replace(/"/g,'""')+'"'; const lines=['Timestamp,Action,Topics,Project']; acts.forEach(a=>lines.push([new Date(a.ts).toISOString(),a.label,a.n,a.site].map(q).join(','))); const b=new Blob([lines.join('\n')],{type:'text/csv'}); const el=document.createElement('a');el.href=URL.createObjectURL(b);el.download='activity-log.csv';el.click(); };
+  document.getElementById('actClear').onclick=()=>{ if(confirm('Clear the entire activity log on this browser? This cannot be undone.')){ localStorage.removeItem(ACTIVITY_LS); adminPopulate(); const m=document.getElementById('actMsg');m.style.color='var(--green)';m.textContent='Activity log cleared.'; } };
 }
 
 /* ============================ BOOT ============================ */
