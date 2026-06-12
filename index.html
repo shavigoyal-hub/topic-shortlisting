@@ -242,6 +242,9 @@
   .ichip.aud.audx.expanded{white-space:normal;overflow:visible}
   tr.rowfocus>td{background:#eef0ff !important}
   tr.rowfocus>td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
+  .ftbl thead th{position:relative}
+  .colgrip{position:absolute;top:0;right:0;width:8px;height:100%;cursor:col-resize;user-select:none}
+  .colgrip:hover{background:var(--accent);opacity:.45}
   th.fsort .ar{color:var(--accent);font-size:10px}
   .rej-badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;text-transform:uppercase;letter-spacing:.3px;white-space:nowrap}
   .rej-badge.pre{background:var(--amber-soft);color:var(--amber)}
@@ -411,6 +414,7 @@ const STATE = {
   fSort:{key:'',dir:-1},        // filters view: '' (default) | 'kw' | 'vol'
   rejFilter:{aud:'all',type:'all',why:'all',reason:'all',q:''},  // rejected tab column filters
   focusIdx:0,                   // keyboard-focused row index in the filters table
+  colWidths:{},                 // user-dragged column widths, keyed by "<tab>:<colIndex>"
   history:[],                   // action log (session-only): {ts,label,n,changed:[{id,from}]}
 };
 const PROFILE_ORDER=['B2B / Corporate','Healthcare / Clinical','Aspiring Practitioner','Athlete / Sports','Local Seeker','Individual / Consumer','Researcher / Student','General','Unclassified'];
@@ -1438,6 +1442,7 @@ function renderShort(mode){
   };
   // keyboard-focus highlight for current filter row (refocus after each render)
   if(vm==='filters') refocusFilter();
+  setupColResize(vm);   // drag-to-resize columns (persisted per tab)
   // checkbox multi-select
   $('#view').querySelectorAll('.chk-row').forEach(c=>c.onchange=()=>{ if(c.checked)STATE.checked[c.dataset.id]=true; else delete STATE.checked[c.dataset.id]; const n=[...document.querySelectorAll('.chk-row:checked')].length; const k=$('#keepChecked'),rj=$('#rejChecked'); if(k){k.textContent='✓ Keep checked ('+n+')';k.disabled=!n;} if(rj){rj.textContent='✕ Reject checked ('+n+')';rj.disabled=!n;} });
   if($('#chkAll'))$('#chkAll').onchange=e=>{ document.querySelectorAll('.chk-row').forEach(c=>{c.checked=e.target.checked; if(e.target.checked)STATE.checked[c.dataset.id]=true; else delete STATE.checked[c.dataset.id];}); const n=e.target.checked?document.querySelectorAll('.chk-row').length:0; const k=$('#keepChecked'),rj=$('#rejChecked'); if(k){k.textContent='✓ Keep checked ('+n+')';k.disabled=!n;} if(rj){rj.textContent='✕ Reject checked ('+n+')';rj.disabled=!n;} };
@@ -1480,6 +1485,25 @@ VIEWS.short=()=>renderShort('icp');
 function visFilterRows(){ return [...document.querySelectorAll('.ftbl tbody tr[data-rid]')].filter(tr=>tr.style.display!=='none'); }
 function refocusFilter(){ const vis=visFilterRows(); document.querySelectorAll('tr.rowfocus').forEach(t=>t.classList.remove('rowfocus')); if(!vis.length)return; STATE.focusIdx=Math.max(0,Math.min(STATE.focusIdx||0,vis.length-1)); const tr=vis[STATE.focusIdx]; tr.classList.add('rowfocus'); tr.scrollIntoView({block:'nearest'}); }
 function decideFocused(status){ const vis=visFilterRows(); const tr=vis[STATE.focusIdx]; if(!tr)return; const r=STATE.rows.find(x=>x.id===+tr.dataset.rid); if(!r)return; const _b=_snap(); r.status=status; r.reason=status==='selected'?'Shortlisted':'Not relevant'; r.manual=true; _commit((status==='selected'?'Kept':'Rejected')+' 1 · '+r.kw,_b); renderStats(); render(); }
+/* ---- drag-to-resize table columns (persisted per tab) ---- */
+function setupColResize(tab){
+  const tbl=document.querySelector('#view .ftbl'); if(!tbl||!tbl.tHead)return;
+  const ths=[...tbl.tHead.rows[0].cells];
+  ths.forEach((th,i)=>{
+    const key=tab+':'+i;
+    if(STATE.colWidths[key]) th.style.width=STATE.colWidths[key]+'px';
+    if(i===ths.length-1) return;                 // skip the trailing action column
+    const grip=document.createElement('span'); grip.className='colgrip';
+    grip.onclick=e=>e.stopPropagation();         // don't trigger a header sort
+    grip.onmousedown=e=>{ e.preventDefault(); e.stopPropagation();
+      const startX=e.clientX, startW=th.offsetWidth;
+      const move=ev=>{ th.style.width=Math.max(46, startW+(ev.clientX-startX))+'px'; };
+      const up=()=>{ document.removeEventListener('mousemove',move); document.removeEventListener('mouseup',up); STATE.colWidths[key]=th.offsetWidth; saveState(); };
+      document.addEventListener('mousemove',move); document.addEventListener('mouseup',up);
+    };
+    th.appendChild(grip);
+  });
+}
 document.addEventListener('keydown',e=>{
   if(!(STEPS[STATE.step]&&STEPS[STATE.step].id==='short')||STATE.viewMode!=='filters')return;
   const ae=document.activeElement; if(ae&&(/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)||ae.isContentEditable))return;
