@@ -157,6 +157,20 @@
   .seccell{display:block;max-width:190px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11.5px;color:#64748b;cursor:pointer}
   .seccell:hover{color:var(--accent)}
   .seccell.expanded{white-space:normal;max-width:none;overflow:visible}
+  /* login gate */
+  .login{position:fixed;inset:0;background:linear-gradient(135deg,#0c0c30 0%,#1f2596 55%,#3b46f1 100%);display:flex;align-items:center;justify-content:center;z-index:1000}
+  .login-card{background:#fff;border-radius:18px;padding:40px 42px 34px;width:370px;max-width:92vw;box-shadow:0 24px 70px rgba(0,0,0,.35);text-align:center}
+  .login-logo{font-size:27px;font-weight:800;letter-spacing:-.6px;color:var(--accent)}
+  .login-logo span{color:var(--navy)}
+  .login-dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--accent);margin-left:2px;vertical-align:middle}
+  .login-sub{color:var(--muted);font-size:13px;margin:7px 0 26px}
+  .login input{width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:10px;font-size:14px;box-sizing:border-box}
+  .login input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);outline:none}
+  .login .btn{width:100%;margin-top:14px;padding:12px}
+  .login-err{color:var(--red);font-size:12.5px;min-height:17px;margin-top:11px;font-weight:600}
+  .login-foot{color:var(--muted);font-size:11px;margin-top:18px}
+  .signout{margin-top:8px;color:#9aa0d6;font-size:11.5px;cursor:pointer;text-decoration:underline}
+  .signout:hover{color:#fff}
   /* modal */
   .modal{position:fixed;inset:0;background:rgba(12,12,48,.45);display:flex;align-items:center;justify-content:center;z-index:200;padding:24px}
   .modal-card{background:#fff;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.3);width:min(820px,100%);max-height:86vh;display:flex;flex-direction:column;overflow:hidden}
@@ -237,12 +251,25 @@
 </style>
 </head>
 <body>
+<!-- LOGIN GATE -->
+<div class="login" id="login" style="display:none">
+  <div class="login-card">
+    <div class="login-logo">gush<span>work</span><span class="login-dot"></span></div>
+    <div class="login-sub">Topic Shortlisting Tool</div>
+    <form id="loginForm">
+      <input type="password" id="loginPw" placeholder="Enter password" autocomplete="current-password" autofocus>
+      <button class="btn" type="submit">Sign in</button>
+      <div class="login-err" id="loginErr"></div>
+    </form>
+    <div class="login-foot">Internal tool · access restricted</div>
+  </div>
+</div>
 <div class="app">
   <!-- SIDEBAR -->
   <aside class="side">
     <div class="brand">Topic Shortlisting<small id="brandClient">Keyword → Topic curation</small></div>
     <nav class="steps" id="stepNav"></nav>
-    <div class="side-foot">Local & private · auto-saved in this browser</div>
+    <div class="side-foot">Local & private · auto-saved in this browser<div class="signout" id="signout">Sign out</div></div>
   </aside>
 
   <!-- MAIN -->
@@ -302,17 +329,34 @@ const STATE = {
   gridCell:null,                // {f,p} currently-opened grid cell
   modal:null,                   // {type:'cell',f,p} | {type:'filter'} topic popup
   eAud:'all',                   // E view: audience filter
+  history:[],                   // action log (session-only): {ts,label,n,changed:[{id,from}]}
 };
 const PROFILE_ORDER=['B2B / Corporate','Healthcare / Clinical','Aspiring Practitioner','Athlete / Sports','Local Seeker','Individual / Consumer','Researcher / Student','General','Unclassified'];
 function profileSort(a,b){const ia=PROFILE_ORDER.indexOf(a),ib=PROFILE_ORDER.indexOf(b);return (ia<0?98:ia)-(ib<0?98:ib)||a.localeCompare(b);}
 /* generic bulk decision over phase rows matching a predicate */
+/* ---- action history (in-memory undo log) ---- */
+function _snap(){ return STATE.rows.map(r=>({id:r.id,status:r.status,reason:r.reason,autoReason:r.autoReason,manual:r.manual})); }
+function _commit(label, before){
+  const changed=[];
+  for(let i=0;i<STATE.rows.length;i++){ const r=STATE.rows[i], b=before[i];
+    if(b&&(b.status!==r.status||b.reason!==r.reason||b.manual!==r.manual)) changed.push({id:r.id, from:{status:b.status,reason:b.reason,autoReason:b.autoReason,manual:b.manual}});
+  }
+  if(changed.length){ STATE.history.unshift({ts:Date.now(), label, n:changed.length, changed}); if(STATE.history.length>60)STATE.history.length=60; }
+}
+function undoEntry(i){ const e=STATE.history[i]; if(!e)return;
+  e.changed.forEach(c=>{ const r=STATE.rows.find(x=>x.id===c.id); if(r){ r.status=c.from.status; r.reason=c.from.reason; r.autoReason=c.from.autoReason; r.manual=c.from.manual; } });
+  STATE.history.splice(i,1); toast('Undone: '+e.label); renderStats(); render();
+}
 function decide(pred, action, label){
+  const _b=_snap();
   let n=0; STATE.rows.forEach(r=>{ if(r.pageType!==STATE.phase||!pred(r))return;
     if(action==='select'){ if(r.status==='pending'){r.status='selected';r.reason=label||'Shortlisted';r.manual=true;n++;} }
     else if(action==='reject'){ if(r.status!=='rejected'){r.status='rejected';r.reason=label||'Not relevant';r.manual=true;n++;} }
     else { r.status='pending';r.reason='';r.autoReason='';r.manual=false;n++; }
   });
-  toast((action==='select'?'Kept ':action==='reject'?'Rejected ':'Reset ')+n+' topics');
+  const msg=(action==='select'?'Kept ':action==='reject'?'Rejected ':'Reset ')+n+' topics';
+  _commit(label?msg+' · '+label:msg, _b);
+  toast(msg);
   renderStats(); render();
 }
 const PAGE_SIZE = 60;
@@ -451,7 +495,9 @@ function renderStats(){
     +(nSel?`<div style="align-self:center"><button class="btn ghost sm" id="resetSelected" title="Move every selected topic back to Pending">↺ Reset selected</button></div>`:'');
   if($('#resetSelected'))$('#resetSelected').onclick=()=>{
     const n=cnt(r,'selected'); if(!confirm('Move all '+n+' selected topics back to Pending? This clears your shortlist.'))return;
+    const _b=_snap();
     STATE.rows.forEach(x=>{ if(x.status==='selected'){x.status='pending';x.reason='';x.manual=false;} });
+    _commit('Reset '+n+' selected → pending', _b);
     toast('Reset '+n+' selected topics'); renderStats(); render();
   };
 }
@@ -1020,6 +1066,7 @@ function buildProfileGroups(rows){
   return arr;
 }
 function applyProfileGroup(profile,key,action){
+  const _b=_snap();
   const rows=STATE.rows.filter(r=>r.pageType===STATE.phase && r.profile===profile && (r.combo||'(no identifier)')===key);
   let n=0;
   rows.forEach(r=>{
@@ -1027,10 +1074,12 @@ function applyProfileGroup(profile,key,action){
     else if(action==='reject'){ if(r.status!=='rejected'){r.status='rejected';r.reason='ICP '+profile+' · '+key;r.manual=true;n++;} }
     else { r.status='pending';r.reason='';r.autoReason='';r.manual=false;n++; }
   });
-  toast((action==='select'?'Kept ':action==='reject'?'Rejected ':'Reset ')+n+' · '+key);
+  const msg=(action==='select'?'Kept ':action==='reject'?'Rejected ':'Reset ')+n+' · '+key;
+  _commit(msg,_b); toast(msg);
   renderStats();render();
 }
 function applyProfile(profile,action){
+  const _b=_snap();
   const rows=STATE.rows.filter(r=>r.pageType===STATE.phase && r.profile===profile);
   let n=0;
   rows.forEach(r=>{
@@ -1038,10 +1087,12 @@ function applyProfile(profile,action){
     else if(action==='reject'){ if(r.status!=='rejected'){r.status='rejected';r.reason='ICP not relevant: '+profile;r.manual=true;n++;} }
     else { r.status='pending';r.reason='';r.autoReason='';r.manual=false;n++; }
   });
-  toast((action==='select'?'Approved ':action==='reject'?'Rejected ':'Reset ')+n+' · '+profile);
+  const msg=(action==='select'?'Approved ':action==='reject'?'Rejected ':'Reset ')+n+' · '+profile;
+  _commit(msg,_b); toast(msg);
   renderStats();render();
 }
 function applyGroup(key,action){
+  const _b=_snap();
   const g=buildGroups(STATE.rows.filter(r=>r.pageType===STATE.phase)).find(x=>x.key===key);
   if(!g)return; let n=0;
   g.rows.forEach(r=>{
@@ -1049,7 +1100,8 @@ function applyGroup(key,action){
     else if(action==='reject'){ if(r.status!=='rejected'){r.status='rejected';r.reason='Group: '+key;r.manual=true;n++;} }
     else { r.status='pending';r.reason='';r.autoReason='';r.manual=false;n++; }
   });
-  toast((action==='select'?'Selected ':action==='reject'?'Rejected ':'Reset ')+n+' · '+key);
+  const msg=(action==='select'?'Selected ':action==='reject'?'Rejected ':'Reset ')+n+' · '+key;
+  _commit(msg,_b); toast(msg);
   renderStats();render();
 }
 function secList(r){ return (r.sec||'').split(/[\n,;|]+/).map(s=>s.trim()).filter(Boolean); }
@@ -1352,6 +1404,27 @@ function renderShort(mode){
     </div>
   </div>`;
 
+  // ---------- HISTORY · session action log with undo ----------
+  const fmtTime=ts=>{const d=new Date(ts);const p=x=>String(x).padStart(2,'0');return p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());};
+  const hist=STATE.history;
+  const historyBody=`
+  <div class="tablewrap">
+    <div class="tbar"><b style="font-size:13px">${hist.length} action${hist.length===1?'':'s'} this session</b>
+      <span class="muted" style="font-size:12px">· newest first · undo restores each topic's previous status</span>
+      <span style="flex:1"></span>${hist.length?'<button class="btn sec sm" id="undoLast">↩ Undo last</button>':''}</div>
+    <div class="scrollx">
+      <table class="ftbl" style="min-width:560px">
+        <thead><tr><th style="width:90px">Time</th><th>Action</th><th style="width:80px">Topics</th><th style="width:96px"></th></tr></thead>
+        <tbody>${hist.length?hist.map((e,i)=>`<tr>
+          <td class="muted" style="font-variant-numeric:tabular-nums">${fmtTime(e.ts)}</td>
+          <td>${esc(e.label)}</td>
+          <td><b>${e.n}</b></td>
+          <td><button class="btn ghost sm hundo" data-i="${i}">↩ Undo</button></td>
+        </tr>`).join(''):'<tr><td colspan="4"><div class="empty">No actions yet — keep or reject some topics and they will be logged here so you can undo.</div></td></tr>'}</tbody>
+      </table>
+    </div>
+  </div>`;
+
   // ---------- E · MODIFIER → TYPE  (audience filter + select-all at each level) ----------
   const eAll=all.filter(r=>STATE.eAud==='all'||r.profile===STATE.eAud);
   const eModMap=new Map(); eAll.forEach(r=>{const m=primMod(r); if(!eModMap.has(m))eModMap.set(m,[]); eModMap.get(m).push(r);});
@@ -1404,16 +1477,18 @@ function renderShort(mode){
       <div class="modal-body">${topicList(list)}</div></div></div>`;
   }
 
-  let vm=STATE.viewMode; if(vm!=='filters'&&vm!=='selected')vm=STATE.viewMode='filters';
+  let vm=STATE.viewMode; if(!['filters','selected','history'].includes(vm))vm=STATE.viewMode='filters';
   const blurb={filters:'Tick the audiences, types and modifiers that fit the client, then keep or reject the matching topics.',
-    selected:'Every topic you have kept, updating live. Remove any that slipped in.'}[vm];
+    selected:'Every topic you have kept, updating live. Remove any that slipped in.',
+    history:'Every keep / reject / reset action you took this session. Undo any of them to restore the previous status.'}[vm];
   $('#view').innerHTML=`
   <div class="pagehead"><h2>Shortlist — Service / Product <span style="font-weight:400;color:var(--muted);font-size:14px">→ pages to build</span></h2><p>${blurb}</p></div>
   <div class="phasetabs" style="margin-bottom:14px">
     <button class="vtab ${vm==='filters'?'on':''}" data-vm="filters">Filter &amp; pick</button>
     <button class="vtab ${vm==='selected'?'on':''}" data-vm="selected">✓ Selected (${selRows.length})</button>
+    <button class="vtab ${vm==='history'?'on':''}" data-vm="history">↻ History (${hist.length})</button>
   </div>
-  ${vm==='selected'?selectedBody:filtersBody}
+  ${vm==='selected'?selectedBody:vm==='history'?historyBody:filtersBody}
   ${modalHtml}`;
 
   $('#view').querySelectorAll('.vtab').forEach(b=>b.onclick=()=>{STATE.viewMode=b.dataset.vm;STATE.modal=null;render();});
@@ -1441,12 +1516,12 @@ function renderShort(mode){
   // checkbox multi-select
   $('#view').querySelectorAll('.chk-row').forEach(c=>c.onchange=()=>{ if(c.checked)STATE.checked[c.dataset.id]=true; else delete STATE.checked[c.dataset.id]; const n=[...document.querySelectorAll('.chk-row:checked')].length; const k=$('#keepChecked'),rj=$('#rejChecked'); if(k){k.textContent='✓ Keep checked ('+n+')';k.disabled=!n;} if(rj){rj.textContent='✕ Reject checked ('+n+')';rj.disabled=!n;} });
   if($('#chkAll'))$('#chkAll').onchange=e=>{ document.querySelectorAll('.chk-row').forEach(c=>{c.checked=e.target.checked; if(e.target.checked)STATE.checked[c.dataset.id]=true; else delete STATE.checked[c.dataset.id];}); const n=e.target.checked?document.querySelectorAll('.chk-row').length:0; const k=$('#keepChecked'),rj=$('#rejChecked'); if(k){k.textContent='✓ Keep checked ('+n+')';k.disabled=!n;} if(rj){rj.textContent='✕ Reject checked ('+n+')';rj.disabled=!n;} };
-  const applyChecked=act=>{ const ids=new Set(Object.keys(STATE.checked)); let n=0; STATE.rows.forEach(r=>{ if(!ids.has(String(r.id)))return; if(act==='select'){if(r.status==='pending'){r.status='selected';r.reason='Shortlisted';r.manual=true;n++;}} else {if(r.status!=='rejected'){r.status='rejected';r.reason='Not relevant';r.manual=true;n++;}} }); STATE.checked={}; toast((act==='select'?'Kept ':'Rejected ')+n+' checked'); renderStats(); render(); };
+  const applyChecked=act=>{ const _b=_snap(); const ids=new Set(Object.keys(STATE.checked)); let n=0; STATE.rows.forEach(r=>{ if(!ids.has(String(r.id)))return; if(act==='select'){if(r.status==='pending'){r.status='selected';r.reason='Shortlisted';r.manual=true;n++;}} else {if(r.status!=='rejected'){r.status='rejected';r.reason='Not relevant';r.manual=true;n++;}} }); STATE.checked={}; const msg=(act==='select'?'Kept ':'Rejected ')+n+' checked'; _commit(msg,_b); toast(msg); renderStats(); render(); };
   if($('#keepChecked'))$('#keepChecked').onclick=()=>applyChecked('select');
   if($('#rejChecked'))$('#rejChecked').onclick=()=>applyChecked('reject');
   if($('#resetAll'))$('#resetAll').onclick=()=>{ STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.checked={}; toast('Selection reset'); render(); };
   $('#view').querySelectorAll('.seccell').forEach(c=>c.onclick=()=>c.classList.toggle('expanded'));
-  if($('#applyFilters'))$('#applyFilters').onclick=()=>{ STATE.rows.forEach(r=>{ if(r.pageType!==phase||r.status!=='pending')return; if(matchPred(r)){r.status='selected';r.reason='Shortlisted (filters)';r.manual=true;} else {r.status='rejected';r.reason='Out of scope (filters)';r.manual=true;} }); toast('Applied filters'); renderStats(); render(); };
+  if($('#applyFilters'))$('#applyFilters').onclick=()=>{ const _b=_snap(); STATE.rows.forEach(r=>{ if(r.pageType!==phase||r.status!=='pending')return; if(matchPred(r)){r.status='selected';r.reason='Shortlisted (filters)';r.manual=true;} else {r.status='rejected';r.reason='Out of scope (filters)';r.manual=true;} }); _commit('Applied filters · kept '+matchN, _b); toast('Applied filters'); renderStats(); render(); };
   if($('#viewMatches'))$('#viewMatches').onclick=()=>{STATE.modal={type:'filter'};render();};
 
   // handlers
@@ -1469,10 +1544,14 @@ function renderShort(mode){
   $('#view').querySelectorAll('.icpact').forEach(b=>b.onclick=()=>applyProfile(b.dataset.k, b.dataset.a));
   $('#view').querySelectorAll('.icpgact').forEach(b=>b.onclick=()=>applyProfileGroup(b.dataset.p, b.dataset.k, b.dataset.a));
   $('#view').querySelectorAll('.miniact button[data-id]').forEach(b=>b.onclick=()=>{
+    const _b=_snap();
     const r=STATE.rows.find(x=>x.id==b.dataset.id); r.status=b.dataset.act; r.manual=true;
     if(b.dataset.act==='selected'&&/^Group|ICP|Page|Shortlisted|Out of scope|identifier|brand|Location|Zero|Free|Near|Informational|Job|Wrong|relevance|person|Other/i.test(r.reason))r.reason='';
+    _commit((b.dataset.act==='selected'?'Kept':b.dataset.act==='rejected'?'Rejected':'Moved')+' 1 · '+r.kw, _b);
     renderStats();render();
   });
+  if($('#undoLast'))$('#undoLast').onclick=()=>undoEntry(0);
+  $('#view').querySelectorAll('.hundo').forEach(b=>b.onclick=()=>undoEntry(+b.dataset.i));
 }
 VIEWS.short=()=>renderShort('icp');
 /* ============================ SERP (Serper.dev) ============================ */
@@ -1556,12 +1635,13 @@ function exportCsv(){
 const LS_KEY='topicShortlist.v1';
 function saveState(){ try{ if(!STATE.rows.length)return;
   // strip the bulky per-row rankings (kept in the separate SERP cache) so the session stays small
-  const slim={...STATE, rows:STATE.rows.map(r=>{const o={...r}; delete o.serp; delete o.serpTitles; return o;})};
+  const slim={...STATE, history:[], rows:STATE.rows.map(r=>{const o={...r}; delete o.serp; delete o.serpTitles; return o;})};
   localStorage.setItem(LS_KEY, JSON.stringify(slim)); }catch(e){} }
 function loadState(){ try{ const s=localStorage.getItem(LS_KEY); if(!s)return false; const p=JSON.parse(s);
   const rules={...STATE.rules, ...(p.rules||{})};      // merge so new default flags (e.g. org) survive an old session
   const config={...STATE.config, ...(p.config||{})};
   Object.assign(STATE, p); STATE.rules=rules; STATE.config=config;
+  if(!Array.isArray(STATE.history))STATE.history=[];
   return !!(STATE.rows&&STATE.rows.length); }catch(e){return false;} }
 function clearSession(){ if(confirm('Start over? This clears the loaded AKR and all decisions on this device.')){ localStorage.removeItem(LS_KEY); STATE.rows=[]; STATE.step=0; location.reload(); } }
 function exportSession(){
@@ -1579,11 +1659,36 @@ setInterval(saveState, 4000);
 window.addEventListener('beforeunload', saveState);
 document.addEventListener('visibilitychange', ()=>{ if(document.hidden) saveState(); });
 
+/* ============================ AUTH GATE ============================ */
+const AUTH_KEY='topicShortlist.auth';
+const PW_HASH='37e7e38f0d3366828be4a4c594093d280a7cd0a46f5449c0a99c4d6fe0d17cc2'; // sha-256 of the access password
+async function sha256(s){ const b=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)); return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
+function bootApp(){
+  loadSerpCache();
+  loadState();
+  STATE.serpRunning=false; STATE.serpCancel=false; STATE.serpAuto=false;   // reset transient rankings flags each load
+  render();
+}
+function showApp(){ document.getElementById('login').style.display='none'; document.querySelector('.app').style.display=''; bootApp(); }
+function signOut(){ localStorage.removeItem(AUTH_KEY); location.reload(); }
+function initAuth(){
+  const app=document.querySelector('.app'), login=document.getElementById('login');
+  if(localStorage.getItem(AUTH_KEY)==='1'){ showApp(); return; }
+  app.style.display='none'; login.style.display='flex';
+  document.getElementById('loginForm').onsubmit=async e=>{
+    e.preventDefault();
+    const pw=document.getElementById('loginPw').value;
+    const err=document.getElementById('loginErr');
+    try{
+      if(await sha256(pw)===PW_HASH){ localStorage.setItem(AUTH_KEY,'1'); showApp(); }
+      else { err.textContent='Incorrect password'; document.getElementById('loginPw').select(); }
+    }catch(_){ err.textContent='This browser blocks secure crypto — open over https.'; }
+  };
+}
+document.getElementById('signout').onclick=signOut;
+
 /* ============================ BOOT ============================ */
-loadSerpCache();
-loadState();
-STATE.serpRunning=false; STATE.serpCancel=false; STATE.serpAuto=false;   // reset transient rankings flags each load
-render();
+initAuth();
 </script>
 </body>
 </html>
