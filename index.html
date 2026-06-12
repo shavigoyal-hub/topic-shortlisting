@@ -541,13 +541,16 @@ function serpBrandHit(r){
   for(const t of toks){ const tt=t.replace(/[^a-z0-9]/g,''); if(tt.length<4)continue; const hit=top3.find(h=>h.replace(/[^a-z0-9]/g,'').includes(tt)); if(hit)return hit; }
   return null;
 }
-/* read the ICP from WHAT THE RANKING PAGES ARE ABOUT — score their titles+snippets with the profile lexicon */
+/* read the ICP from WHAT RANKS for the keyword:
+   (1) the ranking DOMAINS (B2B marketplaces, healthcare orgs, retail, .edu… — strong signal, weighted x2)
+   (2) the ranking TITLES + SNIPPETS scored against the audience lexicon */
 function classifyProfileFromSerp(r){
   if(!r.serpDone) return null;
+  const score={};
+  (r.serp||[]).map(hostOf).forEach(h=>{ if(!h)return; for(const d of DOMAIN_SIGNALS){ if(d.rx.test(h)) score[d.profile]=(score[d.profile]||0)+2; } });
   const text=(r.serpTitles||[]).join('  ').toLowerCase();
-  if(!text.trim()) return null;
-  let best=null,bn=0;
-  for(const p of PROFILES){ const m=text.match(p.rxg); const n=m?m.length:0; if(n>bn){bn=n;best=p.name;} }
+  for(const p of PROFILES){ const m=text.match(p.rxg); if(m&&m.length) score[p.name]=(score[p.name]||0)+m.length; }
+  let best=null,bn=0; for(const k in score){ if(score[k]>bn){bn=score[k];best=k;} }
   return bn>0 ? best : null;
 }
 function classifyProfiles(){ STATE.rows.forEach(r=>{ if(r.profileEdited)return;
