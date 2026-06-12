@@ -171,6 +171,24 @@
   .login-foot{color:var(--muted);font-size:11px;margin-top:18px}
   .signout{margin-top:8px;color:#9aa0d6;font-size:11.5px;cursor:pointer;text-decoration:underline}
   .signout:hover{color:#fff}
+  .side-links{display:flex;gap:14px;margin-top:8px}
+  /* admin portal */
+  .admin{position:fixed;inset:0;background:rgba(12,12,48,.62);display:none;align-items:flex-start;justify-content:center;z-index:1100;overflow:auto;padding:42px 16px}
+  .admin-card{background:#fff;border-radius:16px;width:580px;max-width:96vw;box-shadow:0 24px 70px rgba(0,0,0,.4)}
+  .admin-head{display:flex;align-items:center;gap:10px;padding:17px 22px;border-bottom:1px solid var(--line)}
+  .admin-head b{font-size:16px}
+  .admin-body{padding:4px 22px 20px}
+  .admin-sec{padding:17px 0;border-bottom:1px solid var(--line)}
+  .admin-sec:last-child{border-bottom:0}
+  .admin-sec h4{margin:0 0 4px;font-size:13.5px;display:flex;align-items:center;gap:8px}
+  .admin-sec p{margin:0 0 11px;font-size:12px;color:var(--muted);line-height:1.45}
+  .admin-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .admin input[type=text],.admin input[type=password]{flex:1;min-width:190px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font-size:13px}
+  .admin input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);outline:none}
+  .admin-badge{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:10px;text-transform:uppercase;letter-spacing:.3px}
+  .admin-badge.ok{background:var(--green-soft);color:var(--green)}
+  .admin-badge.warn{background:var(--amber-soft);color:var(--amber)}
+  .admin-msg{font-size:12px;font-weight:600;margin-top:9px;min-height:15px;color:var(--green)}
   /* modal */
   .modal{position:fixed;inset:0;background:rgba(12,12,48,.45);display:flex;align-items:center;justify-content:center;z-index:200;padding:24px}
   .modal-card{background:#fff;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.3);width:min(820px,100%);max-height:86vh;display:flex;flex-direction:column;overflow:hidden}
@@ -261,7 +279,41 @@
       <button class="btn" type="submit">Sign in</button>
       <div class="login-err" id="loginErr"></div>
     </form>
-    <div class="login-foot">Internal tool · access restricted</div>
+    <div class="login-foot">Internal tool · access restricted · <span id="openAdminLogin" style="cursor:pointer;text-decoration:underline">Admin</span></div>
+  </div>
+</div>
+<!-- ADMIN PORTAL -->
+<div class="admin" id="admin">
+  <div class="admin-card">
+    <div class="admin-head"><b>⚙︎ Admin portal</b><span class="muted" style="font-size:12px">gushwork · restricted</span><span style="flex:1"></span><button class="modal-x" id="adminClose">✕</button></div>
+    <div class="admin-body" id="adminGate">
+      <div class="admin-sec" style="border:0">
+        <h4>Admin sign-in</h4>
+        <p>Enter the admin password to manage access and settings.</p>
+        <form id="adminForm"><div class="admin-row"><input type="password" id="adminPw" placeholder="Admin password" autocomplete="off"><button class="btn sm" type="submit">Unlock</button></div></form>
+        <div class="admin-msg" id="adminErr" style="color:var(--red)"></div>
+      </div>
+    </div>
+    <div class="admin-body" id="adminPanel" style="display:none">
+      <div class="admin-sec">
+        <h4>Access password <span class="admin-badge" id="pwBadge"></span></h4>
+        <p>The password users type to open the tool. Stored as a hash in this browser — applies to this device.</p>
+        <div class="admin-row"><input type="password" id="newPw" placeholder="New access password (min 6 chars)"><button class="btn sm" id="savePw">Save</button><button class="btn sec sm" id="resetPw">Reset to default</button></div>
+        <div class="admin-msg" id="pwMsg"></div>
+      </div>
+      <div class="admin-sec">
+        <h4>Google rankings — Serper <span class="admin-badge" id="serpBadge"></span></h4>
+        <p>Leave blank to use the secure server proxy (SERPER_KEY env var on Vercel). Paste a key only for local/browser use — it will be stored in this browser.</p>
+        <div class="admin-row"><input type="text" id="adminSerp" placeholder="Serper API key" autocomplete="off"><button class="btn sm" id="saveSerp">Save</button><button class="btn sec sm" id="clrSerp">Clear</button></div>
+        <div class="admin-msg" id="serpMsg"></div>
+      </div>
+      <div class="admin-sec">
+        <h4>Session &amp; data</h4>
+        <p id="sessInfo">No session loaded.</p>
+        <div class="admin-row"><button class="btn sec sm" id="aExp">⤓ Export session</button><label class="btn sec sm" style="cursor:pointer">⤒ Import session<input type="file" id="aImp" accept="application/json" hidden></label><button class="btn sec sm" id="aClr" style="color:var(--red);border-color:#f3c2c2">Clear all data</button></div>
+        <div class="admin-msg" id="sessMsg"></div>
+      </div>
+    </div>
   </div>
 </div>
 <div class="app">
@@ -269,7 +321,7 @@
   <aside class="side">
     <div class="brand">Topic Shortlisting<small id="brandClient">Keyword → Topic curation</small></div>
     <nav class="steps" id="stepNav"></nav>
-    <div class="side-foot">Local & private · auto-saved in this browser<div class="signout" id="signout">Sign out</div></div>
+    <div class="side-foot">Local & private · auto-saved in this browser<div class="side-links"><span class="signout" id="openAdmin">⚙︎ Admin</span><span class="signout" id="signout">Sign out</span></div></div>
   </aside>
 
   <!-- MAIN -->
@@ -1186,7 +1238,7 @@ function renderShort(mode){
           <td><span class="pill ${r.status==='selected'?'sel':r.status==='rejected'?'rej':'pend'}">${r.status}</span></td>
           <td><div class="reason" contenteditable data-id="${r.id}">${esc(r.reason)}</div></td>
           <td><div class="miniact"><button class="y" data-id="${r.id}" data-act="selected">Keep</button><button class="n" data-id="${r.id}" data-act="rejected">Reject</button></div></td>
-          <td>${r.serpDone?`<div class="serpcell">${r.serp.length?r.serp.map((u,i)=>`<a href="${esc(u)}" target="_blank" title="${esc(u)}">${i+1}. ${esc(hostOf(u))}</a>`).join(''):'<span style="color:var(--muted)">no results</span>'}</div>`:(r.status==='rejected'?'<span style="color:var(--muted)">—</span>':`<button class="btn sec sm serpbtn" data-id="${r.id}">Get top-10</button>`)}</td>
+          <td>${r.serpDone?`<div class="serpcell">${(r.serp||[]).length?(r.serp||[]).map((u,i)=>`<a href="${esc(u)}" target="_blank" title="${esc(u)}">${i+1}. ${esc(hostOf(u))}</a>`).join(''):'<span style="color:var(--muted)">no results</span>'}</div>`:(r.status==='rejected'?'<span style="color:var(--muted)">—</span>':`<button class="btn sec sm serpbtn" data-id="${r.id}">Get top-10</button>`)}</td>
         </tr>`).join(''):`<tr><td colspan="11"><div class="empty">No topics match.</div></td></tr>`}
       </tbody>
     </table>
@@ -1642,6 +1694,7 @@ function loadState(){ try{ const s=localStorage.getItem(LS_KEY); if(!s)return fa
   const config={...STATE.config, ...(p.config||{})};
   Object.assign(STATE, p); STATE.rules=rules; STATE.config=config;
   if(!Array.isArray(STATE.history))STATE.history=[];
+  (STATE.rows||[]).forEach(r=>{ if(!Array.isArray(r.serp))r.serp=[]; if(!Array.isArray(r.serpTitles))r.serpTitles=[]; });  // serp arrays are stripped on save — restore so renders don't crash
   return !!(STATE.rows&&STATE.rows.length); }catch(e){return false;} }
 function clearSession(){ if(confirm('Start over? This clears the loaded AKR and all decisions on this device.')){ localStorage.removeItem(LS_KEY); STATE.rows=[]; STATE.step=0; location.reload(); } }
 function exportSession(){
@@ -1661,11 +1714,17 @@ document.addEventListener('visibilitychange', ()=>{ if(document.hidden) saveStat
 
 /* ============================ AUTH GATE ============================ */
 const AUTH_KEY='topicShortlist.auth';
-const PW_HASH='37e7e38f0d3366828be4a4c594093d280a7cd0a46f5449c0a99c4d6fe0d17cc2'; // sha-256 of the access password
+const PW_HASH='37e7e38f0d3366828be4a4c594093d280a7cd0a46f5449c0a99c4d6fe0d17cc2';      // sha-256 of default access password
+const ADMIN_HASH='6d30e0d04948b9f06cc89c880e0819603d2b59e4433c22a22a909ee663f04ce7';   // sha-256 of admin password
+const PW_OVERRIDE_KEY='topicShortlist.pwHash';   // optional custom access-password hash (per browser)
+const SERPKEY_LS='topicShortlist.serperKey';     // optional Serper key (per browser)
 async function sha256(s){ const b=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)); return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
+function currentPwHash(){ return localStorage.getItem(PW_OVERRIDE_KEY)||PW_HASH; }
 function bootApp(){
   loadSerpCache();
   loadState();
+  STATE.rows.forEach(r=>{ if(r.serpDone && !r.serp.length){ const c=SERP_CACHE[r.kw]; if(c){ r.serp=c.serp||[]; r.serpTitles=c.titles||[]; } } });   // re-hydrate stripped rankings from the keyword cache
+  const sk=localStorage.getItem(SERPKEY_LS); if(sk)STATE.config.serperKey=sk;   // browser-stored key wins over saved session
   STATE.serpRunning=false; STATE.serpCancel=false; STATE.serpAuto=false;   // reset transient rankings flags each load
   render();
 }
@@ -1680,15 +1739,73 @@ function initAuth(){
     const pw=document.getElementById('loginPw').value;
     const err=document.getElementById('loginErr');
     try{
-      if(await sha256(pw)===PW_HASH){ localStorage.setItem(AUTH_KEY,'1'); showApp(); }
+      if(await sha256(pw)===currentPwHash()){ localStorage.setItem(AUTH_KEY,'1'); showApp(); }
       else { err.textContent='Incorrect password'; document.getElementById('loginPw').select(); }
     }catch(_){ err.textContent='This browser blocks secure crypto — open over https.'; }
   };
 }
 document.getElementById('signout').onclick=signOut;
 
+/* ============================ ADMIN PORTAL ============================ */
+function adminPopulate(){
+  const custom=!!localStorage.getItem(PW_OVERRIDE_KEY);
+  const pb=document.getElementById('pwBadge'); pb.textContent=custom?'Custom':'Default'; pb.className='admin-badge '+(custom?'ok':'warn');
+  const key=localStorage.getItem(SERPKEY_LS)||(STATE.config&&STATE.config.serperKey)||'';
+  document.getElementById('adminSerp').value=key;
+  const sb=document.getElementById('serpBadge'); sb.textContent=key?'Browser key':'Server proxy'; sb.className='admin-badge '+(key?'ok':'warn');
+  const n=(STATE.rows||[]).length;
+  const sel=(STATE.rows||[]).filter(r=>r.status==='selected').length, rej=(STATE.rows||[]).filter(r=>r.status==='rejected').length;
+  document.getElementById('sessInfo').textContent=n?`${n} topics loaded · ${sel} selected · ${rej} rejected · ${n-sel-rej} pending`:'No session loaded on this browser.';
+  ['pwMsg','serpMsg','sessMsg'].forEach(id=>document.getElementById(id).textContent='');
+}
+function openAdmin(){
+  document.getElementById('admin').style.display='flex';
+  document.getElementById('adminGate').style.display='';
+  document.getElementById('adminPanel').style.display='none';
+  document.getElementById('adminErr').textContent=''; document.getElementById('adminPw').value='';
+  document.getElementById('adminPw').focus();
+}
+function closeAdmin(){ document.getElementById('admin').style.display='none'; }
+function initAdmin(){
+  document.getElementById('openAdmin').onclick=openAdmin;
+  document.getElementById('openAdminLogin').onclick=openAdmin;
+  document.getElementById('adminClose').onclick=closeAdmin;
+  document.getElementById('admin').onclick=e=>{ if(e.target.id==='admin')closeAdmin(); };
+  document.getElementById('adminForm').onsubmit=async e=>{
+    e.preventDefault();
+    try{
+      if(await sha256(document.getElementById('adminPw').value)===ADMIN_HASH){
+        document.getElementById('adminGate').style.display='none';
+        document.getElementById('adminPanel').style.display='';
+        adminPopulate();
+      } else { document.getElementById('adminErr').textContent='Incorrect admin password'; }
+    }catch(_){ document.getElementById('adminErr').textContent='Secure crypto unavailable — open over https.'; }
+  };
+  document.getElementById('savePw').onclick=async ()=>{
+    const v=document.getElementById('newPw').value, msg=document.getElementById('pwMsg');
+    if(v.length<6){ msg.style.color='var(--red)'; msg.textContent='Use at least 6 characters.'; return; }
+    localStorage.setItem(PW_OVERRIDE_KEY, await sha256(v));
+    document.getElementById('newPw').value=''; msg.style.color='var(--green)'; msg.textContent='Access password updated for this browser.'; adminPopulate();
+  };
+  document.getElementById('resetPw').onclick=()=>{
+    localStorage.removeItem(PW_OVERRIDE_KEY);
+    const msg=document.getElementById('pwMsg'); msg.style.color='var(--green)'; msg.textContent='Reset to the default password.'; adminPopulate();
+  };
+  document.getElementById('saveSerp').onclick=()=>{
+    const v=document.getElementById('adminSerp').value.trim(), msg=document.getElementById('serpMsg');
+    if(v){ localStorage.setItem(SERPKEY_LS, v); if(STATE.config)STATE.config.serperKey=v; }
+    else { localStorage.removeItem(SERPKEY_LS); if(STATE.config)STATE.config.serperKey=''; }
+    msg.style.color='var(--green)'; msg.textContent=v?'Serper key saved to this browser.':'Cleared — using the server proxy.'; adminPopulate();
+  };
+  document.getElementById('clrSerp').onclick=()=>{ document.getElementById('adminSerp').value=''; document.getElementById('saveSerp').onclick(); };
+  document.getElementById('aExp').onclick=()=>{ if((STATE.rows||[]).length)exportSession(); else { const m=document.getElementById('sessMsg'); m.style.color='var(--red)'; m.textContent='Nothing to export — no session loaded.'; } };
+  document.getElementById('aImp').onchange=e=>e.target.files[0]&&importSession(e.target.files[0]);
+  document.getElementById('aClr').onclick=clearSession;
+}
+
 /* ============================ BOOT ============================ */
 initAuth();
+initAdmin();
 </script>
 </body>
 </html>
