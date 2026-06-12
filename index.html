@@ -490,7 +490,7 @@ const BIG_BRANDS_RX = /\b(nvidia|google|apple|microsoft|amazon|meta|tesla|samsun
 
 /* ---- Customer Profile (ICP) classification — uses primary + secondary keywords ---- */
 const PROFILES = [
-  {name:'B2B / Corporate',       rxg:/\b(corporate|executives?|employees?|staff|workplace|workforce|compan(y|ies)|business(es)?|b2b|enterprise|organi[sz]ations?|team building|hr|leadership|for work|office|conference|keynote|offsite|off-site)\b/g},
+  {name:'B2B / Corporate',       rxg:/\b(corporate|executives?|employees?|staff|workplace|workforce|compan(y|ies)|business(es)?|b2b|enterprise|organi[sz]ations?|team building|hr|leadership|for work|office|conference|keynote|offsite|off-site|wholesale|bulk|suppliers?|distributors?|manufacturers?|factor(y|ies)|oem|odm|exporters?|importers?|procurement|vendors?|trade|commercial|industrial|saas|software|platform|crm|erp|api|integration|pricing|demo|for teams)\b/g},
   {name:'Healthcare / Clinical', rxg:/\b(hospitals?|clinics?|clinical|patients?|therap(y|ist|ists)|nurs(e|es|ing)|medical|healthcare|psychologists?|psychiatr|wellbeing program)\b/g},
   {name:'Aspiring Practitioner', rxg:/\b(certifications?|certified|certificate|teacher training|become an?|how to teach|train the trainer|courses?|diploma|licen[sc]e|qualif|instructor|200 hour|ryt)\b/g},
   {name:'Local Seeker',          rxg:/\b(near me|nearby|in [a-z]+ city)\b/g},
@@ -513,7 +513,7 @@ const IGNORE_DOMAINS=/(wikipedia|wikihow|britannica|fandom|youtube|youtu\.be|vim
 /* ICP from the ACTUAL ranking domains — only meaningful commercial / institutional sites count */
 const DOMAIN_SIGNALS=[
   {profile:'Healthcare / Clinical', rx:/(webmd|mayoclinic|nih\.gov|ncbi|clevelandclinic|healthline|psychologytoday|hopkinsmedicine|medicalnewstoday|psycom|verywellhealth|kaiserpermanente|patientcarelink)/},
-  {profile:'B2B / Corporate',       rx:/(g2\.com|capterra|gartner|forbes|hbr\.org|harvardbusiness|inc\.com|shrm|trustradius|techtarget|businessinsider|deloitte|mckinsey|gallup|cnbc|wsj\.com|workhuman|risepeople|bamboohr|gusto)/},
+  {profile:'B2B / Corporate',       rx:/(g2\.com|capterra|gartner|forbes|hbr\.org|harvardbusiness|inc\.com|shrm|trustradius|techtarget|businessinsider|deloitte|mckinsey|gallup|cnbc|wsj\.com|workhuman|risepeople|bamboohr|gusto|alibaba|made-in-china|indiamart|thomasnet|globalsources|tradeindia|dhgate|wholesalecentral|exporthub)/},
   {profile:'Aspiring Practitioner', rx:/(udemy|coursera|edx\.org|yogaalliance|skillshare|teachable|\.edu\b)/},
   {profile:'Local Seeker',          rx:/(yelp|tripadvisor|eventbrite|meetup|classpass|mindbody|maps\.google|booking\.com|thumbtack)/},
   {profile:'Individual / Consumer', rx:/(amazon|etsy|headspace|calm\.com|insighttimer|target\.com|walmart)/},
@@ -781,15 +781,20 @@ function ingest(aoa){
   if(!aoa||!aoa.length)throw new Error('empty file');
   const head=aoa[0].map(h=>norm(h).trim());
   const find=(...keys)=>{for(const k of keys){const i=head.findIndex(h=>h.includes(k));if(i>=0)return i;}return -1;};
+  const exact=(...keys)=>head.findIndex(h=>keys.includes(h));
   const ci={
-    kw:find('primary keyword','keyword'),
+    kw:find('primary keyword','primary kw','keyword'),
     type:find('page type','type'),
     topic:find('topic'),
     sec:find('secondary'),
-    vol:find('search volume','volume'),
-    rel:find('relevance','score'),
+    vol:find('search volume','search vol','monthly searches','volume','msv'),
+    rel:find('relevance','rel.','score'),
   };
+  if(ci.kw<0)ci.kw=exact('kw');
   if(ci.kw<0)ci.kw=0;
+  if(ci.vol<0)ci.vol=exact('sv','vol');      // common AKR shorthand for Search Volume
+  if(ci.rel<0)ci.rel=exact('kd');            // keyword difficulty as a relevance proxy if no score column
+  if(ci.vol<0)STATE.rules.zero=false;        // no volume column → don't mass-reject on "0 search volume"
   const out=[];
   for(let r=1;r<aoa.length;r++){
     const a=aoa[r]; if(!a)continue;
