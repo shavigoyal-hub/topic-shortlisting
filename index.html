@@ -1273,6 +1273,7 @@ function renderShort(mode){
       ${filterRow('Types','ftAll','ftClear',typeOpts.map(f=>`<span class="fpill ${STATE.fTypes.includes(f)?'on':''}" data-ft="${esc(f)}">${esc(f)} <span class="muted">${famCnt(f)}</span></span>`).join(''))}
       ${filterRow('Modifiers','fmAll','fmClear',modOpts.map(([m,n])=>`<span class="fpill mod ${STATE.fMods.includes(m)?'on':''}" data-fm="${esc(m)}">${esc(m)} <span class="muted">${n}</span></span>`).join('')||'<span class="muted" style="font-size:12px">none</span>')}
       <div style="margin-top:8px"><button class="btn" id="applyFilters">Keep ${matchN} matching · reject the rest</button>
+      <button class="btn ghost sm" id="resetAll" style="margin-left:6px"${(STATE.fAud.length||STATE.fTypes.length||STATE.fMods.length||nChecked)?'':' disabled'}>↺ Reset selection</button>
       <span class="muted" style="font-size:12px;margin-left:8px">${matchN} matching topics shown below (empty filter = “any”).</span></div>
     </div>
     <div class="tbar" style="border-bottom:1px solid var(--line)">
@@ -1395,6 +1396,7 @@ function renderShort(mode){
   const applyChecked=act=>{ const ids=new Set(Object.keys(STATE.checked)); let n=0; STATE.rows.forEach(r=>{ if(!ids.has(String(r.id)))return; if(act==='select'){if(r.status==='pending'){r.status='selected';r.reason='Shortlisted';r.manual=true;n++;}} else {if(r.status!=='rejected'){r.status='rejected';r.reason='Not relevant';r.manual=true;n++;}} }); STATE.checked={}; toast((act==='select'?'Kept ':'Rejected ')+n+' checked'); renderStats(); render(); };
   if($('#keepChecked'))$('#keepChecked').onclick=()=>applyChecked('select');
   if($('#rejChecked'))$('#rejChecked').onclick=()=>applyChecked('reject');
+  if($('#resetAll'))$('#resetAll').onclick=()=>{ STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.checked={}; toast('Selection reset'); render(); };
   if($('#applyFilters'))$('#applyFilters').onclick=()=>{ STATE.rows.forEach(r=>{ if(r.pageType!==phase||r.status!=='pending')return; if(matchPred(r)){r.status='selected';r.reason='Shortlisted (filters)';r.manual=true;} else {r.status='rejected';r.reason='Out of scope (filters)';r.manual=true;} }); toast('Applied filters'); renderStats(); render(); };
   if($('#viewMatches'))$('#viewMatches').onclick=()=>{STATE.modal={type:'filter'};render();};
 
