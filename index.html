@@ -439,8 +439,15 @@ function renderStats(){
   const cnt=(arr,st)=>st?arr.filter(x=>x.status===st).length:arr.length;
   const bk=st=>`<div class="bk"><span>S/P ${cnt(svc,st)}</span><span>Blog ${cnt(blog,st)}</span></div>`;
   const cell=(lbl,st,cls)=>`<div><div class="s">${lbl}</div><div class="v ${cls||''}">${st?cnt(r,st):r.length}</div>${bk(st)}</div>`;
+  const nSel=cnt(r,'selected');
   $('#topStats').innerHTML=
-    cell('Topics','')+cell('Selected','selected','green')+cell('Rejected','rejected','red')+cell('Pending','pending','amber');
+    cell('Topics','')+cell('Selected','selected','green')+cell('Rejected','rejected','red')+cell('Pending','pending','amber')
+    +(nSel?`<div style="align-self:center"><button class="btn ghost sm" id="resetSelected" title="Move every selected topic back to Pending">↺ Reset selected</button></div>`:'');
+  if($('#resetSelected'))$('#resetSelected').onclick=()=>{
+    const n=cnt(r,'selected'); if(!confirm('Move all '+n+' selected topics back to Pending? This clears your shortlist.'))return;
+    STATE.rows.forEach(x=>{ if(x.status==='selected'){x.status='pending';x.reason='';x.manual=false;} });
+    toast('Reset '+n+' selected topics'); renderStats(); render();
+  };
 }
 function go(i){ if(i===1||STATE.rows.length||i===0){STATE.step=Math.max(0,Math.min(STEPS.length-1,i));render();} }
 function render(){ renderNav(); renderStats(); VIEWS[STEPS[STATE.step].id](); }
