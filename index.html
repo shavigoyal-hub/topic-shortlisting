@@ -103,6 +103,12 @@
   tr.selected{background:#eef6f1}
   tr:hover{background:#f5f6f9}
   .kw{font-weight:600}
+  /* shortlist tables: fixed layout + min width so the Keyword — Topic column gets a big leftover share */
+  .ftbl{table-layout:fixed;min-width:1180px}
+  .ftbl td{overflow:hidden}
+  .ftbl .kw{font-size:12.5px}
+  /* type chip truncates to one line (full name on hover) so a long type doesn't balloon the row */
+  .ichip.fam2{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
   .sub2{color:var(--muted);font-size:11.5px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;max-width:330px}
   .pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700}
   .pill.svc{background:var(--accent-soft);color:var(--accent-d)}
@@ -1304,12 +1310,12 @@ function renderShort(mode){
       <button class="btn sec sm" id="rejChecked" ${nChecked?'':'disabled'}>✕ Reject checked (${nChecked})</button>
     </div>
     <div class="scrollx">
-      <table>
-        <thead><tr><th style="width:30px"></th><th>Audience</th><th>Type</th><th>Modifier</th><th>Keyword — Topic</th><th>Secondary</th><th>Vol</th><th>Decide</th></tr></thead>
+      <table class="ftbl">
+        <thead><tr><th style="width:30px"></th><th style="width:104px">Audience</th><th style="width:140px">Type</th><th style="width:82px">Modifier</th><th>Keyword — Topic</th><th style="width:124px">Secondary</th><th style="width:54px">Vol</th><th style="width:110px">Decide</th></tr></thead>
         <tbody>${shown.length?shown.map(r=>`<tr>
           <td><input type="checkbox" class="chk-row" data-id="${r.id}" ${STATE.checked[r.id]?'checked':''}></td>
           <td><span class="ichip aud">${esc(r.profile)}</span></td>
-          <td><span class="ichip">${esc(r.family)}</span></td>
+          <td><span class="ichip fam2" title="${esc(r.family)}">${esc(r.family)}</span></td>
           <td>${r.modIds.map(m=>`<span class="ichip mod">${esc(m)}</span>`).join('')||'<span class="muted">—</span>'}</td>
           <td><span class="kw">${esc(r.kw)}</span>${r.topic?`<span class="muted" style="font-size:11.5px"> — ${esc(r.topic)}</span>`:''}</td>
           <td>${secCell(r)}</td>
@@ -1331,11 +1337,11 @@ function renderShort(mode){
       <span class="muted" style="font-size:12px">· ${selVol.toLocaleString()} total volume · updates live as you keep / reject</span>
       <span style="flex:1"></span><button class="btn sm" id="export">⤓ Export CSV</button></div>
     <div class="scrollx">
-      <table>
-        <thead><tr><th>Audience</th><th>Type</th><th>Modifier</th><th>Keyword — Topic</th><th>Secondary</th><th>Vol</th><th></th></tr></thead>
+      <table class="ftbl">
+        <thead><tr><th style="width:104px">Audience</th><th style="width:140px">Type</th><th style="width:82px">Modifier</th><th>Keyword — Topic</th><th style="width:124px">Secondary</th><th style="width:54px">Vol</th><th style="width:104px"></th></tr></thead>
         <tbody>${selRows.length?selRows.map(r=>`<tr>
           <td><span class="ichip aud">${esc(r.profile)}</span></td>
-          <td><span class="ichip">${esc(r.family)}</span></td>
+          <td><span class="ichip fam2" title="${esc(r.family)}">${esc(r.family)}</span></td>
           <td>${r.modIds.map(m=>`<span class="ichip mod">${esc(m)}</span>`).join('')||'<span class="muted">—</span>'}</td>
           <td><span class="kw">${esc(r.kw)}</span>${r.topic?`<span class="muted" style="font-size:11.5px"> — ${esc(r.topic)}</span>`:''}</td>
           <td>${secCell(r)}</td>
