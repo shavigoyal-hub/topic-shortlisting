@@ -1268,9 +1268,8 @@ function renderShort(mode){
       ${filterRow('Audiences','faAll','faClear',audOpts.map(p=>`<span class="fpill aud ${STATE.fAud.includes(p)?'on':''}" data-fa="${esc(p)}">${esc(p)} <span class="muted">${profCnt(p)}</span></span>`).join(''),true)}
       ${filterRow('Types','ftAll','ftClear',typeOpts.map(f=>`<span class="fpill type ${STATE.fTypes.includes(f)?'on':''}" data-ft="${esc(f)}">${esc(f)} <span class="muted">${famCnt(f)}</span></span>`).join(''),true)}
       ${filterRow('Modifiers','fmAll','fmClear',modOpts.map(([m,n])=>`<span class="fpill mod ${STATE.fMods.includes(m)?'on':''}" data-fm="${esc(m)}">${esc(m)} <span class="muted">${n}</span></span>`).join('')||'<span class="muted" style="font-size:12px">none</span>',false)}
-      <div style="margin-top:8px"><button class="btn" id="applyFilters">Keep ${matchN} matching · reject the rest</button>
-      <button class="btn ghost sm" id="resetAll" style="margin-left:6px"${(STATE.fAud.length||STATE.fTypes.length||STATE.fMods.length||nChecked)?'':' disabled'}>↺ Reset selection</button>
-      <span class="muted" style="font-size:12px;margin-left:8px">${matchN} matching topics shown below (empty filter = “any”).</span></div>
+      <div style="margin-top:8px"><span class="muted" style="font-size:12px">${matchN} matching topic${matchN===1?'':'s'} shown below (empty filter = “any”). Tick rows and use <b>Keep / Reject checked</b>, or decide each row.</span>
+      <button class="btn ghost sm" id="resetAll" style="margin-left:8px"${(STATE.fAud.length||STATE.fTypes.length||STATE.fMods.length||nChecked)?'':' disabled'}>↺ Reset selection</button></div>
     </div>
     <div class="tbar" style="border-bottom:1px solid var(--line)">
       <label class="chk" style="gap:6px"><input type="checkbox" id="chkAll" ${shown.length&&nChecked===shown.length?'checked':''}> <span style="font-size:12.5px">Select all shown</span></label>
@@ -1438,7 +1437,6 @@ function renderShort(mode){
   // keyword/topic text filter — hides non-matching rows live (no re-render, keeps focus)
   const applyFSearch=()=>{ const q=(STATE.fSearch||'').toLowerCase(); $('#view').querySelectorAll('.ftbl tbody tr[data-kwt]').forEach(tr=>{ tr.style.display = (!q||tr.dataset.kwt.includes(q))?'':'none'; }); };
   if($('#fSearch')){ const fi=$('#fSearch'); fi.oninput=()=>{ STATE.fSearch=fi.value; applyFSearch(); }; applyFSearch(); }
-  if($('#applyFilters'))$('#applyFilters').onclick=()=>{ const _b=_snap(); STATE.rows.forEach(r=>{ if(r.pageType!==phase||r.status!=='pending')return; if(matchPred(r)){r.status='selected';r.reason='Shortlisted (filters)';r.manual=true;} else {r.status='rejected';r.reason='Out of scope (filters)';r.manual=true;} }); _commit('Applied filters · kept '+matchN, _b); toast('Applied filters'); renderStats(); render(); };
   if($('#viewMatches'))$('#viewMatches').onclick=()=>{STATE.modal={type:'filter'};render();};
 
   // handlers
