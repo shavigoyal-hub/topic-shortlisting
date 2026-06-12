@@ -559,7 +559,8 @@ function classifyProfileFromSerp(r){
   return tBest || null;                                   // else a weak single text hit, else unclassified
 }
 function classifyProfiles(){ STATE.rows.forEach(r=>{ if(r.profileEdited)return;
-  r.profile = r.serpDone ? (classifyProfileFromSerp(r)||classifyProfile(r)) : 'Unclassified';   // classify only once rankings are in
+  if(ICP_CACHE[r.kw]) r.profile=ICP_CACHE[r.kw];                                                // LLM intent (cached) wins
+  else r.profile = r.serpDone ? (classifyProfileFromSerp(r)||classifyProfile(r)) : 'Unclassified';
 }); }
 function profileOptions(){ return [...PROFILES.map(p=>p.name), ...STATE.config.industries, 'General']; }
 
@@ -1532,6 +1533,35 @@ const SERP_CACHE_KEY='topicShortlist.serpCache.v1';
 let SERP_CACHE={};
 function loadSerpCache(){ try{SERP_CACHE=JSON.parse(localStorage.getItem(SERP_CACHE_KEY)||'{}');}catch(e){SERP_CACHE={};} }
 function saveSerpCache(){ try{localStorage.setItem(SERP_CACHE_KEY, JSON.stringify(SERP_CACHE));}catch(e){} }
+/* persistent keyword→ICP cache (LLM intent classifications) */
+const ICP_CACHE_KEY='topicShortlist.icpCache.v1';
+let ICP_CACHE={};
+function loadIcpCache(){ try{ICP_CACHE=JSON.parse(localStorage.getItem(ICP_CACHE_KEY)||'{}');}catch(e){ICP_CACHE={};} }
+function saveIcpCache(){ try{localStorage.setItem(ICP_CACHE_KEY, JSON.stringify(ICP_CACHE));}catch(e){} }
+const onServerHost=()=>/^https?:$/.test(location.protocol) && !/^(localhost|127\.|0\.0\.0\.0|\[|$)/.test(location.hostname);
+/* LLM intent classification (keyword + ranking titles) — batched, cached, falls back to the heuristic */
+async function llmClassify(rows){
+  rows.forEach(r=>{ if(!r.profileEdited && ICP_CACHE[r.kw]) r.profile=ICP_CACHE[r.kw]; });   // apply cached
+  const fallback=r=>{ if(!r.profileEdited) r.profile = classifyProfileFromSerp(r) || classifyProfile(r); };
+  const need=rows.filter(r=>!r.profileEdited && !ICP_CACHE[r.kw]);
+  if(!need.length) return;
+  if(!onServerHost()){ need.forEach(fallback); return; }                                     // LLM endpoint only exists on the server
+  let down=false;
+  for(let i=0;i<need.length && !STATE.serpCancel;i+=40){
+    const batch=need.slice(i,i+40);
+    if(down){ batch.forEach(fallback); continue; }
+    const items=batch.map(r=>({id:r.id,kw:r.kw,titles:(r.serpTitles||[]).slice(0,6)}));
+    try{
+      const res=await fetch('/api/classify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items})});
+      if(!res.ok) throw new Error('classify '+res.status);
+      const j=await res.json();
+      (j.results||[]).forEach(o=>{ const r=STATE.rows.find(x=>x.id===o.id); if(r&&!r.profileEdited){ r.profile=o.audience; ICP_CACHE[r.kw]=o.audience; } });
+      saveIcpCache();
+    }catch(e){ down=true; if(i===0)toast('Intent AI unavailable — using fallback'); batch.forEach(fallback); }
+    const pe=document.getElementById('serpProg'); if(pe)pe.textContent='reading intent '+Math.min(i+40,need.length)+'/'+need.length;
+    renderStats();
+  }
+}
 /* apply SERP results to a row: set ICP from page titles + reject branded queries */
 function applySerpResult(r){
   if(!r.profileEdited) r.profile = classifyProfileFromSerp(r) || classifyProfile(r);
@@ -1580,8 +1610,9 @@ async function fetchSerpBulk(rows, auto){
     if(done%10===0){renderStats();saveState();}
     if(!hit) await sleep(300);   // no rate-limit wait for cached results
   }
+  await llmClassify(rows);       // read buyer intent (keyword + ranking titles) via the LLM, then cache
   STATE.serpRunning=false;
-  saveState(); toast('Rankings '+(STATE.serpCancel?'stopped at '+done:'done · '+done+' fetched')+(err?' · '+err+' errors':'')); render();
+  saveState(); toast('Processed '+done+' topics'+(STATE.serpCancel?' (stopped)':'')+(err?' · '+err+' errors':'')); render();
 }
 function exportCsv(selectedOnly){
   const src = selectedOnly ? STATE.rows.filter(r=>r.status==='selected') : STATE.rows;
@@ -1643,6 +1674,7 @@ async function sha256(s){ const b=await crypto.subtle.digest('SHA-256', new Text
 function currentPwHash(){ return localStorage.getItem(PW_OVERRIDE_KEY)||PW_HASH; }
 function bootApp(){
   loadSerpCache();
+  loadIcpCache();
   loadState();
   STATE.rows.forEach(r=>{ if(r.serpDone && !r.serp.length){ const c=SERP_CACHE[r.kw]; if(c){ r.serp=c.serp||[]; r.serpTitles=c.titles||[]; } } });   // re-hydrate stripped rankings from the keyword cache
   const sk=localStorage.getItem(SERPKEY_LS); if(sk)STATE.config.serperKey=sk;   // browser-stored key wins over saved session
