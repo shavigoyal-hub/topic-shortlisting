@@ -39,6 +39,8 @@
   .topbar .stat{display:flex;gap:22px}
   .stat .s{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
   .stat .v{font-size:18px;font-weight:700}
+  .stat .bk{display:flex;gap:8px;margin-top:1px}
+  .stat .bk span{font-size:10px;color:var(--muted);font-weight:600;white-space:nowrap}
   .v.green{color:var(--green)} .v.red{color:var(--red)} .v.amber{color:var(--amber)}
   .content{padding:26px 28px;max-width:1180px;width:100%}
   .pagehead{margin-bottom:18px}
@@ -133,11 +135,17 @@
   .chk input{width:16px;height:16px}
   .muted{color:var(--muted)}
   .fpill{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:16px;padding:3px 11px;font-size:12px;font-weight:600;cursor:pointer;background:#fff;color:var(--ink)}
-  .fpill:hover{border-color:var(--accent)}
-  .fpill.on{background:var(--accent);color:#fff;border-color:var(--accent)}
-  .fpill.on .muted{color:#dfe2fb}
-  .fpill.aud.on{background:var(--blue);border-color:var(--blue)}
-  .fpill.mod.on{background:var(--amber);border-color:var(--amber)}
+  .fpill .muted{font-weight:700}
+  /* off-state tint per axis so each filter group is recognisable at a glance */
+  .fpill.aud{background:var(--blue-soft);border-color:#cdd9e8;color:var(--blue)}
+  .fpill.type{background:var(--accent-soft);border-color:#cdd1fb;color:var(--accent-d)}
+  .fpill.mod{background:var(--amber-soft);border-color:#f1ddb0;color:var(--amber)}
+  .fpill:hover{filter:brightness(.97)}
+  /* on-state: solid fill of the same hue */
+  .fpill.on .muted{color:#ffffffcc}
+  .fpill.aud.on{background:var(--blue);border-color:var(--blue);color:#fff}
+  .fpill.type.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .fpill.mod.on{background:var(--amber);border-color:var(--amber);color:#fff}
   /* modal */
   .modal{position:fixed;inset:0;background:rgba(12,12,48,.45);display:flex;align-items:center;justify-content:center;z-index:200;padding:24px}
   .modal-card{background:#fff;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.3);width:min(820px,100%);max-height:86vh;display:flex;flex-direction:column;overflow:hidden}
@@ -421,14 +429,13 @@ function renderNav(){
 function renderStats(){
   const r=STATE.rows;
   if(!r.length){$('#topStats').innerHTML='';return;}
-  const sel=r.filter(x=>x.status==='selected').length;
-  const rej=r.filter(x=>x.status==='rejected').length;
-  const pen=r.length-sel-rej;
-  $('#topStats').innerHTML=`
-    <div><div class="s">Topics</div><div class="v">${r.length}</div></div>
-    <div><div class="s">Selected</div><div class="v green">${sel}</div></div>
-    <div><div class="s">Rejected</div><div class="v red">${rej}</div></div>
-    <div><div class="s">Pending</div><div class="v amber">${pen}</div></div>`;
+  const isSvc=x=>x.pageType==='Service';
+  const svc=r.filter(isSvc), blog=r.filter(x=>!isSvc(x));
+  const cnt=(arr,st)=>st?arr.filter(x=>x.status===st).length:arr.length;
+  const bk=st=>`<div class="bk"><span>S/P ${cnt(svc,st)}</span><span>Blog ${cnt(blog,st)}</span></div>`;
+  const cell=(lbl,st,cls)=>`<div><div class="s">${lbl}</div><div class="v ${cls||''}">${st?cnt(r,st):r.length}</div>${bk(st)}</div>`;
+  $('#topStats').innerHTML=
+    cell('Topics','')+cell('Selected','selected','green')+cell('Rejected','rejected','red')+cell('Pending','pending','amber');
 }
 function go(i){ if(i===1||STATE.rows.length||i===0){STATE.step=Math.max(0,Math.min(STEPS.length-1,i));render();} }
 function render(){ renderNav(); renderStats(); VIEWS[STEPS[STATE.step].id](); }
@@ -1273,7 +1280,7 @@ function renderShort(mode){
     <div class="tbar"><b style="font-size:13px">Pick relevant audiences, types &amp; modifiers</b><span style="flex:1"></span>${serpStatus}<button class="btn sm" id="export">⤓ Export CSV</button></div>
     <div style="padding:10px 14px;border-bottom:1px solid var(--line)">
       ${filterRow('Audiences','faAll','faClear',audOpts.map(p=>`<span class="fpill aud ${STATE.fAud.includes(p)?'on':''}" data-fa="${esc(p)}">${esc(p)} <span class="muted">${profCnt(p)}</span></span>`).join(''))}
-      ${filterRow('Types','ftAll','ftClear',typeOpts.map(f=>`<span class="fpill ${STATE.fTypes.includes(f)?'on':''}" data-ft="${esc(f)}">${esc(f)} <span class="muted">${famCnt(f)}</span></span>`).join(''))}
+      ${filterRow('Types','ftAll','ftClear',typeOpts.map(f=>`<span class="fpill type ${STATE.fTypes.includes(f)?'on':''}" data-ft="${esc(f)}">${esc(f)} <span class="muted">${famCnt(f)}</span></span>`).join(''))}
       ${filterRow('Modifiers','fmAll','fmClear',modOpts.map(([m,n])=>`<span class="fpill mod ${STATE.fMods.includes(m)?'on':''}" data-fm="${esc(m)}">${esc(m)} <span class="muted">${n}</span></span>`).join('')||'<span class="muted" style="font-size:12px">none</span>')}
       <div style="margin-top:8px"><button class="btn" id="applyFilters">Keep ${matchN} matching · reject the rest</button>
       <button class="btn ghost sm" id="resetAll" style="margin-left:6px"${(STATE.fAud.length||STATE.fTypes.length||STATE.fMods.length||nChecked)?'':' disabled'}>↺ Reset selection</button>
