@@ -409,7 +409,6 @@ const STATE = {
   eAud:'all',                   // E view: audience filter
   fSearch:'',                   // filters view: keyword/topic text filter
   fSort:{key:'',dir:-1},        // filters view: '' (default) | 'kw' | 'vol'
-  fPillSort:{aud:'count',type:'count',mod:'count'},  // filter chip order: 'count' | 'az'
   rejFilter:{aud:'all',type:'all',why:'all',reason:'all',q:''},  // rejected tab column filters
   focusIdx:0,                   // keyboard-focused row index in the filters table
   history:[],                   // action log (session-only): {ts,label,n,changed:[{id,from}]}
@@ -631,7 +630,6 @@ VIEWS.setup=function(){
     </div>
     <div class="card">
       <h3>Competitor / other brands <span style="font-weight:400;color:var(--muted);font-size:12px">(from Competitors tab)</span></h3>
-      <div class="hint">Branded searches for these are auto-rejected.</div>
       <div class="taginput"><input type="text" id="coIn" placeholder="competitor name"><button class="btn sec sm" id="coAdd">Add</button></div>
       <div class="tags" id="coTags"></div>
     </div>
@@ -1192,6 +1190,13 @@ function rejInfo(r){
   if(r.autoReason) return {type:'Pre-rule', detail:r.autoReason};
   return {type:'Decision', detail:r.reason||'Not relevant'};
 }
+/* coarse, merged rejection reason — first rule only, location/brand specifics stripped (limited set for filtering) */
+function canonicalReason(r){
+  if(/^Branded query/i.test((r.reason||'')+' '+(r.autoReason||''))) return 'Branded query';
+  const src=(r.autoReason||r.reason||'').trim();
+  if(!src) return 'Not relevant';
+  return src.split(';')[0].trim().replace(/:.*$/,'').trim() || 'Not relevant';
+}
 function secList(r){ return (r.sec||'').split(/[\n,;|]+/).map(s=>s.trim()).filter(Boolean); }
 function secCell(r){ const s=secList(r); if(!s.length)return '<span class="muted">—</span>'; const txt=s.join(', '); return `<span class="seccell" title="${esc(txt)}">${esc(txt)}</span>`; }
 function renderShort(mode){
@@ -1232,22 +1237,24 @@ function renderShort(mode){
   const profCnt=p=>pend.filter(r=>r.profile===p&&typeMatch(r)&&modMatch(r)).length;
   const famCnt=f=>pend.filter(r=>r.family===f&&audMatch(r)&&modMatch(r)).length;
   const modCnt=m=>pend.filter(r=>r.modIds.includes(m)&&audMatch(r)&&typeMatch(r)).length;
-  const ps=STATE.fPillSort;
-  const audOpts=[...new Set(pend.map(r=>r.profile))].filter(p=>profCnt(p)>0||STATE.fAud.includes(p)).sort(ps.aud==='az'?(a,b)=>a.localeCompare(b):profileSort);
-  const typeOpts=[...new Set(pend.map(r=>r.family))].filter(f=>famCnt(f)>0||STATE.fTypes.includes(f)).sort(ps.type==='az'?(a,b)=>a.localeCompare(b):(a,b)=>famCnt(b)-famCnt(a));
-  const modOpts=[...new Set(pend.flatMap(r=>r.modIds))].map(m=>[m,modCnt(m)]).filter(([m,n])=>n>0||STATE.fMods.includes(m)).sort(ps.mod==='az'?(a,b)=>a[0].localeCompare(b[0]):(a,b)=>b[1]-a[1]).slice(0,30);
+  const audOpts=[...new Set(pend.map(r=>r.profile))].filter(p=>profCnt(p)>0||STATE.fAud.includes(p)).sort(profileSort);
+  const typeOpts=[...new Set(pend.map(r=>r.family))].filter(f=>famCnt(f)>0||STATE.fTypes.includes(f)).sort((a,b)=>famCnt(b)-famCnt(a));
+  const modOpts=[...new Set(pend.flatMap(r=>r.modIds))].map(m=>[m,modCnt(m)]).filter(([m,n])=>n>0||STATE.fMods.includes(m)).sort((a,b)=>b[1]-a[1]).slice(0,30);
   const matchRows=pend.filter(matchPred);
   const matchN=matchRows.length;
   const fs=STATE.fSort;
   if(fs.key==='kw') matchRows.sort((a,b)=>fs.dir*a.kw.localeCompare(b.kw));
   else if(fs.key==='vol') matchRows.sort((a,b)=>fs.dir*(a.vol-b.vol));
+  else if(fs.key==='aud') matchRows.sort((a,b)=>fs.dir*a.profile.localeCompare(b.profile)||b.vol-a.vol);
+  else if(fs.key==='type') matchRows.sort((a,b)=>fs.dir*a.family.localeCompare(b.family)||b.vol-a.vol);
+  else if(fs.key==='mod') matchRows.sort((a,b)=>fs.dir*((a.modIds[0]||'~').localeCompare(b.modIds[0]||'~'))||b.vol-a.vol);
   else { const modFreq={}; matchRows.forEach(r=>{const m=primMod(r);modFreq[m]=(modFreq[m]||0)+1;});
     matchRows.sort((a,b)=>(modFreq[primMod(b)]-modFreq[primMod(a)])||primMod(a).localeCompare(primMod(b))||b.vol-a.vol); }
   const sortAr=k=>fs.key===k?`<span class="ar">${fs.dir===1?'▲':'▼'}</span>`:'';
   const shown=matchRows.slice(0,400);
   const nChecked=shown.filter(r=>STATE.checked[r.id]).length;
   const totalAll=all.length, decided=all.filter(r=>r.status!=='pending').length, pct=totalAll?Math.round(decided/totalAll*100):0;
-  const filterRow=(label,allId,clrId,html,sep,azKey)=>`<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;${sep?'padding-bottom:9px;margin-bottom:9px;border-bottom:1px solid var(--line)':'margin-bottom:6px'}"><b style="font-size:12px;width:82px">${label}</b><button class="btn ghost sm" id="${allId}">All</button><button class="btn ghost sm" id="${clrId}">Clear</button><button class="btn ghost sm pillsort" data-ax="${azKey}" title="Toggle order">${ps[azKey]==='az'?'A–Z ✓':'A–Z'}</button>${html}</div>`;
+  const filterRow=(label,allId,clrId,html,sep)=>`<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;${sep?'padding-bottom:9px;margin-bottom:9px;border-bottom:1px solid var(--line)':'margin-bottom:6px'}"><b style="font-size:12px;width:82px">${label}</b><button class="btn ghost sm" id="${allId}">All</button><button class="btn ghost sm" id="${clrId}">Clear</button>${html}</div>`;
   const filtersBody=`
   <div class="tablewrap">
     <div class="tbar"><b style="font-size:13px">Pick relevant audiences, types &amp; modifiers</b><span style="flex:1"></span>${serpStatus}<button class="btn sec sm" id="smartSuggest" title="Pre-tick the types &amp; audience that match this client's configured services">✨ Smart suggest</button><button class="btn sm" id="export">⤓ Export CSV</button></div>
@@ -1258,23 +1265,23 @@ function renderShort(mode){
       <span class="muted" style="font-size:11px;white-space:nowrap;border-left:1px solid var(--line);padding-left:12px">⌨ <b>K</b> keep · <b>R</b> reject · <b>U</b> undo · <b>↑↓</b> move</span>
     </div>
     <div style="padding:10px 14px;border-bottom:1px solid var(--line)">
-      ${filterRow('Audiences','faAll','faClear',audOpts.map(p=>`<span class="fpill aud ${STATE.fAud.includes(p)?'on':''}" data-fa="${esc(p)}">${esc(p)} <span class="muted">${profCnt(p)}</span></span>`).join(''),true,'aud')}
-      ${filterRow('Types','ftAll','ftClear',typeOpts.map(f=>`<span class="fpill type ${STATE.fTypes.includes(f)?'on':''}" data-ft="${esc(f)}">${esc(f)} <span class="muted">${famCnt(f)}</span></span>`).join(''),true,'type')}
-      ${filterRow('Modifiers','fmAll','fmClear',modOpts.map(([m,n])=>`<span class="fpill mod ${STATE.fMods.includes(m)?'on':''}" data-fm="${esc(m)}">${esc(m)} <span class="muted">${n}</span></span>`).join('')||'<span class="muted" style="font-size:12px">none</span>',false,'mod')}
+      ${filterRow('Audiences','faAll','faClear',audOpts.map(p=>`<span class="fpill aud ${STATE.fAud.includes(p)?'on':''}" data-fa="${esc(p)}">${esc(p)} <span class="muted">${profCnt(p)}</span></span>`).join(''),true)}
+      ${filterRow('Types','ftAll','ftClear',typeOpts.map(f=>`<span class="fpill type ${STATE.fTypes.includes(f)?'on':''}" data-ft="${esc(f)}">${esc(f)} <span class="muted">${famCnt(f)}</span></span>`).join(''),true)}
+      ${filterRow('Modifiers','fmAll','fmClear',modOpts.map(([m,n])=>`<span class="fpill mod ${STATE.fMods.includes(m)?'on':''}" data-fm="${esc(m)}">${esc(m)} <span class="muted">${n}</span></span>`).join('')||'<span class="muted" style="font-size:12px">none</span>',false)}
       <div style="margin-top:8px"><button class="btn" id="applyFilters">Keep ${matchN} matching · reject the rest</button>
       <button class="btn ghost sm" id="resetAll" style="margin-left:6px"${(STATE.fAud.length||STATE.fTypes.length||STATE.fMods.length||nChecked)?'':' disabled'}>↺ Reset selection</button>
       <span class="muted" style="font-size:12px;margin-left:8px">${matchN} matching topics shown below (empty filter = “any”).</span></div>
     </div>
     <div class="tbar" style="border-bottom:1px solid var(--line)">
-      <input type="text" id="fSearch" placeholder="🔎 Filter by keyword / topic…" value="${esc(STATE.fSearch)}" style="width:230px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:12.5px">
-      <span style="flex:1"></span>
       <label class="chk" style="gap:6px"><input type="checkbox" id="chkAll" ${shown.length&&nChecked===shown.length?'checked':''}> <span style="font-size:12.5px">Select all shown</span></label>
       <button class="btn sec sm" id="keepChecked" ${nChecked?'':'disabled'}>✓ Keep checked (${nChecked})</button>
       <button class="btn sec sm" id="rejChecked" ${nChecked?'':'disabled'}>✕ Reject checked (${nChecked})</button>
+      <span style="flex:1"></span>
+      <input type="text" id="fSearch" placeholder="🔎 Filter by keyword / topic…" value="${esc(STATE.fSearch)}" style="width:230px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:12.5px">
     </div>
     <div class="scrollx">
       <table class="ftbl">
-        <thead><tr><th style="width:30px"></th><th style="width:96px">Audience</th><th style="width:124px">Product / Service Type</th><th style="width:78px">Modifier</th><th class="fsort" data-fk="kw" style="width:236px">Keyword ${sortAr('kw')}</th><th style="min-width:120px">Topic</th><th class="fsort" data-fk="vol" style="width:58px">Vol ${sortAr('vol')}</th><th style="width:74px">Decide</th></tr></thead>
+        <thead><tr><th style="width:30px"></th><th class="fsort" data-fk="aud" style="width:96px">Audience ${sortAr('aud')}</th><th class="fsort" data-fk="type" style="width:124px">Product / Service Type ${sortAr('type')}</th><th class="fsort" data-fk="mod" style="width:78px">Modifier ${sortAr('mod')}</th><th class="fsort" data-fk="kw" style="width:236px">Keyword ${sortAr('kw')}</th><th style="min-width:120px">Topic</th><th class="fsort" data-fk="vol" style="width:58px">Vol ${sortAr('vol')}</th><th style="width:74px">Decide</th></tr></thead>
         <tbody>${shown.length?shown.map(r=>`<tr data-rid="${r.id}" data-kwt="${esc((r.kw+' '+(r.topic||'')).toLowerCase())}">
           <td><input type="checkbox" class="chk-row" data-id="${r.id}" ${STATE.checked[r.id]?'checked':''}></td>
           <td><span class="ichip aud audx" title="${esc(r.profile)}">${esc(r.profile)}</span></td>
@@ -1310,7 +1317,7 @@ function renderShort(mode){
           <td>${r.topic?`<span class="cellx tp" title="${esc(r.topic)}">${esc(r.topic)}</span>`:'<span class="muted">—</span>'}</td>
           <td>${r.vol.toLocaleString()}</td>
           <td><span class="miniact"><button class="n" data-id="${r.id}" data-act="pending" title="Remove from shortlist">↩ Remove</button></span></td>
-        </tr>`).join(''):'<tr><td colspan="7"><div class="empty">No topics selected yet. Use the Filter & pick tab to shortlist.</div></td></tr>'}</tbody>
+        </tr>`).join(''):'<tr><td colspan="7"><div class="empty">No topics selected yet. Use the Filter & Pick tab to shortlist.</div></td></tr>'}</tbody>
       </table>
     </div>
   </div>`;
@@ -1321,11 +1328,13 @@ function renderShort(mode){
   const rf=STATE.rejFilter;
   const rejAudOpts=[...new Set(rejAll.map(r=>r.profile))].sort(profileSort);
   const rejTypeOpts=[...new Set(rejAll.map(r=>r.family))].sort();
-  const rejReasonOpts=[...new Set(rejAll.map(r=>rejInfo(r).detail))].sort();
+  const reasonCounts={}; rejAll.forEach(r=>{const c=canonicalReason(r);reasonCounts[c]=(reasonCounts[c]||0)+1;});
+  const rejReasonOpts=Object.keys(reasonCounts).sort((a,b)=>reasonCounts[b]-reasonCounts[a]);
   const rejRows=rejAll.filter(r=>{const ri=rejInfo(r);const q=rf.q.toLowerCase();
-    return (rf.aud==='all'||r.profile===rf.aud)&&(rf.type==='all'||r.family===rf.type)&&(rf.why==='all'||ri.type===rf.why)&&(rf.reason==='all'||ri.detail===rf.reason)&&(!q||(r.kw+' '+(r.topic||'')).toLowerCase().includes(q));
+    return (rf.aud==='all'||r.profile===rf.aud)&&(rf.type==='all'||r.family===rf.type)&&(rf.why==='all'||ri.type===rf.why)&&(rf.reason==='all'||canonicalReason(r)===rf.reason)&&(!q||(r.kw+' '+(r.topic||'')).toLowerCase().includes(q));
   }).sort((a,b)=>{const ta=rejInfo(a).type,tb=rejInfo(b).type; return ta.localeCompare(tb)||b.vol-a.vol;});
   const rejSel=(id,val,opts,label)=>`<select id="${id}" style="padding:5px 8px;border:1px solid var(--line);border-radius:7px;font-size:12px"><option value="all" ${val==='all'?'selected':''}>${label}</option>${opts.map(o=>`<option value="${esc(o)}" ${val===o?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
+  const rejReasonSel=`<select id="rejReason" style="padding:5px 8px;border:1px solid var(--line);border-radius:7px;font-size:12px"><option value="all" ${rf.reason==='all'?'selected':''}>Any reason (${rejAll.length})</option>${rejReasonOpts.map(o=>`<option value="${esc(o)}" ${rf.reason===o?'selected':''}>${esc(o)} (${reasonCounts[o]})</option>`).join('')}</select>`;
   const rejectedBody=`
   <div class="tablewrap">
     <div class="tbar"><b style="font-size:13px">${rejAll.length} rejected</b>
@@ -1336,7 +1345,7 @@ function renderShort(mode){
       ${rejSel('rejAud',rf.aud,rejAudOpts,'All audiences')}
       ${rejSel('rejType',rf.type,rejTypeOpts,'All types')}
       ${rejSel('rejWhy',rf.why,['Pre-rule','Decision'],'All reasons (why)')}
-      ${rejSel('rejReason',rf.reason,rejReasonOpts,'Any reason')}
+      ${rejReasonSel}
       ${(rf.aud!=='all'||rf.type!=='all'||rf.why!=='all'||rf.reason!=='all'||rf.q)?`<button class="btn ghost sm" id="rejClear">Clear filters</button>`:''}
     </div>
     <div class="scrollx">
@@ -1348,7 +1357,7 @@ function renderShort(mode){
           <td><span class="cellx kw" title="${esc(r.kw)}">${esc(r.kw)}</span></td>
           <td>${r.topic?`<span class="cellx tp" title="${esc(r.topic)}">${esc(r.topic)}</span>`:'<span class="muted">—</span>'}</td>
           <td><span class="rej-badge ${ri.type==='Pre-rule'?'pre':'dec'}">${ri.type}</span></td>
-          <td><span class="cellx tp" title="${esc(ri.detail)}">${esc(ri.detail)}</span></td>
+          <td><span class="cellx tp" title="${esc(canonicalReason(r))}">${esc(canonicalReason(r))}</span></td>
           <td><span class="miniact"><button class="y" data-id="${r.id}" data-act="pending" title="Restore to pending">↩ Restore</button></span></td>
         </tr>`;}).join(''):`<tr><td colspan="7"><div class="empty">${rejAll.length?'No rejected topics match these filters.':'Nothing rejected yet.'}</div></td></tr>`}</tbody>
       </table>
@@ -1376,7 +1385,7 @@ function renderShort(mode){
   $('#view').innerHTML=`
   <div class="pagehead"><h2>Shortlist — Service / Product <span style="font-weight:400;color:var(--muted);font-size:14px">→ pages to build</span></h2><p>${blurb}</p></div>
   <div class="phasetabs" style="margin-bottom:14px">
-    <button class="vtab ${vm==='filters'?'on':''}" data-vm="filters">Filter &amp; pick</button>
+    <button class="vtab ${vm==='filters'?'on':''}" data-vm="filters">Filter &amp; Pick</button>
     <button class="vtab ${vm==='selected'?'on':''}" data-vm="selected">✓ Selected (${selRows.length})</button>
     <button class="vtab ${vm==='rejected'?'on':''}" data-vm="rejected">✕ Rejected (${rejRows.length})</button>
   </div>
@@ -1397,7 +1406,6 @@ function renderShort(mode){
   if($('#faClear'))$('#faClear').onclick=()=>{STATE.fAud=[];render();};
   if($('#fmAll'))$('#fmAll').onclick=()=>{STATE.fMods=[...new Set(STATE.rows.filter(r=>r.pageType===phase&&r.status==='pending').flatMap(r=>r.modIds))];render();};
   if($('#fmClear'))$('#fmClear').onclick=()=>{STATE.fMods=[];render();};
-  $('#view').querySelectorAll('.pillsort').forEach(b=>b.onclick=()=>{const ax=b.dataset.ax;STATE.fPillSort[ax]=STATE.fPillSort[ax]==='az'?'count':'az';render();});
   // rejected-tab column filters
   if($('#rejAud'))$('#rejAud').onchange=e=>{STATE.rejFilter.aud=e.target.value;render();};
   if($('#rejType'))$('#rejType').onchange=e=>{STATE.rejFilter.type=e.target.value;render();};
@@ -1426,7 +1434,7 @@ function renderShort(mode){
   if($('#resetAll'))$('#resetAll').onclick=()=>{ STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.checked={}; toast('Selection reset'); render(); };
   $('#view').querySelectorAll('.seccell,.cellx,.audx').forEach(c=>c.onclick=()=>c.classList.toggle('expanded'));
   // sortable headers (Keyword A→Z, Vol)
-  $('#view').querySelectorAll('th.fsort').forEach(th=>th.onclick=()=>{ const k=th.dataset.fk; if(STATE.fSort.key===k)STATE.fSort.dir*=-1; else STATE.fSort={key:k,dir:k==='kw'?1:-1}; render(); });
+  $('#view').querySelectorAll('th.fsort').forEach(th=>th.onclick=()=>{ const k=th.dataset.fk; if(STATE.fSort.key===k)STATE.fSort.dir*=-1; else STATE.fSort={key:k,dir:k==='vol'?-1:1}; render(); });
   // keyword/topic text filter — hides non-matching rows live (no re-render, keeps focus)
   const applyFSearch=()=>{ const q=(STATE.fSearch||'').toLowerCase(); $('#view').querySelectorAll('.ftbl tbody tr[data-kwt]').forEach(tr=>{ tr.style.display = (!q||tr.dataset.kwt.includes(q))?'':'none'; }); };
   if($('#fSearch')){ const fi=$('#fSearch'); fi.oninput=()=>{ STATE.fSearch=fi.value; applyFSearch(); }; applyFSearch(); }
