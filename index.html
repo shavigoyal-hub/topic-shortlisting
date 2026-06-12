@@ -515,12 +515,14 @@ function classifyProfile(r){
 /* generic sites that rank for almost everything — they DON'T indicate intent/ICP, so ignore them */
 const IGNORE_DOMAINS=/(wikipedia|wikihow|britannica|fandom|youtube|youtu\.be|vimeo|reddit|quora|stackexchange|stackoverflow|medium\.com|tumblr|facebook|instagram|tiktok|twitter|x\.com|pinterest|linkedin\.com|snapchat|threads\.net|discord|news\.ycombinator)/;
 /* ICP from the ACTUAL ranking domains — only meaningful commercial / institutional sites count */
+/* ONLY purchase/intent-specific platforms — NOT broad publishers (Forbes/HBR/CNBC/Wikipedia),
+   which rank for everything and would falsely signal an audience. These say WHO BUYS, not who writes. */
 const DOMAIN_SIGNALS=[
-  {profile:'Healthcare / Clinical', rx:/(webmd|mayoclinic|nih\.gov|ncbi|clevelandclinic|healthline|psychologytoday|hopkinsmedicine|medicalnewstoday|psycom|verywellhealth|kaiserpermanente|patientcarelink)/},
-  {profile:'B2B / Corporate',       rx:/(g2\.com|capterra|gartner|forbes|hbr\.org|harvardbusiness|inc\.com|shrm|trustradius|techtarget|businessinsider|deloitte|mckinsey|gallup|cnbc|wsj\.com|workhuman|risepeople|bamboohr|gusto|alibaba|made-in-china|indiamart|thomasnet|globalsources|tradeindia|dhgate|wholesalecentral|exporthub)/},
+  {profile:'Healthcare / Clinical', rx:/(webmd|mayoclinic|nih\.gov|ncbi|clevelandclinic|hopkinsmedicine|kaiserpermanente|patientcarelink|psychologytoday)/},
+  {profile:'B2B / Corporate',       rx:/(g2\.com|capterra|getapp|softwareadvice|gartner|trustradius|techtarget|shrm|workhuman|risepeople|bamboohr|gusto|alibaba|made-in-china|indiamart|thomasnet|globalsources|tradeindia|dhgate|wholesalecentral|exporthub|justdial|exportersindia)/},
   {profile:'Aspiring Practitioner', rx:/(udemy|coursera|edx\.org|yogaalliance|skillshare|teachable|\.edu\b)/},
   {profile:'Local Seeker',          rx:/(yelp|tripadvisor|eventbrite|meetup|classpass|mindbody|maps\.google|booking\.com|thumbtack)/},
-  {profile:'Individual / Consumer', rx:/(amazon|etsy|headspace|calm\.com|insighttimer|target\.com|walmart)/},
+  {profile:'Individual / Consumer', rx:/(amazon|etsy|target\.com|walmart|wayfair|bestbuy|ikea\.com|ebay|flipkart|headspace|calm\.com|insighttimer)/},
   {profile:'Researcher / Student',  rx:/(researchgate|jstor|scholar\.google|sciencedirect|springer|frontiersin|pubmed)/},
 ];
 function isHomepage(u){ try{return new URL(u).pathname.replace(/\/+$/,'')==='';}catch(e){return false;} }
