@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Topic Shortlisting Tool</title>
+<link rel="icon" type="image/jpeg" href="favicon.jpeg">
+<link rel="apple-touch-icon" href="favicon.jpeg">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root{
@@ -104,7 +106,7 @@
   tr:hover{background:#f5f6f9}
   .kw{font-weight:600}
   /* shortlist tables: fixed layout + min width so the Keyword — Topic column gets a big leftover share */
-  .ftbl{table-layout:fixed;min-width:1180px}
+  .ftbl{table-layout:fixed;min-width:740px}
   .ftbl td{overflow:hidden}
   .ftbl .kw{font-size:12.5px}
   /* type chip truncates to one line (full name on hover) so a long type doesn't balloon the row */
@@ -160,9 +162,7 @@
   /* login gate */
   .login{position:fixed;inset:0;background:linear-gradient(135deg,#0c0c30 0%,#1f2596 55%,#3b46f1 100%);display:flex;align-items:center;justify-content:center;z-index:1000}
   .login-card{background:#fff;border-radius:18px;padding:40px 42px 34px;width:370px;max-width:92vw;box-shadow:0 24px 70px rgba(0,0,0,.35);text-align:center}
-  .login-logo{font-size:27px;font-weight:800;letter-spacing:-.6px;color:var(--accent)}
-  .login-logo span{color:var(--navy)}
-  .login-dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--accent);margin-left:2px;vertical-align:middle}
+  .login-logo-img{height:42px;width:auto;display:inline-block}
   .login-sub{color:var(--muted);font-size:13px;margin:7px 0 26px}
   .login input{width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:10px;font-size:14px;box-sizing:border-box}
   .login input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);outline:none}
@@ -229,6 +229,16 @@
   .miniact button{border:1px solid var(--line);background:#fff;border-radius:6px;padding:3px 8px;font-size:12px;font-weight:600}
   .miniact button.y:hover{background:var(--green-soft);border-color:var(--green);color:var(--green)}
   .miniact button.n:hover{background:var(--red-soft);border-color:var(--red);color:var(--red)}
+  /* compact tick / cross decide buttons (save horizontal space) */
+  .miniact.icon button{width:28px;height:26px;padding:0;font-size:14px;line-height:1;display:inline-flex;align-items:center;justify-content:center}
+  .miniact.icon button.y{color:var(--green)} .miniact.icon button.n{color:var(--red)}
+  .miniact.icon button.y:hover{background:var(--green);border-color:var(--green);color:#fff}
+  .miniact.icon button.n:hover{background:var(--red);border-color:var(--red);color:#fff}
+  /* truncating cell — one line, click to expand (keyword / topic) */
+  .cellx{display:block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+  .cellx.expanded{white-space:normal;overflow:visible}
+  .cellx.tp{color:var(--muted);font-size:12px}
+  th.fsort .ar{color:var(--accent);font-size:10px}
   /* identifiers */
   .idgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:10px}
   .idcard{border:1px solid var(--line);border-radius:10px;padding:12px}
@@ -272,7 +282,7 @@
 <!-- LOGIN GATE -->
 <div class="login" id="login" style="display:none">
   <div class="login-card">
-    <div class="login-logo">gush<span>work</span><span class="login-dot"></span></div>
+    <img src="logo.png" alt="gushwork" class="login-logo-img">
     <div class="login-sub">Topic Shortlisting Tool</div>
     <form id="loginForm">
       <input type="password" id="loginPw" placeholder="Enter password" autocomplete="current-password" autofocus>
@@ -381,6 +391,8 @@ const STATE = {
   gridCell:null,                // {f,p} currently-opened grid cell
   modal:null,                   // {type:'cell',f,p} | {type:'filter'} topic popup
   eAud:'all',                   // E view: audience filter
+  fSearch:'',                   // filters view: keyword/topic text filter
+  fSort:{key:'',dir:-1},        // filters view: '' (default) | 'kw' | 'vol'
   history:[],                   // action log (session-only): {ts,label,n,changed:[{id,from}]}
 };
 const PROFILE_ORDER=['B2B / Corporate','Healthcare / Clinical','Aspiring Practitioner','Athlete / Sports','Local Seeker','Individual / Consumer','Researcher / Student','General','Unclassified'];
@@ -1201,8 +1213,12 @@ function renderShort(mode){
   const modOpts=[...new Set(pend.flatMap(r=>r.modIds))].map(m=>[m,modCnt(m)]).filter(([m,n])=>n>0||STATE.fMods.includes(m)).sort((a,b)=>b[1]-a[1]).slice(0,30);
   const matchRows=pend.filter(matchPred);
   const matchN=matchRows.length;
-  const modFreq={}; matchRows.forEach(r=>{const m=primMod(r);modFreq[m]=(modFreq[m]||0)+1;});
-  matchRows.sort((a,b)=>(modFreq[primMod(b)]-modFreq[primMod(a)])||primMod(a).localeCompare(primMod(b))||b.vol-a.vol);
+  const fs=STATE.fSort;
+  if(fs.key==='kw') matchRows.sort((a,b)=>fs.dir*a.kw.localeCompare(b.kw));
+  else if(fs.key==='vol') matchRows.sort((a,b)=>fs.dir*(a.vol-b.vol));
+  else { const modFreq={}; matchRows.forEach(r=>{const m=primMod(r);modFreq[m]=(modFreq[m]||0)+1;});
+    matchRows.sort((a,b)=>(modFreq[primMod(b)]-modFreq[primMod(a)])||primMod(a).localeCompare(primMod(b))||b.vol-a.vol); }
+  const sortAr=k=>fs.key===k?`<span class="ar">${fs.dir===1?'▲':'▼'}</span>`:'';
   const shown=matchRows.slice(0,400);
   const nChecked=shown.filter(r=>STATE.checked[r.id]).length;
   const filterRow=(label,allId,clrId,html,sep)=>`<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;${sep?'padding-bottom:9px;margin-bottom:9px;border-bottom:1px solid var(--line)':'margin-bottom:6px'}"><b style="font-size:12px;width:82px">${label}</b><button class="btn ghost sm" id="${allId}">All</button><button class="btn ghost sm" id="${clrId}">Clear</button>${html}</div>`;
@@ -1218,22 +1234,24 @@ function renderShort(mode){
       <span class="muted" style="font-size:12px;margin-left:8px">${matchN} matching topics shown below (empty filter = “any”).</span></div>
     </div>
     <div class="tbar" style="border-bottom:1px solid var(--line)">
+      <input type="text" id="fSearch" placeholder="🔎 Filter by keyword / topic…" value="${esc(STATE.fSearch)}" style="width:230px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:12.5px">
+      <span style="flex:1"></span>
       <label class="chk" style="gap:6px"><input type="checkbox" id="chkAll" ${shown.length&&nChecked===shown.length?'checked':''}> <span style="font-size:12.5px">Select all shown</span></label>
       <button class="btn sec sm" id="keepChecked" ${nChecked?'':'disabled'}>✓ Keep checked (${nChecked})</button>
       <button class="btn sec sm" id="rejChecked" ${nChecked?'':'disabled'}>✕ Reject checked (${nChecked})</button>
     </div>
     <div class="scrollx">
       <table class="ftbl">
-        <thead><tr><th style="width:30px"></th><th style="width:104px">Audience</th><th style="width:140px">Type</th><th style="width:82px">Modifier</th><th>Keyword — Topic</th><th style="width:124px">Secondary</th><th style="width:54px">Vol</th><th style="width:110px">Decide</th></tr></thead>
-        <tbody>${shown.length?shown.map(r=>`<tr>
+        <thead><tr><th style="width:30px"></th><th style="width:96px">Audience</th><th style="width:124px">Product / Service Type</th><th style="width:78px">Modifier</th><th class="fsort" data-fk="kw" style="width:188px">Keyword ${sortAr('kw')}</th><th>Topic</th><th class="fsort" data-fk="vol" style="width:58px">Vol ${sortAr('vol')}</th><th style="width:74px">Decide</th></tr></thead>
+        <tbody>${shown.length?shown.map(r=>`<tr data-kwt="${esc((r.kw+' '+(r.topic||'')).toLowerCase())}">
           <td><input type="checkbox" class="chk-row" data-id="${r.id}" ${STATE.checked[r.id]?'checked':''}></td>
           <td><span class="ichip aud">${esc(r.profile)}</span></td>
           <td><span class="ichip fam2" title="${esc(r.family)}">${esc(r.family)}</span></td>
           <td>${r.modIds.map(m=>`<span class="ichip mod">${esc(m)}</span>`).join('')||'<span class="muted">—</span>'}</td>
-          <td><span class="kw">${esc(r.kw)}</span>${r.topic?`<span class="muted" style="font-size:11.5px"> — ${esc(r.topic)}</span>`:''}</td>
-          <td>${secCell(r)}</td>
+          <td><span class="cellx kw" title="${esc(r.kw)}">${esc(r.kw)}</span></td>
+          <td>${r.topic?`<span class="cellx tp" title="${esc(r.topic)}">${esc(r.topic)}</span>`:'<span class="muted">—</span>'}</td>
           <td>${r.vol.toLocaleString()}</td>
-          <td><span class="miniact"><button class="y" data-id="${r.id}" data-act="selected">Keep</button><button class="n" data-id="${r.id}" data-act="rejected">Reject</button></span></td>
+          <td><span class="miniact icon"><button class="y" data-id="${r.id}" data-act="selected" title="Keep">✓</button><button class="n" data-id="${r.id}" data-act="rejected" title="Reject">✕</button></span></td>
         </tr>`).join(''):'<tr><td colspan="8"><div class="empty">No matching topics.</div></td></tr>'}</tbody>
       </table>
       ${matchRows.length>400?`<div class="pager">Showing first 400 of ${matchRows.length}.</div>`:''}
@@ -1251,13 +1269,13 @@ function renderShort(mode){
       <span style="flex:1"></span><button class="btn sec sm" id="export" title="Export every topic with its decision">⤓ Export all</button><button class="btn sm" id="exportSel" title="Export only the selected/kept topics">⤓ Export selected</button></div>
     <div class="scrollx">
       <table class="ftbl">
-        <thead><tr><th style="width:104px">Audience</th><th style="width:140px">Type</th><th style="width:82px">Modifier</th><th>Keyword — Topic</th><th style="width:124px">Secondary</th><th style="width:54px">Vol</th><th style="width:104px"></th></tr></thead>
+        <thead><tr><th style="width:96px">Audience</th><th style="width:124px">Product / Service Type</th><th style="width:82px">Modifier</th><th style="width:210px">Keyword</th><th>Topic</th><th style="width:62px">Vol</th><th style="width:84px"></th></tr></thead>
         <tbody>${selRows.length?selRows.map(r=>`<tr>
           <td><span class="ichip aud">${esc(r.profile)}</span></td>
           <td><span class="ichip fam2" title="${esc(r.family)}">${esc(r.family)}</span></td>
           <td>${r.modIds.map(m=>`<span class="ichip mod">${esc(m)}</span>`).join('')||'<span class="muted">—</span>'}</td>
-          <td><span class="kw">${esc(r.kw)}</span>${r.topic?`<span class="muted" style="font-size:11.5px"> — ${esc(r.topic)}</span>`:''}</td>
-          <td>${secCell(r)}</td>
+          <td><span class="cellx kw" title="${esc(r.kw)}">${esc(r.kw)}</span></td>
+          <td>${r.topic?`<span class="cellx tp" title="${esc(r.topic)}">${esc(r.topic)}</span>`:'<span class="muted">—</span>'}</td>
           <td>${r.vol.toLocaleString()}</td>
           <td><span class="miniact"><button class="n" data-id="${r.id}" data-act="pending" title="Remove from shortlist">↩ Remove</button></span></td>
         </tr>`).join(''):'<tr><td colspan="7"><div class="empty">No topics selected yet. Use the Filter & pick tab to shortlist.</div></td></tr>'}</tbody>
@@ -1335,7 +1353,12 @@ function renderShort(mode){
   if($('#keepChecked'))$('#keepChecked').onclick=()=>applyChecked('select');
   if($('#rejChecked'))$('#rejChecked').onclick=()=>applyChecked('reject');
   if($('#resetAll'))$('#resetAll').onclick=()=>{ STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.checked={}; toast('Selection reset'); render(); };
-  $('#view').querySelectorAll('.seccell').forEach(c=>c.onclick=()=>c.classList.toggle('expanded'));
+  $('#view').querySelectorAll('.seccell,.cellx').forEach(c=>c.onclick=()=>c.classList.toggle('expanded'));
+  // sortable headers (Keyword A→Z, Vol)
+  $('#view').querySelectorAll('th.fsort').forEach(th=>th.onclick=()=>{ const k=th.dataset.fk; if(STATE.fSort.key===k)STATE.fSort.dir*=-1; else STATE.fSort={key:k,dir:k==='kw'?1:-1}; render(); });
+  // keyword/topic text filter — hides non-matching rows live (no re-render, keeps focus)
+  const applyFSearch=()=>{ const q=(STATE.fSearch||'').toLowerCase(); $('#view').querySelectorAll('.ftbl tbody tr[data-kwt]').forEach(tr=>{ tr.style.display = (!q||tr.dataset.kwt.includes(q))?'':'none'; }); };
+  if($('#fSearch')){ const fi=$('#fSearch'); fi.oninput=()=>{ STATE.fSearch=fi.value; applyFSearch(); }; applyFSearch(); }
   if($('#applyFilters'))$('#applyFilters').onclick=()=>{ const _b=_snap(); STATE.rows.forEach(r=>{ if(r.pageType!==phase||r.status!=='pending')return; if(matchPred(r)){r.status='selected';r.reason='Shortlisted (filters)';r.manual=true;} else {r.status='rejected';r.reason='Out of scope (filters)';r.manual=true;} }); _commit('Applied filters · kept '+matchN, _b); toast('Applied filters'); renderStats(); render(); };
   if($('#viewMatches'))$('#viewMatches').onclick=()=>{STATE.modal={type:'filter'};render();};
 
