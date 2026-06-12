@@ -112,6 +112,7 @@
   .ichip.mod{background:var(--amber-soft);color:var(--amber)}
   .ichip.fam{background:var(--navy);color:#fff;font-weight:700}
   .ichip.aud{background:var(--blue-soft);color:var(--blue);font-style:italic}
+  .ichip.sec{background:#f1f5f9;color:#64748b;font-weight:500;max-width:130px;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
   /* grid view */
   .gridtbl{border-collapse:separate;border-spacing:0;font-size:12px}
   .gridtbl th,.gridtbl td{border:1px solid var(--line);padding:6px 8px;text-align:center;white-space:nowrap}
@@ -276,7 +277,7 @@ const STATE = {
   groupSearch:'',
   groupPendingOnly:true,        // hide fully-decided combinations
   serpRunning:false, serpCancel:false, serpAuto:false,   // auto rankings fetch state (transient)
-  viewMode:'grid',              // grid (A) | filters (B) | profiles (C) | clusters (D) | table (E)
+  viewMode:'filters',           // filters (pick) | selected (live review)
   fTypes:[], fAud:[], fMods:[], // filters view: selected service types / audiences / modifiers
   checked:{},                   // filters view: checkbox multi-select (id -> true)
   gridCell:null,                // {f,p} currently-opened grid cell
@@ -1026,6 +1027,8 @@ function applyGroup(key,action){
   toast((action==='select'?'Selected ':action==='reject'?'Rejected ':'Reset ')+n+' · '+key);
   renderStats();render();
 }
+function secList(r){ return (r.sec||'').split(/[\n,;|]+/).map(s=>s.trim()).filter(Boolean).slice(0,3); }
+function secCell(r){ const s=secList(r); return s.length?s.map(x=>`<span class="ichip sec" title="${esc(x)}">${esc(x)}</span>`).join(''):'<span class="muted">—</span>'; }
 function renderShort(mode){
   STATE.shortView=mode;                // 'icp' (review profiles) or 'groups' (decide topics)
   const types=pageTypes();
@@ -1283,18 +1286,44 @@ function renderShort(mode){
     </div>
     <div class="scrollx">
       <table>
-        <thead><tr><th style="width:30px"></th><th>Modifier</th><th>Audience</th><th>Type</th><th>Keyword — Topic</th><th>Vol</th><th>Decide</th></tr></thead>
+        <thead><tr><th style="width:30px"></th><th>Audience</th><th>Type</th><th>Modifier</th><th>Keyword — Topic</th><th>Secondary</th><th>Vol</th><th>Decide</th></tr></thead>
         <tbody>${shown.length?shown.map(r=>`<tr>
           <td><input type="checkbox" class="chk-row" data-id="${r.id}" ${STATE.checked[r.id]?'checked':''}></td>
-          <td>${r.modIds.map(m=>`<span class="ichip mod">${esc(m)}</span>`).join('')||'<span class="muted">—</span>'}</td>
           <td><span class="ichip aud">${esc(r.profile)}</span></td>
           <td><span class="ichip">${esc(r.family)}</span></td>
+          <td>${r.modIds.map(m=>`<span class="ichip mod">${esc(m)}</span>`).join('')||'<span class="muted">—</span>'}</td>
           <td><span class="kw">${esc(r.kw)}</span>${r.topic?`<span class="muted" style="font-size:11.5px"> — ${esc(r.topic)}</span>`:''}</td>
+          <td>${secCell(r)}</td>
           <td>${r.vol.toLocaleString()}</td>
           <td><span class="miniact"><button class="y" data-id="${r.id}" data-act="selected">Keep</button><button class="n" data-id="${r.id}" data-act="rejected">Reject</button></span></td>
-        </tr>`).join(''):'<tr><td colspan="7"><div class="empty">No matching topics.</div></td></tr>'}</tbody>
+        </tr>`).join(''):'<tr><td colspan="8"><div class="empty">No matching topics.</div></td></tr>'}</tbody>
       </table>
       ${matchRows.length>400?`<div class="pager">Showing first 400 of ${matchRows.length}.</div>`:''}
+    </div>
+  </div>`;
+
+  // ---------- SELECTED · live review of everything kept ----------
+  const selRows=STATE.rows.filter(r=>r.status==='selected')
+    .sort((a,b)=>profileSort(a.profile,b.profile)||a.family.localeCompare(b.family)||b.vol-a.vol);
+  const selVol=selRows.reduce((s,r)=>s+r.vol,0);
+  const selectedBody=`
+  <div class="tablewrap">
+    <div class="tbar"><b style="font-size:13px">${selRows.length} topic${selRows.length===1?'':'s'} selected</b>
+      <span class="muted" style="font-size:12px">· ${selVol.toLocaleString()} total volume · updates live as you keep / reject</span>
+      <span style="flex:1"></span><button class="btn sm" id="export">⤓ Export CSV</button></div>
+    <div class="scrollx">
+      <table>
+        <thead><tr><th>Audience</th><th>Type</th><th>Modifier</th><th>Keyword — Topic</th><th>Secondary</th><th>Vol</th><th></th></tr></thead>
+        <tbody>${selRows.length?selRows.map(r=>`<tr>
+          <td><span class="ichip aud">${esc(r.profile)}</span></td>
+          <td><span class="ichip">${esc(r.family)}</span></td>
+          <td>${r.modIds.map(m=>`<span class="ichip mod">${esc(m)}</span>`).join('')||'<span class="muted">—</span>'}</td>
+          <td><span class="kw">${esc(r.kw)}</span>${r.topic?`<span class="muted" style="font-size:11.5px"> — ${esc(r.topic)}</span>`:''}</td>
+          <td>${secCell(r)}</td>
+          <td>${r.vol.toLocaleString()}</td>
+          <td><span class="miniact"><button class="n" data-id="${r.id}" data-act="pending" title="Remove from shortlist">↩ Remove</button></span></td>
+        </tr>`).join(''):'<tr><td colspan="7"><div class="empty">No topics selected yet. Use the Filter & pick tab to shortlist.</div></td></tr>'}</tbody>
+      </table>
     </div>
   </div>`;
 
@@ -1350,22 +1379,16 @@ function renderShort(mode){
       <div class="modal-body">${topicList(list)}</div></div></div>`;
   }
 
-  const vm=STATE.viewMode;
-  const blurb={grid:'Each cell is a candidate page (a service type for an audience). Click a cell to see its topics; use row/column ✓✕ to bulk decide.',
-    filters:'Tick the service types and audiences that fit the client. Everything matching both becomes the shortlist.',
-    profiles:'Drill ICP → type+modifier → topic and approve/reject at any level.',
-    clusters:'Each row is a Type + Modifier cluster (a page candidate), with its audience. Keep or reject whole clusters.',
-    table:'Flat table sorted A→Z by Type then Modifier, with the audience alongside.'}[vm];
+  let vm=STATE.viewMode; if(vm!=='filters'&&vm!=='selected')vm=STATE.viewMode='filters';
+  const blurb={filters:'Tick the audiences, types and modifiers that fit the client, then keep or reject the matching topics.',
+    selected:'Every topic you have kept, updating live. Remove any that slipped in.'}[vm];
   $('#view').innerHTML=`
   <div class="pagehead"><h2>Shortlist — Service / Product <span style="font-weight:400;color:var(--muted);font-size:14px">→ pages to build</span></h2><p>${blurb}</p></div>
   <div class="phasetabs" style="margin-bottom:14px">
-    <button class="vtab ${vm==='grid'?'on':''}" data-vm="grid">A · Grid</button>
-    <button class="vtab ${vm==='filters'?'on':''}" data-vm="filters">B · Filters</button>
-    <button class="vtab ${vm==='profiles'?'on':''}" data-vm="profiles">C · Profiles</button>
-    <button class="vtab ${vm==='clusters'?'on':''}" data-vm="clusters">D · Clusters</button>
-    <button class="vtab ${vm==='table'?'on':''}" data-vm="table">E · Table</button>
+    <button class="vtab ${vm==='filters'?'on':''}" data-vm="filters">Filter &amp; pick</button>
+    <button class="vtab ${vm==='selected'?'on':''}" data-vm="selected">✓ Selected (${selRows.length})</button>
   </div>
-  ${vm==='grid'?gridBody:vm==='filters'?filtersBody:vm==='profiles'?icpBody:vm==='table'?tableBodyE:groupsBody}
+  ${vm==='selected'?selectedBody:filtersBody}
   ${modalHtml}`;
 
   $('#view').querySelectorAll('.vtab').forEach(b=>b.onclick=()=>{STATE.viewMode=b.dataset.vm;STATE.modal=null;render();});
