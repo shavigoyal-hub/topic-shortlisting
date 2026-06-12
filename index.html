@@ -494,7 +494,7 @@ const BIG_BRANDS_RX = /\b(nvidia|google|apple|microsoft|amazon|meta|tesla|samsun
 
 /* ---- Customer Profile (ICP) classification — uses primary + secondary keywords ---- */
 const PROFILES = [
-  {name:'B2B / Corporate',       rxg:/\b(corporate|executives?|employees?|staff|workplace|workforce|compan(y|ies)|business(es)?|b2b|enterprise|organi[sz]ations?|team building|hr|leadership|for work|office|conference|keynote|offsite|off-site|wholesale|bulk|suppliers?|distributors?|manufacturers?|factor(y|ies)|oem|odm|exporters?|importers?|procurement|vendors?|trade|commercial|industrial|saas|software|platform|crm|erp|api|integration|pricing|demo|for teams)\b/g},
+  {name:'B2B / Corporate',       rxg:/\b(corporate|executives?|employees?|staff|workplace|workforce|compan(y|ies)|business(es)?|b2b|enterprise|organi[sz]ations?|team building|leadership|for work|conference|keynote|offsite|off-site|wholesale|bulk order|bulk|moq|suppliers?|distributors?|manufacturers?|factor(y|ies)|oem|odm|exporters?|importers?|procurement|saas|crm|erp)\b/g},
   {name:'Healthcare / Clinical', rxg:/\b(hospitals?|clinics?|clinical|patients?|therap(y|ist|ists)|nurs(e|es|ing)|medical|healthcare|psychologists?|psychiatr|wellbeing program)\b/g},
   {name:'Aspiring Practitioner', rxg:/\b(certifications?|certified|certificate|teacher training|become an?|how to teach|train the trainer|courses?|diploma|licen[sc]e|qualif|instructor|200 hour|ryt)\b/g},
   {name:'Local Seeker',          rxg:/\b(near me|nearby|in [a-z]+ city)\b/g},
@@ -522,7 +522,7 @@ const DOMAIN_SIGNALS=[
   {profile:'B2B / Corporate',       rx:/(g2\.com|capterra|getapp|softwareadvice|gartner|trustradius|techtarget|shrm|workhuman|risepeople|bamboohr|gusto|alibaba|made-in-china|indiamart|thomasnet|globalsources|tradeindia|dhgate|wholesalecentral|exporthub|justdial|exportersindia)/},
   {profile:'Aspiring Practitioner', rx:/(udemy|coursera|edx\.org|yogaalliance|skillshare|teachable|\.edu\b)/},
   {profile:'Local Seeker',          rx:/(yelp|tripadvisor|eventbrite|meetup|classpass|mindbody|maps\.google|booking\.com|thumbtack)/},
-  {profile:'Individual / Consumer', rx:/(amazon|etsy|target\.com|walmart|wayfair|bestbuy|ikea\.com|ebay|flipkart|headspace|calm\.com|insighttimer)/},
+  {profile:'Individual / Consumer', rx:/(amazon|etsy|target\.com|walmart|wayfair|bestbuy|ikea\.com|ebay|flipkart|houzz|angi\.com|homeadvisor|bobvila|thisoldhouse|headspace|calm\.com|insighttimer)/},
   {profile:'Researcher / Student',  rx:/(researchgate|jstor|scholar\.google|sciencedirect|springer|frontiersin|pubmed)/},
 ];
 function isHomepage(u){ try{return new URL(u).pathname.replace(/\/+$/,'')==='';}catch(e){return false;} }
@@ -543,17 +543,20 @@ function serpBrandHit(r){
   for(const t of toks){ const tt=t.replace(/[^a-z0-9]/g,''); if(tt.length<4)continue; const hit=top3.find(h=>h.replace(/[^a-z0-9]/g,'').includes(tt)); if(hit)return hit; }
   return null;
 }
-/* read the ICP from WHAT RANKS for the keyword:
-   (1) the ranking DOMAINS (B2B marketplaces, healthcare orgs, retail, .edu… — strong signal, weighted x2)
-   (2) the ranking TITLES + SNIPPETS scored against the audience lexicon */
+/* read the ICP from WHAT RANKS for the keyword, in two layers:
+   PRIMARY  — what the ranking titles + snippets SAY (audience lexicon). A clear text signal wins outright.
+   FALLBACK — only when the text is weak/tied, look at WHO ranks (intent-specific domains), and only trust it
+              when 2+ of those domains agree, so a single stray site (a publisher, a marketplace) can't decide. */
 function classifyProfileFromSerp(r){
   if(!r.serpDone) return null;
-  const score={};
-  (r.serp||[]).map(hostOf).forEach(h=>{ if(!h)return; for(const d of DOMAIN_SIGNALS){ if(d.rx.test(h)) score[d.profile]=(score[d.profile]||0)+2; } });
   const text=(r.serpTitles||[]).join('  ').toLowerCase();
-  for(const p of PROFILES){ const m=text.match(p.rxg); if(m&&m.length) score[p.name]=(score[p.name]||0)+m.length; }
-  let best=null,bn=0; for(const k in score){ if(score[k]>bn){bn=score[k];best=k;} }
-  return bn>0 ? best : null;
+  const txt={}; for(const p of PROFILES){ const m=text.match(p.rxg); if(m&&m.length) txt[p.name]=m.length; }
+  let tBest=null,tn=0; for(const k in txt){ if(txt[k]>tn){tn=txt[k];tBest=k;} }
+  if(tBest && tn>=2) return tBest;                        // confident text signal — trust it
+  const dom={}; (r.serp||[]).map(hostOf).forEach(h=>{ if(!h)return; for(const d of DOMAIN_SIGNALS){ if(d.rx.test(h)) dom[d.profile]=(dom[d.profile]||0)+1; } });
+  let dBest=null,dn=0; for(const k in dom){ if(dom[k]>dn){dn=dom[k];dBest=k;} }
+  if(dBest && dn>=2) return dBest;                        // domain layer only if 2+ sites agree
+  return tBest || null;                                   // else a weak single text hit, else unclassified
 }
 function classifyProfiles(){ STATE.rows.forEach(r=>{ if(r.profileEdited)return;
   r.profile = r.serpDone ? (classifyProfileFromSerp(r)||classifyProfile(r)) : 'Unclassified';   // classify only once rankings are in
