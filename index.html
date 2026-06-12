@@ -1171,190 +1171,11 @@ function renderShort(mode){
   const isTrans=phase!=='Blog';
   const tabLabel=(t,i)=>`${'①②③④⑤'[i]||(i+1)+'.'} ${t==='Blog'?'Blogs':t+(t==='Service'?' / Product':'')} (${STATE.rows.filter(r=>r.pageType===t).length})`;
 
-  // ---------- TABLE view body ----------
-  const idCount={}; all.forEach(r=>r.idents.forEach(w=>idCount[w]=(idCount[w]||0)+1));
-  if(STATE.identFilter!=='all'&&!idCount[STATE.identFilter])STATE.identFilter='all';
-  const idOptions=Object.entries(idCount).sort((a,b)=>b[1]-a[1]).map(([w,n])=>`<option value="${esc(w)}" ${STATE.identFilter===w?'selected':''}>${esc(w)} (${n})</option>`).join('');
-  let rows=all.slice();
-  if(STATE.search){const s=norm(STATE.search);rows=rows.filter(r=>blob(r).includes(s));}
-  if(STATE.filter!=='all')rows=rows.filter(r=>r.status===STATE.filter);
-  if(STATE.identFilter!=='all')rows=rows.filter(r=>r.idents.includes(STATE.identFilter));
-  if(STATE.profileFilter!=='all')rows=rows.filter(r=>r.profile===STATE.profileFilter);
-  const profCounts={}; all.forEach(r=>profCounts[r.profile]=(profCounts[r.profile]||0)+1);
-  const profOpts=Object.entries(profCounts).sort((a,b)=>b[1]-a[1]).map(([p,n])=>`<option value="${esc(p)}" ${STATE.profileFilter===p?'selected':''}>${esc(p)} (${n})</option>`).join('');
-  const profSelect=r=>`<select class="profsel" data-id="${r.id}">${profileOptions().map(p=>`<option ${r.profile===p?'selected':''}>${esc(p)}</option>`).join('')}</select>`;
-  const {key,dir}=STATE.sort;
-  rows.sort((a,b)=>{let x,y; if(key==='vol'){x=a.vol;y=b.vol;} else if(key==='rel'){x=parseFloat(a.rel)||0;y=parseFloat(b.rel)||0;} else {x=norm(a[key]);y=norm(b[key]);} return x<y?dir:x>y?-dir:0;});
-  const total=rows.length, pages=Math.max(1,Math.ceil(total/PAGE_SIZE));
-  STATE.page=Math.min(STATE.page,pages-1);
-  const view=rows.slice(STATE.page*PAGE_SIZE,(STATE.page+1)*PAGE_SIZE);
-  const tableBody=`
-  <div class="tablewrap">
-    <div class="tbar">
-      <input type="text" id="srch" placeholder="Search keyword / topic…" value="${esc(STATE.search)}">
-      <select id="filt">
-        ${[['all','All ('+all.length+')'],['pending','Pending ('+ca.pen+')'],['selected','Selected ('+ca.sel+')'],['rejected','Rejected ('+ca.rej+')']].map(([v,l])=>`<option value="${v}" ${STATE.filter===v?'selected':''}>${l}</option>`).join('')}
-      </select>
-      <select id="identFilt" title="Filter by identifier">
-        <option value="all" ${STATE.identFilter==='all'?'selected':''}>All identifiers</option>
-        ${idOptions}
-      </select>
-      <select id="profFilt" title="Filter by customer profile">
-        <option value="all" ${STATE.profileFilter==='all'?'selected':''}>All profiles</option>
-        ${profOpts}
-      </select>
-      <button class="btn sec sm" id="selAllVis">Select all shown</button>
-      <button class="btn sec sm" id="rejAllVis">Reject all shown</button>
-      <button class="btn sec sm" id="serpVis" title="Fetch top-10 Google rankings for the topics shown">⌕ Rankings: shown</button>
-      <button class="btn sm" id="serpAll" title="Fetch top-10 rankings for all PENDING keywords (rejected are skipped) and auto-set ICP from who ranks">⌕ Rankings: all pending${(()=>{const n=STATE.rows.filter(r=>r.status==='pending'&&!r.serpDone).length;return n?' ('+n+')':'';})()}</button>
-      <span style="flex:1"></span>
-      <button class="btn sm" id="export">⤓ Export CSV</button>
-    </div>
-    <div class="scrollx">
-    <table>
-      <thead><tr>
-        <th data-s="kw">Primary Keyword</th>
-        <th data-s="topic">Topic</th>
-        <th>Service / Product Type</th>
-        <th>Modifier</th>
-        <th data-s="profile">Customer Profile</th>
-        <th data-s="vol">Volume</th>
-        <th data-s="rel">Rel.</th>
-        <th data-s="status">Status</th>
-        <th>Reason</th>
-        <th>Decide</th>
-        <th>Top-10 Rankings</th>
-      </tr></thead>
-      <tbody>
-      ${view.length?view.map(r=>`
-        <tr class="${r.status==='rejected'?'rejected':r.status==='selected'?'selected':''}">
-          <td class="kw">${esc(r.kw)}</td>
-          <td>${esc(r.topic)}</td>
-          <td><div class="idcell">${r.typeIds.map(w=>`<span class="ichip">${esc(w)}</span>`).join('')||'<span style="color:var(--muted)">—</span>'}</div></td>
-          <td><div class="idcell">${r.modIds.map(w=>`<span class="ichip mod">${esc(w)}</span>`).join('')||'<span style="color:var(--muted)">—</span>'}</div></td>
-          <td>${profSelect(r)}</td>
-          <td>${r.vol.toLocaleString()}</td>
-          <td>${esc(r.rel)}</td>
-          <td><span class="pill ${r.status==='selected'?'sel':r.status==='rejected'?'rej':'pend'}">${r.status}</span></td>
-          <td><div class="reason" contenteditable data-id="${r.id}">${esc(r.reason)}</div></td>
-          <td><div class="miniact"><button class="y" data-id="${r.id}" data-act="selected">Keep</button><button class="n" data-id="${r.id}" data-act="rejected">Reject</button></div></td>
-          <td>${r.serpDone?`<div class="serpcell">${(r.serp||[]).length?(r.serp||[]).map((u,i)=>`<a href="${esc(u)}" target="_blank" title="${esc(u)}">${i+1}. ${esc(hostOf(u))}</a>`).join(''):'<span style="color:var(--muted)">no results</span>'}</div>`:(r.status==='rejected'?'<span style="color:var(--muted)">—</span>':`<button class="btn sec sm serpbtn" data-id="${r.id}">Get top-10</button>`)}</td>
-        </tr>`).join(''):`<tr><td colspan="11"><div class="empty">No topics match.</div></td></tr>`}
-      </tbody>
-    </table>
-    </div>
-    <div class="pager">
-      <span>${total} topics · page ${STATE.page+1}/${pages}</span>
-      <button class="btn sec sm" id="prev" ${STATE.page===0?'disabled':''}>‹ Prev</button>
-      <button class="btn sec sm" id="nextp" ${STATE.page>=pages-1?'disabled':''}>Next ›</button>
-    </div>
-  </div>`;
-
-  // ---------- GROUPS view body (flat list of merged identifiers) ----------
   const pendOnly=STATE.groupPendingOnly;
-  const groupsAll=buildGroups(all);
-  let visible=groupsAll;
-  if(STATE.groupSearch){const s=norm(STATE.groupSearch);visible=visible.filter(g=>norm(g.key).includes(s));}
-  if(pendOnly)visible=visible.filter(g=>g.pen>0);
-  visible=visible.slice().sort((a,b)=>(pendOnly?b.pen-a.pen:b.total-a.total)||b.total-a.total);  // biggest bucket on top
-  const shownG=visible.slice(0,150);
-  const decidedCount=groupsAll.filter(g=>g.pen===0).length;
-  // when reviewing (pending-only) lead with the count that matters: how many to review
-  const gcount=g=>pendOnly
-    ? `<b>${g.pen}</b> to review${g.total>g.pen?` <span style="color:var(--muted);font-weight:400">of ${g.total} · ${g.rej?g.rej+' rejected':''}${g.rej&&g.sel?', ':''}${g.sel?g.sel+' kept':''} hidden</span>`:''}`
-    : `<b>${g.total}</b> topics · <span style="color:var(--green)">${g.sel}✓</span> <span style="color:var(--red)">${g.rej}✕</span> <span style="color:var(--amber)">${g.pen} pending</span>`;
+  // topicList — shared by the matching-topics popup
   const topicList=rows=>`<div class="grplist">${rows.slice().sort((a,b)=>(a.combo||'').localeCompare(b.combo||'')||b.vol-a.vol).map(r=>`<div class="grpitem">${pendOnly?'':`<span class="pill ${r.status==='selected'?'sel':r.status==='rejected'?'rej':'pend'}">${r.status}</span>`}<span class="kw" style="flex:1;min-width:0">${esc(r.kw)}${r.topic?`<span style="color:var(--muted);font-weight:400;font-size:11.5px"> — ${esc(r.topic)}</span>`:''}</span><span class="gv">${r.vol.toLocaleString()}</span><span class="miniact"><button class="y" data-id="${r.id}" data-act="selected">Keep</button><button class="n" data-id="${r.id}" data-act="rejected">Reject</button></span></div>`).join('')}</div>`;
-  const groupsBody=`
-  <div class="tablewrap">
-    <div class="tbar">
-      <input type="text" id="gsrch" placeholder="Filter identifiers…" value="${esc(STATE.groupSearch)}">
-      <label style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;white-space:nowrap">
-        <span class="sw" style="width:38px;height:21px"><input type="checkbox" id="gpend" ${pendOnly?'checked':''}><span class="sl"></span></span>
-        Pending only
-      </label>
-      <span style="flex:1"></span>
-      <span style="color:var(--muted);font-size:12px">${visible.length} to review${decidedCount&&pendOnly?` · ${decidedCount} done`:''}</span>
-      <button class="btn sm" id="export">⤓ Export CSV</button>
-    </div>
-    <div style="padding:8px 14px 12px">
-      ${shownG.length?shownG.map(g=>{const open=!!STATE.groupExpanded[g.key];
-        const auds=[...new Set(g.rows.map(r=>r.profile))].sort((a,b)=>g.rows.filter(r=>r.profile===b).length-g.rows.filter(r=>r.profile===a).length).slice(0,2);
-        return `
-        <div class="grp">
-          <div class="grphead">
-            <span class="grpchips"><span class="ichip">${esc(g.type)}</span>${(g.mods||[]).map(m=>`<span class="plus">+</span><span class="ichip mod">${esc(m)}</span>`).join('')}${auds.map(a=>`<span class="ichip aud">${esc(a)}</span>`).join('')}</span>
-            <span class="grpcounts">${gcount(g)}</span>
-            <span class="grpbtns">
-              <button class="btn sec sm gact" data-k="${esc(g.key)}" data-a="select" ${g.pen?'':'disabled'}>✓ Keep all</button>
-              <button class="btn sec sm gact" data-k="${esc(g.key)}" data-a="reject" ${g.pen?'':'disabled'}>✕ Reject all</button>
-              <button class="btn ghost sm gexp" data-k="${esc(g.key)}">${open?'Hide':'View'}</button>
-              ${(g.sel||g.rej)?`<button class="btn ghost sm gact" data-k="${esc(g.key)}" data-a="reset">Reset</button>`:''}
-            </span>
-          </div>
-          ${open?topicList(pendOnly?g.rows.filter(r=>r.status==='pending'):g.rows):''}
-        </div>`;}).join(''):`<div class="empty">${groupsAll.length&&pendOnly?'🎉 Everything in this phase is decided. Turn off “Pending only” to revisit, or move to the next phase.':'No identifiers match.'}</div>`}
-    </div>
-    ${visible.length>shownG.length?`<div class="pager">Showing top ${shownG.length} of ${visible.length} — use the filter to narrow.</div>`:''}
-  </div>`;
 
-  // ---------- BY ICP view body (approve / reject whole customer profiles) ----------
-  let icpGroups=buildProfileGroups(all).sort((a,b)=>{
-    if((a.key==='Unclassified')!==(b.key==='Unclassified')) return a.key==='Unclassified'?1:-1;   // awaiting-rankings bucket last
-    return (pendOnly?b.pen-a.pen:b.total-a.total)||b.total-a.total;
-  });
-  const icpVisible=pendOnly?icpGroups.filter(g=>g.pen>0):icpGroups;
-  const icpBody=`
-  <div class="tablewrap">
-    <div class="tbar">
-      <label style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;white-space:nowrap">
-        <span class="sw" style="width:38px;height:21px"><input type="checkbox" id="gpend" ${pendOnly?'checked':''}><span class="sl"></span></span>
-        Pending only
-      </label>
-      <input type="text" id="gsrch" placeholder="Find keyword / identifier…" value="${esc(STATE.groupSearch)}" style="width:200px">
-      ${STATE.serpRunning
-        ? `<span style="font-size:12.5px;font-weight:600;color:var(--accent)">⏳ Processing topics <span id="serpProg">…</span></span> <button class="btn sec sm" id="serpStop">Stop</button>`
-        : (()=>{const n=STATE.rows.filter(r=>r.status==='pending'&&!r.serpDone&&r.pageType==='Service').length; return n?`<button class="btn sec sm" id="serpAll" title="Process pending topics (analyse rankings to set the ICP)">↻ Process topics (${n})</button>`:`<span style="font-size:12px;color:var(--green);font-weight:600">✓ Topics processed</span>`;})()}
-      <span style="flex:1"></span>
-      <span style="color:var(--muted);font-size:12px">${icpVisible.length} profiles · ${all.length} topics${pendOnly?` · ${all.filter(r=>r.status!=='pending').length} decided (hidden)`:''}</span>
-      <button class="btn sm" id="export">⤓ Export CSV</button>
-    </div>
-    <div style="padding:8px 14px 12px">
-      <div style="margin-bottom:8px;font-size:11.5px;color:var(--muted)"><span class="ichip">type</span> <span class="ichip mod">modifier</span></div>
-      ${icpVisible.length?icpVisible.map(g=>{
-        const open=!!STATE.groupExpanded['ICP:'+g.key];
-        let subs=[]; if(open){ subs=buildGroups(g.rows); if(pendOnly)subs=subs.filter(s=>s.pen>0); subs.sort((a,b)=>(pendOnly?b.pen-a.pen:b.total-a.total)||b.total-a.total); }
-        return `
-        <div class="grp">
-          <div class="grphead">
-            <button class="caret gexp" data-k="ICP:${esc(g.key)}" title="${open?'Hide':'View'} identifiers">${open?'▾':'▸'}</button>
-            <span class="grpchips"><span class="ichip" style="background:var(--blue-soft);color:var(--blue)">${esc(g.key)}</span></span>
-            <span class="grpcounts">${g.key==='Unclassified'?`<span style="color:var(--amber)">⏳ <b>${g.pen}</b> awaiting rankings${STATE.serpRunning?' — fetching…':''}</span>`:gcount(g)}</span>
-            <span class="grpbtns">
-              <button class="btn sec sm icpact" data-k="${esc(g.key)}" data-a="select" ${g.pen?'':'disabled'}>✓ Approve all</button>
-              <button class="btn sec sm icpact" data-k="${esc(g.key)}" data-a="reject" ${g.pen?'':'disabled'}>✕ Reject all</button>
-              ${(g.sel||g.rej)?`<button class="btn ghost sm icpact" data-k="${esc(g.key)}" data-a="reset">Reset</button>`:''}
-            </span>
-          </div>
-          ${open?`<div class="grpbody">${subs.length?subs.map(sg=>{const so=!!STATE.groupExpanded['ICPID:'+g.key+'||'+sg.key];
-            return `
-            <div class="modrow">
-              <div class="modhead">
-                <button class="caret gexp" data-k="ICPID:${esc(g.key)}||${esc(sg.key)}" title="${so?'Hide':'View'} topics">${so?'▾':'▸'}</button>
-                <span class="grpchips"><span class="ichip">${esc(sg.type)}</span>${(sg.mods||[]).map(m=>`<span class="plus">+</span><span class="ichip mod">${esc(m)}</span>`).join('')}</span>
-                <span class="grpcounts">${gcount(sg)}</span>
-                <span class="grpbtns">
-                  <button class="btn sec sm icpgact" data-p="${esc(g.key)}" data-k="${esc(sg.key)}" data-a="select" ${sg.pen?'':'disabled'}>✓ Keep all</button>
-                  <button class="btn sec sm icpgact" data-p="${esc(g.key)}" data-k="${esc(sg.key)}" data-a="reject" ${sg.pen?'':'disabled'}>✕ Reject all</button>
-                  ${(sg.sel||sg.rej)?`<button class="btn ghost sm icpgact" data-p="${esc(g.key)}" data-k="${esc(sg.key)}" data-a="reset">Reset</button>`:''}
-                </span>
-              </div>
-              ${so?topicList(pendOnly?sg.rows.filter(r=>r.status==='pending'):sg.rows):''}
-            </div>`;}).join(''):'<div class="empty" style="padding:18px">No identifiers match here.</div>'}</div>`:''}
-        </div>`;}).join(''):`<div class="empty">${icpGroups.length&&pendOnly?'🎉 Every profile in this phase is decided. Turn off “Pending only” to see all topics.':'No profiles.'}</div>`}
-    </div>
-  </div>`;
-
-  // shared rankings status (shown in every view's toolbar)
+  // shared rankings status (shown in the toolbar)
   const serpStatus = STATE.serpRunning
     ? `<span style="font-size:12.5px;font-weight:600;color:var(--accent)">⏳ Processing <span id="serpProg">…</span></span> <button class="btn sec sm" id="serpStop">Stop</button>`
     : (()=>{const n=STATE.rows.filter(r=>r.status==='pending'&&!r.serpDone&&r.pageType==='Service').length;return n?`<button class="btn sec sm" id="serpAll" title="Analyse rankings to set audience/ICP">↻ Process topics (${n})</button>`:`<span style="font-size:12px;color:var(--green);font-weight:600">✓ Processed</span>`;})();
@@ -1363,19 +1184,7 @@ function renderShort(mode){
   const pendP=p=>all.filter(r=>r.profile===p&&r.status==='pending').length;
   const famList=buildFamilies(all).sort((a,b)=>b.total-a.total).map(f=>f.key).filter(f=>pendN(f)>0);   // hide zero-topic options
   const profList=[...new Set(all.map(r=>r.profile))].filter(p=>pendP(p)>0).sort(profileSort);
-  const cellRows=(f,p)=>all.filter(r=>r.family===f&&r.profile===p);
   const cstat=rs=>({pen:rs.filter(r=>r.status==='pending').length,sel:rs.filter(r=>r.status==='selected').length,rej:rs.filter(r=>r.status==='rejected').length,total:rs.length});
-  const gridBody=`
-  <div class="tablewrap">
-    <div class="tbar"><b style="font-size:13px">Pick the pages to build</b><span style="color:var(--muted);font-size:12px;margin-left:8px">click a cell = keep that Type × Audience · row/col ✓✕ = bulk</span><span style="flex:1"></span>${serpStatus}<button class="btn sm" id="export">⤓ Export CSV</button></div>
-    <div class="scrollx" style="padding:4px 12px 12px">
-      <table class="gridtbl">
-        <thead><tr><th class="gcorner">Type ＼ Audience</th>${profList.map(p=>`<th class="gcol">${esc(p)}<div class="ghbtns"><button class="gcolact" data-p="${esc(p)}" data-a="select" title="Keep all ${esc(p)}">✓</button><button class="gcolact" data-p="${esc(p)}" data-a="reject" title="Reject all ${esc(p)}">✕</button></div></th>`).join('')}</tr></thead>
-        <tbody>${famList.map(f=>`<tr><th class="grow">${esc(f)}<span class="ghbtns"><button class="growact" data-f="${esc(f)}" data-a="select" title="Keep all ${esc(f)}">✓</button><button class="growact" data-f="${esc(f)}" data-a="reject" title="Reject all ${esc(f)}">✕</button></span></th>${profList.map(p=>{const s=cstat(cellRows(f,p));if(!s.total)return '<td class="gcell empty">·</td>';const seln=STATE.gridCell&&STATE.gridCell.f===f&&STATE.gridCell.p===p;return `<td class="gcell ${s.sel&&!s.pen?'kept':''} ${s.total?'haspen':''} ${seln?'sel':''}" data-f="${esc(f)}" data-p="${esc(p)}" title="View topics">${s.pen?`<b>${s.pen}</b>`:''}${s.sel?`<span class="gsel">✓${s.sel}</span>`:''}${!s.pen&&!s.sel?`<span style="color:var(--muted)">${s.rej}✕</span>`:''}</td>`;}).join('')}</tr>`).join('')}</tbody>
-      </table>
-    </div>
-    <div class="muted" style="padding:8px 14px;font-size:12px">Click a cell to open its topics in a popup · row/column ✓✕ bulk-decide.</div>
-  </div>`;
 
   // ---------- B · FILTERS  (audience → type → modifier, context-aware counts) ----------
   const audMatch=r=>!STATE.fAud.length||STATE.fAud.includes(r.profile);
@@ -1439,7 +1248,7 @@ function renderShort(mode){
   <div class="tablewrap">
     <div class="tbar"><b style="font-size:13px">${selRows.length} topic${selRows.length===1?'':'s'} selected</b>
       <span class="muted" style="font-size:12px">· ${selVol.toLocaleString()} total volume · updates live as you keep / reject</span>
-      <span style="flex:1"></span><button class="btn sm" id="export">⤓ Export CSV</button></div>
+      <span style="flex:1"></span><button class="btn sec sm" id="export" title="Export every topic with its decision">⤓ Export all</button><button class="btn sm" id="exportSel" title="Export only the selected/kept topics">⤓ Export selected</button></div>
     <div class="scrollx">
       <table class="ftbl">
         <thead><tr><th style="width:104px">Audience</th><th style="width:140px">Type</th><th style="width:82px">Modifier</th><th>Keyword — Topic</th><th style="width:124px">Secondary</th><th style="width:54px">Vol</th><th style="width:104px"></th></tr></thead>
@@ -1477,45 +1286,7 @@ function renderShort(mode){
     </div>
   </div>`;
 
-  // ---------- E · MODIFIER → TYPE  (audience filter + select-all at each level) ----------
-  const eAll=all.filter(r=>STATE.eAud==='all'||r.profile===STATE.eAud);
-  const eModMap=new Map(); eAll.forEach(r=>{const m=primMod(r); if(!eModMap.has(m))eModMap.set(m,[]); eModMap.get(m).push(r);});
-  const eMods=[...eModMap.keys()].sort((a,b)=>a.localeCompare(b));   // modifier A→Z (primary)
-  const tableBodyE=`
-  <div class="tablewrap">
-    <div class="tbar">
-      <label style="font-size:12.5px;font-weight:600">Audience <select id="eAud" style="margin-left:6px">
-        <option value="all" ${STATE.eAud==='all'?'selected':''}>All audiences</option>
-        ${profList.map(p=>`<option value="${esc(p)}" ${STATE.eAud===p?'selected':''}>${esc(p)} (${all.filter(r=>r.profile===p&&r.status==='pending').length})</option>`).join('')}
-      </select></label>
-      ${STATE.eAud!=='all'?`<button class="btn sec sm eaudact" data-a="select">✓ Keep all</button><button class="btn sec sm eaudact" data-a="reject">✕ Reject all</button>`:''}
-      <label style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600"><span class="sw" style="width:38px;height:21px"><input type="checkbox" id="gpend" ${pendOnly?'checked':''}><span class="sl"></span></span>Pending only</label>
-      <span style="flex:1"></span>${serpStatus}<button class="btn sm" id="export">⤓ Export CSV</button>
-    </div>
-    <div style="padding:8px 14px 12px">
-      <div class="muted" style="font-size:11.5px;margin-bottom:6px">Grouped by <b>modifier</b> → <b>type</b> (A→Z). ✓✕ selects all of a modifier or type.</div>
-      ${eMods.map(m=>{const rows=eModMap.get(m),s=cstat(rows); if(pendOnly&&!s.pen)return ''; const mo=!!STATE.groupExpanded['E:'+m];
-        const tMap=new Map(); rows.forEach(r=>{const t=r.comboType||'(no type)'; if(!tMap.has(t))tMap.set(t,[]); tMap.get(t).push(r);});
-        const tList=[...tMap.keys()].sort((a,b)=>a.localeCompare(b));
-        return `<div class="grp">
-          <div class="grphead">
-            <button class="caret gexp" data-k="E:${esc(m)}">${mo?'▾':'▸'}</button>
-            <span class="grpchips"><span class="ichip mod">${esc(m)}</span></span>
-            <span class="grpcounts">${gcount(s)}</span>
-            <span class="grpbtns"><button class="btn sec sm emodact" data-m="${esc(m)}" data-a="select" ${s.pen?'':'disabled'}>✓ Keep all</button><button class="btn sec sm emodact" data-m="${esc(m)}" data-a="reject" ${s.pen?'':'disabled'}>✕ Reject all</button></span>
-          </div>
-          ${mo?`<div class="grpbody">${tList.map(t=>{const tr=tMap.get(t),ts=cstat(tr); if(pendOnly&&!ts.pen)return ''; const to=!!STATE.groupExpanded['ET:'+m+'||'+t]; return `
-            <div class="modrow"><div class="modhead">
-              <button class="caret gexp" data-k="ET:${esc(m)}||${esc(t)}">${to?'▾':'▸'}</button>
-              <span class="grpchips"><span class="ichip">${esc(t)}</span></span>
-              <span class="grpcounts">${gcount(ts)}</span>
-              <span class="grpbtns"><button class="btn sec sm etypeact" data-m="${esc(m)}" data-t="${esc(t)}" data-a="select" ${ts.pen?'':'disabled'}>✓ Keep all</button><button class="btn sec sm etypeact" data-m="${esc(m)}" data-t="${esc(t)}" data-a="reject" ${ts.pen?'':'disabled'}>✕ Reject all</button></span>
-            </div>${to?topicList(pendOnly?tr.filter(r=>r.status==='pending'):tr):''}</div>`;}).join('')}</div>`:''}
-        </div>`;}).join('')||'<div class="empty">No topics.</div>'}
-    </div>
-  </div>`;
-
-  // topic popup (A grid cell / B filter matches)
+  // topic popup (B filter matches)
   let modalHtml='';
   if(STATE.modal){
     let title='', mrows=[];
@@ -1544,18 +1315,10 @@ function renderShort(mode){
   ${modalHtml}`;
 
   $('#view').querySelectorAll('.vtab').forEach(b=>b.onclick=()=>{STATE.viewMode=b.dataset.vm;STATE.modal=null;render();});
-  $('#view').querySelectorAll('.gcell.haspen').forEach(c=>c.onclick=()=>{STATE.modal={type:'cell',f:c.dataset.f,p:c.dataset.p};render();});
-  // modal
+  // matching-topics popup
   if($('#modalClose'))$('#modalClose').onclick=()=>{STATE.modal=null;render();};
   if($('#modalBg'))$('#modalBg').onclick=e=>{if(e.target.id==='modalBg'){STATE.modal=null;render();}};
-  $('#view').querySelectorAll('.modact').forEach(b=>b.onclick=()=>{ const a=b.dataset.a; if(STATE.modal.type==='cell'){const f=STATE.modal.f,p=STATE.modal.p;decide(r=>r.family===f&&r.profile===p,a,'Page: '+f+' / '+p);} else {decide(matchPred,a,'Shortlisted (filters)');} });
-  // E view
-  if($('#eAud'))$('#eAud').onchange=e=>{STATE.eAud=e.target.value;render();};
-  $('#view').querySelectorAll('.eaudact').forEach(b=>b.onclick=()=>decide(r=>r.profile===STATE.eAud,b.dataset.a,'Audience: '+STATE.eAud));
-  $('#view').querySelectorAll('.emodact').forEach(b=>b.onclick=()=>decide(r=>(STATE.eAud==='all'||r.profile===STATE.eAud)&&primMod(r)===b.dataset.m,b.dataset.a,'Modifier: '+b.dataset.m));
-  $('#view').querySelectorAll('.etypeact').forEach(b=>b.onclick=()=>decide(r=>(STATE.eAud==='all'||r.profile===STATE.eAud)&&primMod(r)===b.dataset.m&&(r.comboType||'(no type)')===b.dataset.t,b.dataset.a,b.dataset.m+' / '+b.dataset.t));
-  $('#view').querySelectorAll('.growact').forEach(b=>b.onclick=()=>decide(r=>r.family===b.dataset.f,b.dataset.a,'Type: '+b.dataset.f));
-  $('#view').querySelectorAll('.gcolact').forEach(b=>b.onclick=()=>decide(r=>r.profile===b.dataset.p,b.dataset.a,'Audience: '+b.dataset.p));
+  $('#view').querySelectorAll('.modact').forEach(b=>b.onclick=()=>decide(matchPred,b.dataset.a,'Shortlisted (filters)'));
   $('#view').querySelectorAll('.fpill[data-ft]').forEach(c=>c.onclick=()=>{const v=c.dataset.ft;STATE.fTypes=STATE.fTypes.includes(v)?STATE.fTypes.filter(x=>x!==v):[...STATE.fTypes,v];render();});
   $('#view').querySelectorAll('.fpill[data-fa]').forEach(c=>c.onclick=()=>{const v=c.dataset.fa;STATE.fAud=STATE.fAud.includes(v)?STATE.fAud.filter(x=>x!==v):[...STATE.fAud,v];render();});
   $('#view').querySelectorAll('.fpill[data-fm]').forEach(c=>c.onclick=()=>{const v=c.dataset.fm;STATE.fMods=STATE.fMods.includes(v)?STATE.fMods.filter(x=>x!==v):[...STATE.fMods,v];render();});
@@ -1579,7 +1342,8 @@ function renderShort(mode){
   // handlers
   $('#view').querySelectorAll('.phasetabs [data-p]').forEach(b=>b.onclick=()=>{STATE.phase=b.dataset.p;STATE.page=0;render();});
   if($('#toBlog'))$('#toBlog').onclick=()=>{STATE.phase='Blog';STATE.page=0;render();};
-  if($('#export'))$('#export').onclick=exportCsv;
+  if($('#export'))$('#export').onclick=()=>exportCsv(false);
+  if($('#exportSel'))$('#exportSel').onclick=()=>exportCsv(true);
   const svcPending=()=>STATE.rows.filter(r=>r.status==='pending'&&r.pageType==='Service');
   if($('#serpAll'))$('#serpAll').onclick=()=>fetchSerpBulk(svcPending());
   if($('#serpStop'))$('#serpStop').onclick=()=>{STATE.serpCancel=true;};
@@ -1588,13 +1352,6 @@ function renderShort(mode){
   if((STATE.config.serperKey||onServer) && !STATE.serpAuto && !STATE.serpRunning && svcPending().some(r=>!r.serpDone)){
     STATE.serpAuto=true; setTimeout(()=>fetchSerpBulk(svcPending(), true), 60);
   }
-  if($('#icpNext'))$('#icpNext').onclick=()=>go(2);
-  if($('#gpend'))$('#gpend').onchange=e=>{STATE.groupPendingOnly=e.target.checked;render();};
-  if($('#gsrch'))$('#gsrch').oninput=e=>{STATE.groupSearch=e.target.value;render();};
-  $('#view').querySelectorAll('.gexp').forEach(b=>b.onclick=()=>{STATE.groupExpanded[b.dataset.k]=!STATE.groupExpanded[b.dataset.k];render();});
-  $('#view').querySelectorAll('.gact').forEach(b=>b.onclick=()=>applyGroup(b.dataset.k, b.dataset.a));
-  $('#view').querySelectorAll('.icpact').forEach(b=>b.onclick=()=>applyProfile(b.dataset.k, b.dataset.a));
-  $('#view').querySelectorAll('.icpgact').forEach(b=>b.onclick=()=>applyProfileGroup(b.dataset.p, b.dataset.k, b.dataset.a));
   $('#view').querySelectorAll('.miniact button[data-id]').forEach(b=>b.onclick=()=>{
     const _b=_snap();
     const r=STATE.rows.find(x=>x.id==b.dataset.id); r.status=b.dataset.act; r.manual=true;
@@ -1664,12 +1421,14 @@ async function fetchSerpBulk(rows, auto){
   STATE.serpRunning=false;
   saveState(); toast('Rankings '+(STATE.serpCancel?'stopped at '+done:'done · '+done+' fetched')+(err?' · '+err+' errors':'')); render();
 }
-function exportCsv(){
+function exportCsv(selectedOnly){
+  const src = selectedOnly ? STATE.rows.filter(r=>r.status==='selected') : STATE.rows;
+  if(selectedOnly && !src.length){ toast('No selected topics to export yet'); return; }
   const cols=['Primary Keyword','Secondary Keywords','Page Type','Topic','Total Search Volume','Relevance Score','Service/Product Type','Modifier','Customer Profile','Decision','Reason'];
   const q=s=>'"'+String(s==null?'':s).replace(/"/g,'""')+'"';
   const decLabel=s=>s==='selected'?'Approved':s==='rejected'?'Rejected':'Pending';
   const lines=[cols.join(',')];
-  STATE.rows.forEach(r=>lines.push([
+  src.forEach(r=>lines.push([
     r.kw, r.sec, r.pageType, r.topic, r.vol, r.rel,
     r.typeIds.join('; '),                       // identifier columns — each can hold more than one
     r.modIds.join('; '),
@@ -1679,8 +1438,8 @@ function exportCsv(){
   ].map(q).join(',')));
   const blob=new Blob([lines.join('\n')],{type:'text/csv'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
-  a.download='shortlist.csv';a.click();
-  toast('Exported '+STATE.rows.length+' rows');
+  a.download=selectedOnly?'shortlist-selected.csv':'shortlist-all.csv';a.click();
+  toast('Exported '+src.length+(selectedOnly?' selected':'')+' rows');
 }
 
 /* ============================ PERSISTENCE ============================ */
@@ -1714,7 +1473,7 @@ document.addEventListener('visibilitychange', ()=>{ if(document.hidden) saveStat
 
 /* ============================ AUTH GATE ============================ */
 const AUTH_KEY='topicShortlist.auth';
-const PW_HASH='37e7e38f0d3366828be4a4c594093d280a7cd0a46f5449c0a99c4d6fe0d17cc2';      // sha-256 of default access password
+const PW_HASH='c9699377682bce3db76fb3e3b4ebcb4c590a0e910644b8e7bb01f20dbe5ab41e';      // sha-256 of default access password ("gushwork")
 const ADMIN_HASH='6d30e0d04948b9f06cc89c880e0819603d2b59e4433c22a22a909ee663f04ce7';   // sha-256 of admin password
 const PW_OVERRIDE_KEY='topicShortlist.pwHash';   // optional custom access-password hash (per browser)
 const SERPKEY_LS='topicShortlist.serperKey';     // optional Serper key (per browser)
