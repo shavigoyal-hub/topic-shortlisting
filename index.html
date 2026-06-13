@@ -1377,7 +1377,7 @@ async function llmClassify(rows){
       (j.results||[]).forEach(o=>{ const r=STATE.rows.find(x=>x.id===o.id); if(r){ ICP_CACHE[r.kw]={audience:o.audience,type:o.type,keep:o.keep,reason:o.reason}; applyIcp(r); } });
       saveIcpCache();
     }catch(e){ down=true; if(i===0)toast('Intent AI unavailable — using fallback'); batch.forEach(fallback); }
-    const pe=document.getElementById('serpProg'); if(pe)pe.textContent='reading intent '+Math.min(i+40,need.length)+'/'+need.length;
+    const pe=document.getElementById('serpProg'); if(pe)pe.textContent='— reading intent '+Math.min(i+40,need.length)+'/'+need.length;
     renderStats();
   }
 }
@@ -1428,7 +1428,7 @@ async function fetchSerpBulk(rows, auto){
     let hit=false;
     try{ const o=await fetchSerp(r); hit=o&&o.cached; }catch(e){ err++; if(err===1)toast('SERP error: '+e.message); }
     done++;
-    const pe=document.getElementById('serpProg'); if(pe)pe.textContent=done+'/'+toFetch.length;
+    const pe=document.getElementById('serpProg'); if(pe)pe.textContent='— fetching rankings '+done+'/'+toFetch.length;
     if(done%10===0){renderStats();saveState();}
     if(!hit) await sleep(300);   // no rate-limit wait for cached results
   }
