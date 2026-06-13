@@ -42,7 +42,7 @@ CLIENT: ${clientDesc}
 
 For each keyword return:
 - "audience": exactly one of: ${AUDIENCES.join(' | ')}
-- "type": a concise 1-3 word Title Case product/service category for what the page would be about (e.g. "Monitor Stands", "Bathroom Remodeling", "Executive Coaching", "Waste Bins"). Reuse consistent labels across similar keywords.
+- "type": a BROAD product/service category (Title Case, 1-2 words, plural where natural). Use a SMALL consistent vocabulary (~8-12 categories for the whole client). Do NOT add qualifiers or make near-duplicates: use "Coaching" (not "Executive/Business/Mindset Coaching"), "Retreats" (not "Yoga/Leadership/Wellness Retreat"), "Workshops", "Speaking" (not "Keynote Speaker"/"Speaking Engagements"), "Monitor Stands", "Baskets". Reuse the same label across similar keywords.
 - "keep": true if the searcher is a plausible BUYER/customer for THIS client; false only when they clearly are NOT.
 - "reason": when keep=false, exactly one of: ${REJECT_REASONS.join(' | ')}. When keep=true, "".
 

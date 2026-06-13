@@ -1540,6 +1540,25 @@ const ICP_CACHE_KEY='topicShortlist.icpCache.v1';
 let ICP_CACHE={};
 function loadIcpCache(){ try{ICP_CACHE=JSON.parse(localStorage.getItem(ICP_CACHE_KEY)||'{}');}catch(e){ICP_CACHE={};} }
 function saveIcpCache(){ try{localStorage.setItem(ICP_CACHE_KEY, JSON.stringify(ICP_CACHE));}catch(e){} }
+/* type-consolidation map: raw GPT type (lowercased) -> clean canonical category */
+const TYPE_MAP_KEY='topicShortlist.typeMap.v1';
+let TYPE_MAP={};
+function loadTypeMap(){ try{TYPE_MAP=JSON.parse(localStorage.getItem(TYPE_MAP_KEY)||'{}');}catch(e){TYPE_MAP={};} }
+function saveTypeMap(){ try{localStorage.setItem(TYPE_MAP_KEY, JSON.stringify(TYPE_MAP));}catch(e){} }
+function canonType(t){ return (t&&TYPE_MAP[t.toLowerCase()])||t; }
+/* cluster the raw GPT type labels into a clean ~8-12 taxonomy (one cheap LLM call), then relabel */
+async function consolidateTypes(rows){
+  rows.forEach(r=>{ r.family=canonType(r.family); });                     // apply any known mappings first
+  if(!onServerHost()) return;
+  const raw=[...new Set(rows.map(r=>r.family).filter(t=>t && !TYPE_MAP[t.toLowerCase()]))];
+  if(!raw.length) return;
+  try{
+    const res=await fetch('/api/group-types',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({types:raw, existing:[...new Set(Object.values(TYPE_MAP))], client:clientCtx()})});
+    if(res.ok){ const j=await res.json(); Object.entries(j.map||{}).forEach(([k,v])=>{TYPE_MAP[k.toLowerCase()]=v;}); saveTypeMap(); }
+  }catch(e){}
+  rows.forEach(r=>{ r.family=canonType(r.family); const c=ICP_CACHE[r.kw]; if(c&&typeof c==='object'&&c.type)c.type=canonType(c.type); });
+  saveIcpCache();
+}
 const onServerHost=()=>/^https?:$/.test(location.protocol) && !/^(localhost|127\.|0\.0\.0\.0|\[|$)/.test(location.hostname);
 function clientCtx(){ const c=STATE.config; return {offering:c.offering, sells:(c.services||[]).join(', '), icp:(c.industries||[]).join(', '), site:c.website}; }
 /* apply a cached LLM classification (audience + type + keep/reject) to a row */
@@ -1548,7 +1567,7 @@ function applyIcp(r){
   let c=ICP_CACHE[r.kw]; if(!c) return false;
   if(typeof c==='string') c={audience:c};                 // migrate old string-only cache
   if(c.audience) r.profile=c.audience;
-  if(c.type) r.family=c.type;                             // GPT-defined semantic Type (overrides keyword family)
+  if(c.type) r.family=canonType(c.type);                  // GPT-defined semantic Type, consolidated to the clean taxonomy
   if(c.keep===false && !r.manual && r.status!=='rejected'){ r.status='rejected'; r.reason=c.reason||'Off-intent'; r.autoReason=c.reason||'Off-intent'; }
   return true;
 }
@@ -1627,6 +1646,7 @@ async function fetchSerpBulk(rows, auto){
     if(!hit) await sleep(300);   // no rate-limit wait for cached results
   }
   await llmClassify(active);     // read buyer intent (keyword + ranking titles): audience + type + reject off-intent
+  await consolidateTypes(active);// cluster raw types into a clean ~8-12 taxonomy
   STATE.serpRunning=false;
   saveState(); toast('Processed '+active.length+' topics'+(STATE.serpCancel?' (stopped)':'')+(err?' · '+err+' errors':'')); render();
 }
@@ -1691,6 +1711,7 @@ function currentPwHash(){ return localStorage.getItem(PW_OVERRIDE_KEY)||PW_HASH;
 function bootApp(){
   loadSerpCache();
   loadIcpCache();
+  loadTypeMap();
   loadState();
   STATE.rows.forEach(r=>{ if(r.serpDone && !r.serp.length){ const c=SERP_CACHE[r.kw]; if(c){ r.serp=c.serp||[]; r.serpTitles=c.titles||[]; } } });   // re-hydrate stripped rankings from the keyword cache
   const sk=localStorage.getItem(SERPKEY_LS); if(sk)STATE.config.serperKey=sk;   // browser-stored key wins over saved session
