@@ -737,8 +737,8 @@ function loadFile(file){
       if(ext==='csv'){ aoa = csvToAoa(e.target.result); }
       else { const wb=XLSX.read(e.target.result,{type:'array'});
              autoPopulateFromWorkbook(wb);          // fill Services / Industry / Competitors tabs
-             aoa = pickAkrSheet(wb); }
-      ingest(aoa);
+             ingestSheets(collectAkrSheets(wb)); aoa=true; }   // combine ALL AKR tabs
+      if(ext==='csv') ingest(aoa);
       processRows();                     // auto identifiers + auto-reject, behind the scenes
       saveState(); renderStats();
       toast('Loaded '+STATE.rows.length+' topics');
@@ -747,20 +747,17 @@ function loadFile(file){
   };
   if(ext==='csv')reader.readAsText(file); else reader.readAsArrayBuffer(file);
 }
-// pick the AKR sheet. Prefer a tab literally named "AKR" (highest trailing number, e.g. AKR2 over AKR1);
-// otherwise the sheet whose header has "primary keyword" with the most rows.
-function pickAkrSheet(wb){
+// collect ALL AKR sheets (a workbook can have several keyword tabs — process every one).
+// Prefer tabs named "AKR*"; otherwise every sheet whose header has a keyword column (excluding Services/Industry/Competitors).
+function collectAkrSheets(wb){
   const aoaOf=n=>XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,blankrows:false});
   const named=wb.SheetNames.filter(n=>/akr/i.test(n));
-  if(named.length){
-    named.sort((a,b)=>(parseInt((b.match(/\d+/)||[0])[0])||0)-(parseInt((a.match(/\d+/)||[0])[0])||0));
-    return aoaOf(named[0]);
-  }
-  let best=null,bestRows=-1;
-  wb.SheetNames.forEach(n=>{ const aoa=aoaOf(n); if(!aoa.length)return;
+  if(named.length) return named.map(aoaOf).filter(a=>a&&a.length);
+  const out=[];
+  wb.SheetNames.forEach(n=>{ if(/service|industr|competitor/i.test(n))return; const aoa=aoaOf(n); if(!aoa.length)return;
     const head=(aoa[0]||[]).map(h=>norm(h));
-    if(head.some(h=>h.includes('keyword')) && aoa.length>bestRows){best=aoa;bestRows=aoa.length;} });
-  return best || aoaOf(wb.SheetNames[0]);
+    if(head.some(h=>h.includes('keyword')||h==='kw'||h.includes('primary'))) out.push(aoa); });
+  return out.length ? out : [aoaOf(wb.SheetNames[0])];
 }
 // auto-fill config from the Services / Industry / Competitors tabs of one workbook
 function autoPopulateFromWorkbook(wb){
@@ -797,8 +794,9 @@ function csvToAoa(text){
   if(cur||row.length){row.push(cur);rows.push(row);}
   return rows;
 }
-function ingest(aoa){
-  if(!aoa||!aoa.length)throw new Error('empty file');
+// parse ONE AKR sheet (header + rows) into row objects; ids start at idStart. Returns {rows, hasVol}.
+function parseAkr(aoa, idStart){
+  if(!aoa||!aoa.length) return {rows:[], hasVol:false};
   const head=aoa[0].map(h=>norm(h).trim());
   const find=(...keys)=>{for(const k of keys){const i=head.findIndex(h=>h.includes(k));if(i>=0)return i;}return -1;};
   const exact=(...keys)=>head.findIndex(h=>keys.includes(h));
@@ -814,8 +812,7 @@ function ingest(aoa){
   if(ci.kw<0)ci.kw=0;
   if(ci.vol<0)ci.vol=exact('sv','vol');      // common AKR shorthand for Search Volume
   if(ci.rel<0)ci.rel=exact('kd');            // keyword difficulty as a relevance proxy if no score column
-  if(ci.vol<0)STATE.rules.zero=false;        // no volume column → don't mass-reject on "0 search volume"
-  const out=[];
+  const out=[]; let id=idStart;
   for(let r=1;r<aoa.length;r++){
     const a=aoa[r]; if(!a)continue;
     const kw=(a[ci.kw]||'').toString().trim();
@@ -825,16 +822,28 @@ function ingest(aoa){
     // only two phases: Service/Product (transactional) vs Blog (everything else, incl. Category)
     type=/serv|product/i.test(type) ? 'Service' : 'Blog';
     out.push({
-      id:r, kw, pageType:type,
+      id:id++, kw, pageType:type,
       topic:(a[ci.topic]||'').toString().trim(),
-      sec:(a[ci.sec]||'').toString().trim(),   // parsed but intentionally ignored everywhere
+      sec:(a[ci.sec]||'').toString().trim(),
       vol, rel:(a[ci.rel]||'').toString().trim(),
       status:'pending', reason:'', autoReason:'', manual:false, idents:[], typeIds:[], modIds:[], combo:'', family:'', profile:'', profileEdited:false, serp:[], serpTitles:[], serpDone:false,
     });
   }
+  return {rows:out, hasVol:ci.vol>=0};
+}
+// ingest one OR many AKR sheets — combines all of them (de-duped by keyword+topic)
+function ingestSheets(aoaList){
+  aoaList=(Array.isArray(aoaList)&&Array.isArray(aoaList[0]&&aoaList[0][0])?aoaList:[aoaList]).filter(a=>a&&a.length);
+  if(!aoaList.length)throw new Error('empty file');
+  let out=[], id=1, anyVol=false, seen=new Set();
+  aoaList.forEach(aoa=>{ const {rows,hasVol}=parseAkr(aoa,id); anyVol=anyVol||hasVol;
+    rows.forEach(r=>{ const k=(r.kw+'|'+r.topic).toLowerCase(); if(seen.has(k))return; seen.add(k); r.id=id++; out.push(r); }); });
+  if(!out.length)throw new Error('no keyword rows found');
+  if(!anyVol)STATE.rules.zero=false;          // no volume column anywhere → don't mass-reject on "0 search volume"
   STATE.rows=out;
   STATE.identifiers={}; STATE.questions=[]; STATE.majorIds=[];
 }
+function ingest(aoa){ ingestSheets([aoa]); }   // single-sheet (CSV) path
 /* Runs automatically after upload: build identifiers + auto-reject (both hidden from the UI). */
 function processRows(){
   buildIdentifiers();
