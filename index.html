@@ -410,7 +410,7 @@ const STATE = {
   groupSearch:'',
   groupPendingOnly:true,        // hide fully-decided combinations
   serpRunning:false, serpCancel:false, serpAuto:false,   // auto rankings fetch state (transient)
-  viewMode:'filters',           // filters (pick) | selected (live review)
+  viewMode:'svc',               // svc | blog (filter & pick per phase) | selected | rejected (both phases)
   fTypes:[], fAud:[], fMods:[], // filters view: selected service types / audiences / modifiers
   checked:{},                   // filters view: checkbox multi-select (id -> true)
   gridCell:null,                // {f,p} currently-opened grid cell
@@ -991,7 +991,9 @@ function canonicalReason(r){
 }
 function renderShort(mode){
   STATE.shortView=mode;
-  const phase=STATE.phase==='Blog'?'Blog':'Service';   // Service/Product or Blog/Category
+  if(STATE.viewMode==='filters')STATE.viewMode='svc';   // migrate old shape
+  const phase=STATE.viewMode==='blog'?'Blog':'Service';   // tab determines the phase for filter & pick
+  STATE.phase=phase;
   STATE.phase=phase;
   let all=STATE.rows.filter(r=>r.pageType===phase);
   if(STATE.groupSearch){const s=norm(STATE.groupSearch); all=all.filter(r=>blob(r).includes(s)||norm(r.combo).includes(s)||norm(r.profile).includes(s));}  // global filter — keeps every level's counts consistent
@@ -1085,7 +1087,7 @@ function renderShort(mode){
   </div>`;
 
   // ---------- SELECTED · live review of everything kept ----------
-  const selAll=STATE.rows.filter(r=>r.status==='selected'&&r.pageType===phase);
+  const selAll=STATE.rows.filter(r=>r.status==='selected');   // all phases (Service + Blog)
   const sf=STATE.selFilter; const sq=sf.q.toLowerCase();
   const sAud=r=>!sf.aud.length||sf.aud.includes(r.profile);
   const sType=r=>!sf.type.length||sf.type.includes(r.family);
@@ -1128,7 +1130,7 @@ function renderShort(mode){
   </div>`;
 
   // ---------- REJECTED · everything rejected, with reason + why + per-column filters ----------
-  const rejAll=STATE.rows.filter(r=>r.status==='rejected'&&r.pageType===phase);
+  const rejAll=STATE.rows.filter(r=>r.status==='rejected');   // all phases (Service + Blog)
   const nPre=rejAll.filter(r=>rejInfo(r).type==='Pre-rule').length;
   const rf=STATE.rejFilter;
   // multi-select + context-aware: each chip's count reflects the OTHER active filters; empty axis = all
@@ -1183,13 +1185,16 @@ function renderShort(mode){
     </div>
   </div>`;
 
-  let vm=STATE.viewMode; if(!['filters','selected','rejected'].includes(vm))vm=STATE.viewMode='filters';
-  const blurb={filters:'Tick the audiences, types and modifiers that fit the client, then keep or reject the matching topics.',
-    selected:'Every topic you have kept, updating live. Remove any that slipped in.',
-    rejected:'Every topic rejected — by a pre-rule (auto, with the rule shown) or by your decision. Restore any back to pending.'}[vm];
+  let vm=STATE.viewMode; if(!['svc','blog','selected','rejected'].includes(vm))vm=STATE.viewMode='svc';
+  const isPick = vm==='svc'||vm==='blog';
+  const blurb={svc:'Service / Product — process, then keep or reject the matching topics.',
+    blog:'Blog / Category — process, then keep or reject the matching topics.',
+    selected:'Every topic you have kept across Service and Blog. Remove any that slipped in.',
+    rejected:'Every topic rejected across Service and Blog — by a pre-rule (auto) or by your decision. Restore any.'}[vm];
+  const h2={svc:'Service / Product',blog:'Blog / Category',selected:'Selected topics',rejected:'Rejected topics'}[vm];
   const svcCount=STATE.rows.filter(r=>r.pageType==='Service').length, blogCount=STATE.rows.filter(r=>r.pageType==='Blog').length;
   const needN=STATE.rows.filter(needProc).length;
-  const isProcessed=!!STATE.processed[phase] || needN===0;     // show results only after this phase is processed
+  const isProcessed=!isPick || !!STATE.processed[phase] || needN===0;     // pick tabs show results only after the phase is processed
   const gateCard = STATE.serpRunning
     ? `<div class="tablewrap" style="padding:46px;text-align:center"><div style="font-size:14px;color:var(--accent);font-weight:700">⏳ Processing topics <span id="serpProg">…</span></div><div style="margin-top:12px"><button class="btn sec sm" id="serpStop">Stop</button></div></div>`
     : `<div class="tablewrap" style="padding:46px 24px;text-align:center">
@@ -1199,21 +1204,16 @@ function renderShort(mode){
         <button class="btn" id="serpAll">↻ Process ${phase==='Blog'?'blog':'service'} topics (${needN})</button>
       </div>`;
   $('#view').innerHTML=`
-  <div class="pagehead"><h2>Shortlist — ${phase==='Blog'?'Blog / Category':'Service / Product'} <span style="font-weight:400;color:var(--muted);font-size:14px">→ pages to build</span></h2><p>${blurb}</p></div>
-  <div class="seg phaseseg" style="margin-bottom:12px">
-    <button data-phase="Service" class="${phase==='Service'?'on':''}">Service / Product (${svcCount})</button>
-    <button data-phase="Blog" class="${phase==='Blog'?'on':''}">Blog / Category (${blogCount})</button>
-  </div>
-  ${isProcessed?`
+  <div class="pagehead"><h2>Shortlist — ${h2} <span style="font-weight:400;color:var(--muted);font-size:14px">→ pages to build</span></h2><p>${blurb}</p></div>
   <div class="phasetabs" style="margin-bottom:14px">
-    <button class="vtab ${vm==='filters'?'on':''}" data-vm="filters">Filter &amp; Pick</button>
-    <button class="vtab ${vm==='selected'?'on':''}" data-vm="selected">✓ Selected (${selRows.length})</button>
-    <button class="vtab ${vm==='rejected'?'on':''}" data-vm="rejected">✕ Rejected (${rejRows.length})</button>
+    <button class="vtab ${vm==='svc'?'on':''}" data-vm="svc">Service / Product (${svcCount})</button>
+    <button class="vtab ${vm==='blog'?'on':''}" data-vm="blog">Blog / Category (${blogCount})</button>
+    <button class="vtab ${vm==='selected'?'on':''}" data-vm="selected">✓ All Selected (${selAll.length})</button>
+    <button class="vtab ${vm==='rejected'?'on':''}" data-vm="rejected">✕ All Rejected (${rejAll.length})</button>
   </div>
-  ${vm==='selected'?selectedBody:vm==='rejected'?rejectedBody:filtersBody}`:gateCard}`;
-  $('#view').querySelectorAll('.phaseseg button').forEach(b=>b.onclick=()=>{ STATE.phase=b.dataset.phase; STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.fSearch='';STATE.checked={};STATE.focusIdx=0; STATE.serpAuto=false; render(); });
+  ${isPick ? (isProcessed?filtersBody:gateCard) : (vm==='selected'?selectedBody:rejectedBody)}`;
 
-  $('#view').querySelectorAll('.vtab').forEach(b=>b.onclick=()=>{STATE.viewMode=b.dataset.vm;render();});
+  $('#view').querySelectorAll('.vtab').forEach(b=>b.onclick=()=>{STATE.viewMode=b.dataset.vm; STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.fSearch='';STATE.checked={};STATE.focusIdx=0; render();});
   $('#view').querySelectorAll('.fpill[data-ft]').forEach(c=>c.onclick=()=>{const v=c.dataset.ft;STATE.fTypes=STATE.fTypes.includes(v)?STATE.fTypes.filter(x=>x!==v):[...STATE.fTypes,v];render();});
   $('#view').querySelectorAll('.fpill[data-fa]').forEach(c=>c.onclick=()=>{const v=c.dataset.fa;STATE.fAud=STATE.fAud.includes(v)?STATE.fAud.filter(x=>x!==v):[...STATE.fAud,v];render();});
   $('#view').querySelectorAll('.fpill[data-fm]').forEach(c=>c.onclick=()=>{const v=c.dataset.fm;STATE.fMods=STATE.fMods.includes(v)?STATE.fMods.filter(x=>x!==v):[...STATE.fMods,v];render();});
