@@ -1314,12 +1314,12 @@ let SERP_CACHE={};
 function loadSerpCache(){ try{SERP_CACHE=JSON.parse(localStorage.getItem(SERP_CACHE_KEY)||'{}');}catch(e){SERP_CACHE={};} }
 function saveSerpCache(){ try{localStorage.setItem(SERP_CACHE_KEY, JSON.stringify(SERP_CACHE));}catch(e){} }
 /* persistent keyword→ICP cache (LLM intent classifications) */
-const ICP_CACHE_KEY='topicShortlist.icpCache.v1';
+const ICP_CACHE_KEY='topicShortlist.icpCache.v2';   // v2: force fresh AI classification (corrected B2B/intent prompt + client context)
 let ICP_CACHE={};
 function loadIcpCache(){ try{ICP_CACHE=JSON.parse(localStorage.getItem(ICP_CACHE_KEY)||'{}');}catch(e){ICP_CACHE={};} }
 function saveIcpCache(){ try{localStorage.setItem(ICP_CACHE_KEY, JSON.stringify(ICP_CACHE));}catch(e){} }
 /* type-consolidation map: raw GPT type (lowercased) -> clean canonical category */
-const TYPE_MAP_KEY='topicShortlist.typeMap.v1';
+const TYPE_MAP_KEY='topicShortlist.typeMap.v2';
 let TYPE_MAP={};
 function loadTypeMap(){ try{TYPE_MAP=JSON.parse(localStorage.getItem(TYPE_MAP_KEY)||'{}');}catch(e){TYPE_MAP={};} }
 function saveTypeMap(){ try{localStorage.setItem(TYPE_MAP_KEY, JSON.stringify(TYPE_MAP));}catch(e){} }
