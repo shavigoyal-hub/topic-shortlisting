@@ -1227,12 +1227,14 @@ function secCell(r){ const s=secList(r); if(!s.length)return '<span class="muted
 function renderShort(mode){
   STATE.shortView=mode;                // 'icp' (review profiles) or 'groups' (decide topics)
   const types=pageTypes();
-  const phase='Service';               // Service / Product only for now — Blogs & Category skipped
+  const phase=STATE.phase==='Blog'?'Blog':'Service';   // Service/Product or Blog/Category
   STATE.phase=phase;
   let all=STATE.rows.filter(r=>r.pageType===phase);
   if(STATE.groupSearch){const s=norm(STATE.groupSearch); all=all.filter(r=>blob(r).includes(s)||norm(r.combo).includes(s)||norm(r.profile).includes(s));}  // global filter — keeps every level's counts consistent
   const cnt=arr=>({sel:arr.filter(r=>r.status==='selected').length,rej:arr.filter(r=>r.status==='rejected').length,pen:arr.filter(r=>r.status==='pending').length});
   const ca=cnt(all);
+  // needs processing: Service needs rankings; both phases need an AI audience + a mapped type. (Blog is classified keyword-only — no SERP)
+  const needProc=r=>r.status==='pending'&&r.pageType===phase&&((phase==='Service'&&!r.serpDone)||!(ICP_CACHE[r.kw]&&ICP_CACHE[r.kw].audience)||(r.family&&!TYPE_MAP[r.family.toLowerCase()]));
   const transPend=STATE.rows.filter(r=>r.pageType!=='Blog'&&r.status==='pending').length;
   const isTrans=phase!=='Blog';
   const tabLabel=(t,i)=>`${'①②③④⑤'[i]||(i+1)+'.'} ${t==='Blog'?'Blogs':t+(t==='Service'?' / Product':'')} (${STATE.rows.filter(r=>r.pageType===t).length})`;
@@ -1244,7 +1246,7 @@ function renderShort(mode){
   // shared rankings status (shown in the toolbar)
   const serpStatus = STATE.serpRunning
     ? `<span style="font-size:12.5px;font-weight:600;color:var(--accent)">⏳ Processing <span id="serpProg">…</span></span> <button class="btn sec sm" id="serpStop">Stop</button>`
-    : (()=>{const n=STATE.rows.filter(r=>r.status==='pending'&&r.pageType==='Service'&&(!r.serpDone||!(ICP_CACHE[r.kw]&&ICP_CACHE[r.kw].audience)||(r.family&&!TYPE_MAP[r.family.toLowerCase()]))).length;return n?`<button class="btn sec sm" id="serpAll" title="Analyse rankings + read buyer intent (audience, type)">↻ Process topics (${n})</button>`:`<span style="font-size:12px;color:var(--green);font-weight:600">✓ Processed</span>`;})();
+    : (()=>{const n=STATE.rows.filter(needProc).length;return n?`<button class="btn sec sm" id="serpAll" title="${phase==='Blog'?'Read buyer intent (audience, type) for blog topics':'Analyse rankings + read buyer intent (audience, type)'}">↻ Process topics (${n})</button>`:`<span style="font-size:12px;color:var(--green);font-weight:600">✓ Processed</span>`;})();
   // ---------- A · GRID  (service type × audience) ----------
   const pendN=f=>all.filter(r=>r.family===f&&r.status==='pending').length;
   const pendP=p=>all.filter(r=>r.profile===p&&r.status==='pending').length;
@@ -1324,7 +1326,7 @@ function renderShort(mode){
   </div>`;
 
   // ---------- SELECTED · live review of everything kept ----------
-  const selRows=STATE.rows.filter(r=>r.status==='selected')
+  const selRows=STATE.rows.filter(r=>r.status==='selected'&&r.pageType===phase)
     .sort((a,b)=>profileSort(a.profile,b.profile)||a.family.localeCompare(b.family)||b.vol-a.vol);
   const selVol=selRows.reduce((s,r)=>s+r.vol,0);
   const selectedBody=`
@@ -1349,7 +1351,7 @@ function renderShort(mode){
   </div>`;
 
   // ---------- REJECTED · everything rejected, with reason + why + per-column filters ----------
-  const rejAll=STATE.rows.filter(r=>r.status==='rejected');
+  const rejAll=STATE.rows.filter(r=>r.status==='rejected'&&r.pageType===phase);
   const nPre=rejAll.filter(r=>rejInfo(r).type==='Pre-rule').length;
   const rf=STATE.rejFilter;
   // context-aware: each dropdown counts within the OTHER active filters, so counts always match the table
@@ -1422,8 +1424,13 @@ function renderShort(mode){
   const blurb={filters:'Tick the audiences, types and modifiers that fit the client, then keep or reject the matching topics.',
     selected:'Every topic you have kept, updating live. Remove any that slipped in.',
     rejected:'Every topic rejected — by a pre-rule (auto, with the rule shown) or by your decision. Restore any back to pending.'}[vm];
+  const svcCount=STATE.rows.filter(r=>r.pageType==='Service').length, blogCount=STATE.rows.filter(r=>r.pageType==='Blog').length;
   $('#view').innerHTML=`
-  <div class="pagehead"><h2>Shortlist — Service / Product <span style="font-weight:400;color:var(--muted);font-size:14px">→ pages to build</span></h2><p>${blurb}</p></div>
+  <div class="pagehead"><h2>Shortlist — ${phase==='Blog'?'Blog / Category':'Service / Product'} <span style="font-weight:400;color:var(--muted);font-size:14px">→ pages to build</span></h2><p>${blurb}</p></div>
+  <div class="seg phaseseg" style="margin-bottom:12px">
+    <button data-phase="Service" class="${phase==='Service'?'on':''}">Service / Product (${svcCount})</button>
+    <button data-phase="Blog" class="${phase==='Blog'?'on':''}">Blog / Category (${blogCount})</button>
+  </div>
   <div class="phasetabs" style="margin-bottom:14px">
     <button class="vtab ${vm==='filters'?'on':''}" data-vm="filters">Filter &amp; Pick</button>
     <button class="vtab ${vm==='selected'?'on':''}" data-vm="selected">✓ Selected (${selRows.length})</button>
@@ -1431,6 +1438,7 @@ function renderShort(mode){
   </div>
   ${vm==='selected'?selectedBody:vm==='rejected'?rejectedBody:filtersBody}
   ${modalHtml}`;
+  $('#view').querySelectorAll('.phaseseg button').forEach(b=>b.onclick=()=>{ STATE.phase=b.dataset.phase; STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.fSearch='';STATE.checked={};STATE.focusIdx=0; STATE.serpAuto=false; render(); });
 
   $('#view').querySelectorAll('.vtab').forEach(b=>b.onclick=()=>{STATE.viewMode=b.dataset.vm;STATE.modal=null;render();});
   // matching-topics popup
@@ -1487,12 +1495,12 @@ function renderShort(mode){
   if($('#toBlog'))$('#toBlog').onclick=()=>{STATE.phase='Blog';STATE.page=0;render();};
   if($('#export'))$('#export').onclick=()=>exportCsv(false);
   if($('#exportSel'))$('#exportSel').onclick=()=>exportCsv(true);
-  const svcPending=()=>STATE.rows.filter(r=>r.status==='pending'&&r.pageType==='Service');
+  const svcPending=()=>STATE.rows.filter(r=>r.status==='pending'&&r.pageType===phase);
   if($('#serpAll'))$('#serpAll').onclick=()=>fetchSerpBulk(svcPending());
   if($('#serpStop'))$('#serpStop').onclick=()=>{STATE.serpCancel=true;};
   // auto-fetch rankings once per page load (only where a key or the /api proxy is available)
   const onServer = /^https?:$/.test(location.protocol) && !/^(localhost|127\.|0\.0\.0\.0|\[|$)/.test(location.hostname);
-  if((STATE.config.serperKey||onServer) && !STATE.serpAuto && !STATE.serpRunning && svcPending().some(r=>!r.serpDone||!(ICP_CACHE[r.kw]&&ICP_CACHE[r.kw].audience)||(r.family&&!TYPE_MAP[r.family.toLowerCase()]))){
+  if((STATE.config.serperKey||onServer) && !STATE.serpAuto && !STATE.serpRunning && phase==='Service' && STATE.rows.some(needProc)){
     STATE.serpAuto=true; setTimeout(()=>fetchSerpBulk(svcPending(), true), 60);
   }
   $('#view').querySelectorAll('.miniact button[data-id]').forEach(b=>b.onclick=()=>{
@@ -1643,7 +1651,7 @@ async function fetchSerp(r){
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function fetchSerpBulk(rows, auto){
   const active=rows.filter(r=>r.status!=='rejected');                 // never spend calls on rejected topics
-  const toFetch=active.filter(r=>!r.serpDone);
+  const toFetch=active.filter(r=>!r.serpDone && r.pageType==='Service');   // only Service/Product gets rankings; Blog is classified keyword-only
   const toClassify=active.filter(r=>!r.profileEdited && !(ICP_CACHE[r.kw]&&ICP_CACHE[r.kw].audience));
   const toConsolidate=onServerHost() && active.some(r=>r.family && !TYPE_MAP[r.family.toLowerCase()]);
   if(!toFetch.length && !toClassify.length && !toConsolidate){ if(!auto)toast('Already processed'); return; }
