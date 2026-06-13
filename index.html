@@ -419,6 +419,7 @@ const STATE = {
   fSearch:'',                   // filters view: keyword/topic text filter
   fSort:{key:'',dir:-1},        // filters view: '' (default) | 'kw' | 'vol'
   rejFilter:{aud:'all',type:'all',why:'all',reason:'all',q:''},  // rejected tab column filters
+  rejSort:{key:'',dir:1},        // rejected tab column sort
   focusIdx:0,                   // keyboard-focused row index in the filters table
   colWidths:{},                 // user-dragged column widths, keyed by "<tab>:<colIndex>"
   history:[],                   // action log (session-only): {ts,label,n,changed:[{id,from}]}
@@ -1367,7 +1368,12 @@ function renderShort(mode){
   const rejTypeOpts=optList(r=>r.family,typeCtx,rf.type,true);
   const whyOpts=['Pre-rule','Decision'].map(w=>[w,rejAll.filter(r=>rejInfo(r).type===w&&whyCtx(r)).length]).filter(([w,n])=>n>0||rf.why===w);
   const reasonOpts=optList(r=>canonicalReason(r),reasonCtx,rf.reason,true);
-  const rejRows=rejAll.filter(r=>pAud(r)&&pType(r)&&pWhy(r)&&pReason(r)&&pQ(r)).sort((a,b)=>{const ta=rejInfo(a).type,tb=rejInfo(b).type; return ta.localeCompare(tb)||b.vol-a.vol;});
+  const rjKey={aud:r=>r.profile, type:r=>r.family, kw:r=>r.kw, why:r=>rejInfo(r).type, reason:r=>canonicalReason(r)};
+  const rs=STATE.rejSort;
+  const rejRows=rejAll.filter(r=>pAud(r)&&pType(r)&&pWhy(r)&&pReason(r)&&pQ(r)).sort(
+    rs.key&&rjKey[rs.key] ? (a,b)=>rs.dir*String(rjKey[rs.key](a)).localeCompare(String(rjKey[rs.key](b)))||b.vol-a.vol
+                          : (a,b)=>{const ta=rejInfo(a).type,tb=rejInfo(b).type; return ta.localeCompare(tb)||b.vol-a.vol;});
+  const rjAr=k=>rs.key===k?`<span class="ar">${rs.dir===1?'▲':'▼'}</span>`:'';
   const rejSel=(id,val,opts,allLabel,allCount)=>`<select id="${id}" style="padding:5px 8px;border:1px solid var(--line);border-radius:7px;font-size:12px"><option value="all" ${val==='all'?'selected':''}>${allLabel} (${allCount})</option>${opts.map(([o,n])=>`<option value="${esc(o)}" ${val===o?'selected':''}>${esc(o)} (${n})</option>`).join('')}</select>`;
   const rejectedBody=`
   <div class="tablewrap">
@@ -1384,7 +1390,7 @@ function renderShort(mode){
     </div>
     <div class="scrollx">
       <table class="ftbl" style="min-width:880px">
-        <thead><tr><th style="width:92px">Audience</th><th style="width:120px">Product / Service Type</th><th style="width:200px">Keyword</th><th>Topic</th><th style="width:96px">Why</th><th style="width:170px">Reason</th><th style="width:84px"></th></tr></thead>
+        <thead><tr><th class="fsort" data-rk="aud" style="width:92px">Audience ${rjAr('aud')}</th><th class="fsort" data-rk="type" style="width:120px">Product / Service Type ${rjAr('type')}</th><th class="fsort" data-rk="kw" style="width:200px">Keyword ${rjAr('kw')}</th><th>Topic</th><th class="fsort" data-rk="why" style="width:96px">Why ${rjAr('why')}</th><th class="fsort" data-rk="reason" style="width:170px">Reason ${rjAr('reason')}</th><th style="width:84px"></th></tr></thead>
         <tbody>${rejRows.length?rejRows.map(r=>{const ri=rejInfo(r);return `<tr>
           <td><span class="ichip aud audx" title="${esc(r.profile)}">${esc(r.profile)}</span></td>
           <td><span class="ichip fam2" title="${esc(r.family)}">${esc(r.family)}</span></td>
@@ -1446,6 +1452,7 @@ function renderShort(mode){
   if($('#rejWhy'))$('#rejWhy').onchange=e=>{STATE.rejFilter.why=e.target.value;render();};
   if($('#rejReason'))$('#rejReason').onchange=e=>{STATE.rejFilter.reason=e.target.value;render();};
   if($('#rejClear'))$('#rejClear').onclick=()=>{STATE.rejFilter={aud:'all',type:'all',why:'all',reason:'all',q:''};render();};
+  $('#view').querySelectorAll('th.fsort[data-rk]').forEach(th=>th.onclick=()=>{ const k=th.dataset.rk; if(STATE.rejSort.key===k)STATE.rejSort.dir*=-1; else STATE.rejSort={key:k,dir:1}; render(); });
   if($('#rejQ')){const ri=$('#rejQ');ri.oninput=()=>{STATE.rejFilter.q=ri.value;$('#view').querySelectorAll('.ftbl tbody tr').forEach(tr=>{const t=tr.textContent.toLowerCase();tr.style.display=(!ri.value||t.includes(ri.value.toLowerCase()))?'':'none';});};}
   // Smart suggest — pre-tick types/audience that match the client's configured services
   if($('#smartSuggest'))$('#smartSuggest').onclick=()=>{
@@ -1469,7 +1476,7 @@ function renderShort(mode){
   if($('#resetAll'))$('#resetAll').onclick=()=>{ STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.checked={}; toast('Selection reset'); render(); };
   $('#view').querySelectorAll('.seccell,.cellx,.audx').forEach(c=>c.onclick=()=>c.classList.toggle('expanded'));
   // sortable headers (Keyword A→Z, Vol)
-  $('#view').querySelectorAll('th.fsort').forEach(th=>th.onclick=()=>{ const k=th.dataset.fk; if(STATE.fSort.key===k)STATE.fSort.dir*=-1; else STATE.fSort={key:k,dir:k==='vol'?-1:1}; render(); });
+  $('#view').querySelectorAll('th.fsort[data-fk]').forEach(th=>th.onclick=()=>{ const k=th.dataset.fk; if(STATE.fSort.key===k)STATE.fSort.dir*=-1; else STATE.fSort={key:k,dir:k==='vol'?-1:1}; render(); });
   // keyword/topic text filter — hides non-matching rows live (no re-render, keeps focus)
   const applyFSearch=()=>{ const q=(STATE.fSearch||'').toLowerCase(); $('#view').querySelectorAll('.ftbl tbody tr[data-kwt]').forEach(tr=>{ tr.style.display = (!q||tr.dataset.kwt.includes(q))?'':'none'; }); };
   if($('#fSearch')){ const fi=$('#fSearch'); fi.oninput=()=>{ STATE.fSearch=fi.value; applyFSearch(); }; applyFSearch(); }
