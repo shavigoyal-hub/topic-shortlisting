@@ -1237,7 +1237,7 @@ function renderShort(mode){
   // shared rankings status (shown in the toolbar)
   const serpStatus = STATE.serpRunning
     ? `<span style="font-size:12.5px;font-weight:600;color:var(--accent)">⏳ Processing <span id="serpProg">…</span></span> <button class="btn sec sm" id="serpStop">Stop</button>`
-    : (()=>{const n=STATE.rows.filter(r=>r.status==='pending'&&r.pageType==='Service'&&(!r.serpDone||!(ICP_CACHE[r.kw]&&ICP_CACHE[r.kw].audience))).length;return n?`<button class="btn sec sm" id="serpAll" title="Analyse rankings + read buyer intent (audience, type)">↻ Process topics (${n})</button>`:`<span style="font-size:12px;color:var(--green);font-weight:600">✓ Processed</span>`;})();
+    : (()=>{const n=STATE.rows.filter(r=>r.status==='pending'&&r.pageType==='Service'&&(!r.serpDone||!(ICP_CACHE[r.kw]&&ICP_CACHE[r.kw].audience)||(r.family&&!TYPE_MAP[r.family.toLowerCase()]))).length;return n?`<button class="btn sec sm" id="serpAll" title="Analyse rankings + read buyer intent (audience, type)">↻ Process topics (${n})</button>`:`<span style="font-size:12px;color:var(--green);font-weight:600">✓ Processed</span>`;})();
   // ---------- A · GRID  (service type × audience) ----------
   const pendN=f=>all.filter(r=>r.family===f&&r.status==='pending').length;
   const pendP=p=>all.filter(r=>r.profile===p&&r.status==='pending').length;
@@ -1479,7 +1479,7 @@ function renderShort(mode){
   if($('#serpStop'))$('#serpStop').onclick=()=>{STATE.serpCancel=true;};
   // auto-fetch rankings once per page load (only where a key or the /api proxy is available)
   const onServer = /^https?:$/.test(location.protocol) && !/^(localhost|127\.|0\.0\.0\.0|\[|$)/.test(location.hostname);
-  if((STATE.config.serperKey||onServer) && !STATE.serpAuto && !STATE.serpRunning && svcPending().some(r=>!r.serpDone||!(ICP_CACHE[r.kw]&&ICP_CACHE[r.kw].audience))){
+  if((STATE.config.serperKey||onServer) && !STATE.serpAuto && !STATE.serpRunning && svcPending().some(r=>!r.serpDone||!(ICP_CACHE[r.kw]&&ICP_CACHE[r.kw].audience)||(r.family&&!TYPE_MAP[r.family.toLowerCase()]))){
     STATE.serpAuto=true; setTimeout(()=>fetchSerpBulk(svcPending(), true), 60);
   }
   $('#view').querySelectorAll('.miniact button[data-id]').forEach(b=>b.onclick=()=>{
@@ -1554,7 +1554,7 @@ async function consolidateTypes(rows){
   if(!raw.length) return;
   try{
     const res=await fetch('/api/group-types',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({types:raw, existing:[...new Set(Object.values(TYPE_MAP))], client:clientCtx()})});
-    if(res.ok){ const j=await res.json(); Object.entries(j.map||{}).forEach(([k,v])=>{TYPE_MAP[k.toLowerCase()]=v;}); saveTypeMap(); }
+    if(res.ok){ const j=await res.json(); Object.entries(j.map||{}).forEach(([k,v])=>{TYPE_MAP[k.toLowerCase()]=v;}); Object.values(TYPE_MAP).forEach(v=>{TYPE_MAP[v.toLowerCase()]=v;}); saveTypeMap(); }   // canonicals self-map
   }catch(e){}
   rows.forEach(r=>{ r.family=canonType(r.family); const c=ICP_CACHE[r.kw]; if(c&&typeof c==='object'&&c.type)c.type=canonType(c.type); });
   saveIcpCache();
@@ -1632,7 +1632,8 @@ async function fetchSerpBulk(rows, auto){
   const active=rows.filter(r=>r.status!=='rejected');                 // never spend calls on rejected topics
   const toFetch=active.filter(r=>!r.serpDone);
   const toClassify=active.filter(r=>!r.profileEdited && !(ICP_CACHE[r.kw]&&ICP_CACHE[r.kw].audience));
-  if(!toFetch.length && !toClassify.length){ if(!auto)toast('Already processed'); return; }
+  const toConsolidate=onServerHost() && active.some(r=>r.family && !TYPE_MAP[r.family.toLowerCase()]);
+  if(!toFetch.length && !toClassify.length && !toConsolidate){ if(!auto)toast('Already processed'); return; }
   if(STATE.serpRunning)return;
   STATE.serpRunning=true; STATE.serpCancel=false; render();           // show the live status bar
   let done=0,err=0;
