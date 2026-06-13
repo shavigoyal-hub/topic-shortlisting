@@ -420,6 +420,7 @@ const STATE = {
   fSort:{key:'',dir:-1},        // filters view: '' (default) | 'kw' | 'vol'
   rejFilter:{aud:[],type:[],why:[],reason:[],q:''},  // rejected tab column filters (multi-select)
   rejSort:{key:'',dir:1},        // rejected tab column sort
+  selFilter:{aud:[],type:[],mod:[],q:''},  // selected tab multi-select filters
   focusIdx:0,                   // keyboard-focused row index in the filters table
   colWidths:{},                 // user-dragged column widths, keyed by "<tab>:<colIndex>"
   history:[],                   // action log (session-only): {ts,label,n,changed:[{id,from}]}
@@ -1335,14 +1336,32 @@ function renderShort(mode){
   </div>`;
 
   // ---------- SELECTED · live review of everything kept ----------
-  const selRows=STATE.rows.filter(r=>r.status==='selected'&&r.pageType===phase)
+  const selAll=STATE.rows.filter(r=>r.status==='selected'&&r.pageType===phase);
+  const sf=STATE.selFilter; const sq=sf.q.toLowerCase();
+  const sAud=r=>!sf.aud.length||sf.aud.includes(r.profile);
+  const sType=r=>!sf.type.length||sf.type.includes(r.family);
+  const sMod=r=>!sf.mod.length||r.modIds.some(m=>sf.mod.includes(m));
+  const sQ=r=>!sq||(r.kw+' '+(r.topic||'')).toLowerCase().includes(sq);
+  const sOpt=(keyFn,ctxFns)=>{const o={};selAll.forEach(r=>{if(ctxFns.every(f=>f(r)))keyFn(r).forEach(k=>o[k]=(o[k]||0)+1);});return Object.entries(o);};
+  const selAudOpts=sOpt(r=>[r.profile],[sType,sMod,sQ]).filter(([k,n])=>n>0||sf.aud.includes(k)).sort((a,b)=>profileSort(a[0],b[0]));
+  const selTypeOpts=sOpt(r=>[r.family],[sAud,sMod,sQ]).filter(([k,n])=>n>0||sf.type.includes(k)).sort((a,b)=>b[1]-a[1]);
+  const selModOpts=sOpt(r=>r.modIds,[sAud,sType,sQ]).filter(([k,n])=>n>0||sf.mod.includes(k)).sort((a,b)=>b[1]-a[1]).slice(0,30);
+  const selRows=selAll.filter(r=>sAud(r)&&sType(r)&&sMod(r)&&sQ(r))
     .sort((a,b)=>profileSort(a.profile,b.profile)||a.family.localeCompare(b.family)||b.vol-a.vol);
   const selVol=selRows.reduce((s,r)=>s+r.vol,0);
+  const anySf=sf.aud.length||sf.type.length||sf.mod.length||sf.q;
+  const sRow=(label,axis,opts,cls)=>opts.length?`<div style="display:flex;gap:7px;align-items:baseline;flex-wrap:wrap;margin-bottom:5px"><b style="font-size:11.5px;width:64px;flex-shrink:0">${label}</b>${opts.map(([v,n])=>`<span class="fpill ${cls} ${sf[axis].includes(v)?'on':''}" data-sfk="${axis}" data-sfv="${esc(v)}">${esc(v)} <span class="muted">${n}</span></span>`).join('')}</div>`:'';
   const selectedBody=`
   <div class="tablewrap">
-    <div class="tbar"><b style="font-size:13px">${selRows.length} topic${selRows.length===1?'':'s'} selected</b>
-      <span class="muted" style="font-size:12px">· ${selVol.toLocaleString()} total volume · updates live as you keep / reject</span>
+    <div class="tbar"><b style="font-size:13px">${selAll.length} selected</b>
+      <span class="muted" style="font-size:12px">· ${selVol.toLocaleString()} total volume${selRows.length!==selAll.length?` · <b style="color:var(--ink)">${selRows.length}</b> shown`:''} · updates live</span>
       <span style="flex:1"></span><button class="btn sec sm" id="export" title="Export every topic with its decision">⤓ Export all</button><button class="btn sm" id="exportSel" title="Export only the selected/kept topics">⤓ Export selected</button></div>
+    ${selAll.length?`<div style="padding:9px 14px;border-bottom:1px solid var(--line)">
+      ${sRow('Audience','aud',selAudOpts,'aud')}
+      ${sRow('Type','type',selTypeOpts,'type')}
+      ${sRow('Modifier','mod',selModOpts,'mod')}
+      <div style="display:flex;gap:8px;align-items:center;margin-top:4px"><input type="text" id="selQ" placeholder="🔎 keyword / topic…" value="${esc(sf.q)}" style="width:220px;padding:6px 9px;border:1px solid var(--line);border-radius:7px;font-size:12px">${anySf?`<button class="btn ghost sm" id="selClear">↺ Clear filters</button>`:''}</div>
+    </div>`:''}
     <div class="scrollx">
       <table class="ftbl">
         <thead><tr><th style="width:96px">Audience</th><th style="width:124px">Product / Service Type</th><th style="width:82px">Modifier</th><th style="width:210px">Keyword</th><th>Topic</th><th style="width:62px">Vol</th><th style="width:84px"></th></tr></thead>
@@ -1466,6 +1485,10 @@ function renderShort(mode){
   // rejected-tab multi-select chip filters
   $('#view').querySelectorAll('.fpill[data-rfk]').forEach(c=>c.onclick=()=>{const k=c.dataset.rfk,v=c.dataset.rfv;const arr=STATE.rejFilter[k];STATE.rejFilter[k]=arr.includes(v)?arr.filter(x=>x!==v):[...arr,v];render();});
   if($('#rejClear'))$('#rejClear').onclick=()=>{STATE.rejFilter={aud:[],type:[],why:[],reason:[],q:''};render();};
+  // selected-tab multi-select chip filters
+  $('#view').querySelectorAll('.fpill[data-sfk]').forEach(c=>c.onclick=()=>{const k=c.dataset.sfk,v=c.dataset.sfv;const arr=STATE.selFilter[k];STATE.selFilter[k]=arr.includes(v)?arr.filter(x=>x!==v):[...arr,v];render();});
+  if($('#selClear'))$('#selClear').onclick=()=>{STATE.selFilter={aud:[],type:[],mod:[],q:''};render();};
+  if($('#selQ')){const si=$('#selQ');si.oninput=()=>{STATE.selFilter.q=si.value;$('#view').querySelectorAll('.ftbl tbody tr').forEach(tr=>{const t=tr.textContent.toLowerCase();tr.style.display=(!si.value||t.includes(si.value.toLowerCase()))?'':'none';});};}
   $('#view').querySelectorAll('th.fsort[data-rk]').forEach(th=>th.onclick=()=>{ const k=th.dataset.rk; if(STATE.rejSort.key===k)STATE.rejSort.dir*=-1; else STATE.rejSort={key:k,dir:1}; render(); });
   if($('#rejQ')){const ri=$('#rejQ');ri.oninput=()=>{STATE.rejFilter.q=ri.value;$('#view').querySelectorAll('.ftbl tbody tr').forEach(tr=>{const t=tr.textContent.toLowerCase();tr.style.display=(!ri.value||t.includes(ri.value.toLowerCase()))?'':'none';});};}
   // Smart suggest — pre-tick types/audience that match the client's configured services
