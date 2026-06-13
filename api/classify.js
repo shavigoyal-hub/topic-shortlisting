@@ -1,5 +1,6 @@
 // Vercel serverless intent classifier — keeps the OpenAI key server-side (OPENAI_API_KEY env var).
-// POST { items: [{ id, kw, titles?: string[] }] }  ->  { results: [{ id, audience }] }
+// POST { items:[{id, kw, titles?:[]}], client?:{offering,sells,icp,site} }
+//   -> { results:[{id, audience, type, keep, reason}] }
 const AUDIENCES = [
   'B2B / Corporate',        // buyer is a business: procurement, wholesale/bulk, manufacturers sourcing, companies buying for staff/office, SaaS/enterprise buyers
   'Healthcare / Clinical',  // clinicians, hospitals, patients seeking medical/clinical info or care
@@ -10,6 +11,8 @@ const AUDIENCES = [
   'Researcher / Student',   // academic, definitional, "what is", statistics, study/research intent
   'General',                // genuinely ambiguous — no clear buyer
 ];
+// when keep=false, reason MUST be one of these (keeps the Rejected reason list short + intent-based)
+const REJECT_REASONS = ['Job-seeker intent', 'Researcher/student intent', 'Other brand', 'Off-ICP audience', 'No commercial intent'];
 
 module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
@@ -18,21 +21,38 @@ module.exports = async (req, res) => {
   let body = req.body;
   if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = {}; } }
   const items = (body && body.items) || [];
+  const client = (body && body.client) || {};
   if (!Array.isArray(items) || !items.length) { res.statusCode = 400; return res.end(JSON.stringify({ error: 'missing items' })); }
 
-  const lines = items.slice(0, 60).map(it => {
+  const lines = items.slice(0, 50).map(it => {
     const titles = (it.titles || []).slice(0, 6).map(t => String(t).slice(0, 160)).join(' | ');
     return `{"id": ${JSON.stringify(it.id)}, "keyword": ${JSON.stringify(String(it.kw || ''))}, "ranking_titles": ${JSON.stringify(titles)}}`;
   }).join('\n');
 
-  const system = `You are an SEO analyst. For each keyword, decide WHO the searcher/buyer is — their intent — using the keyword and the titles/snippets of the pages currently ranking for it.
-Choose exactly ONE audience from this list (use the label verbatim):
-${AUDIENCES.map(a => '- ' + a).join('\n')}
-Rules:
-- Judge real intent, not surface words. e.g. "custom bathroom remodeling experts" = a homeowner hiring a contractor => Individual / Consumer (NOT B2B just because a page says "commercial"). "mesh basket bulk supplier" = a business sourcing in bulk => B2B / Corporate.
-- Use the ranking titles to disambiguate: if marketplaces/wholesale/manufacturer pages rank => B2B; if retail/home-service/personal pages rank => Individual / Consumer; clinical orgs => Healthcare / Clinical; etc.
-- If genuinely unclear, use "General".
-Return ONLY JSON: {"results":[{"id":<id>,"audience":"<label>"}]} with one entry per input id.`;
+  const clientDesc = [
+    client.offering ? `Offering: ${client.offering}.` : '',
+    client.sells ? `Sells: ${client.sells}.` : '',
+    client.icp ? `Ideal customers (ICP): ${client.icp}.` : '',
+    client.site ? `Site: ${client.site}.` : '',
+  ].filter(Boolean).join(' ') || '(client profile not provided — judge generic buyer intent)';
+
+  const system = `You are an SEO analyst classifying keywords for a client by INTENT (who is searching and why), using the keyword and the titles/snippets of the pages currently ranking for it.
+
+CLIENT: ${clientDesc}
+
+For each keyword return:
+- "audience": exactly one of: ${AUDIENCES.join(' | ')}
+- "type": a concise 1-3 word Title Case product/service category for what the page would be about (e.g. "Monitor Stands", "Bathroom Remodeling", "Executive Coaching", "Waste Bins"). Reuse consistent labels across similar keywords.
+- "keep": true if the searcher is a plausible BUYER/customer for THIS client; false only when they clearly are NOT.
+- "reason": when keep=false, exactly one of: ${REJECT_REASONS.join(' | ')}. When keep=true, "".
+
+Judge real intent, not surface words:
+- "custom bathroom remodeling experts" = homeowner hiring a contractor => Individual / Consumer, keep.
+- "mesh basket bulk supplier india" = business sourcing in bulk => B2B / Corporate, keep.
+- keep=false for: job/career seekers ("jobs", "salary", "career"), pure researchers/students ("what is", "meaning", "statistics" with no buying intent), searches for a DIFFERENT company's brand, or an audience clearly outside the client's ICP.
+- When unsure, keep=true (do not over-reject).
+
+Return ONLY JSON: {"results":[{"id":<id>,"audience":"...","type":"...","keep":true|false,"reason":"..."}]} — one entry per input id.`;
 
   try {
     const r = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -51,8 +71,17 @@ Return ONLY JSON: {"results":[{"id":<id>,"audience":"<label>"}]} with one entry 
     if (!r.ok) { const t = await r.text(); res.statusCode = r.status; return res.end(JSON.stringify({ error: 'openai ' + r.status, detail: t.slice(0, 500) })); }
     const j = await r.json();
     let parsed = {}; try { parsed = JSON.parse(j.choices[0].message.content); } catch (e) {}
-    const valid = new Set(AUDIENCES);
-    const results = (parsed.results || []).map(o => ({ id: o.id, audience: valid.has(o.audience) ? o.audience : 'General' }));
+    const validAud = new Set(AUDIENCES), validRej = new Set(REJECT_REASONS);
+    const results = (parsed.results || []).map(o => {
+      const keep = o.keep !== false;
+      return {
+        id: o.id,
+        audience: validAud.has(o.audience) ? o.audience : 'General',
+        type: (o.type && String(o.type).trim().slice(0, 40)) || '',
+        keep,
+        reason: keep ? '' : (validRej.has(o.reason) ? o.reason : 'No commercial intent'),
+      };
+    });
     res.statusCode = 200;
     res.end(JSON.stringify({ results }));
   } catch (e) {

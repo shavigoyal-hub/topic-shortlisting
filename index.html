@@ -559,8 +559,8 @@ function classifyProfileFromSerp(r){
   return tBest || null;                                   // else a weak single text hit, else unclassified
 }
 function classifyProfiles(){ STATE.rows.forEach(r=>{ if(r.profileEdited)return;
-  if(ICP_CACHE[r.kw]) r.profile=ICP_CACHE[r.kw];                                                // LLM intent (cached) wins
-  else r.profile = r.serpDone ? (classifyProfileFromSerp(r)||classifyProfile(r)) : 'Unclassified';
+  if(applyIcp(r)) return;                                                                        // LLM intent (cached) wins: audience + type + reject
+  r.profile = r.serpDone ? (classifyProfileFromSerp(r)||classifyProfile(r)) : 'Unclassified';
 }); }
 function profileOptions(){ return [...PROFILES.map(p=>p.name), ...STATE.config.industries, 'General']; }
 
@@ -1237,7 +1237,7 @@ function renderShort(mode){
   // shared rankings status (shown in the toolbar)
   const serpStatus = STATE.serpRunning
     ? `<span style="font-size:12.5px;font-weight:600;color:var(--accent)">⏳ Processing <span id="serpProg">…</span></span> <button class="btn sec sm" id="serpStop">Stop</button>`
-    : (()=>{const n=STATE.rows.filter(r=>r.status==='pending'&&!r.serpDone&&r.pageType==='Service').length;return n?`<button class="btn sec sm" id="serpAll" title="Analyse rankings to set audience/ICP">↻ Process topics (${n})</button>`:`<span style="font-size:12px;color:var(--green);font-weight:600">✓ Processed</span>`;})();
+    : (()=>{const n=STATE.rows.filter(r=>r.status==='pending'&&r.pageType==='Service'&&(!r.serpDone||!(ICP_CACHE[r.kw]&&ICP_CACHE[r.kw].audience))).length;return n?`<button class="btn sec sm" id="serpAll" title="Analyse rankings + read buyer intent (audience, type)">↻ Process topics (${n})</button>`:`<span style="font-size:12px;color:var(--green);font-weight:600">✓ Processed</span>`;})();
   // ---------- A · GRID  (service type × audience) ----------
   const pendN=f=>all.filter(r=>r.family===f&&r.status==='pending').length;
   const pendP=p=>all.filter(r=>r.profile===p&&r.status==='pending').length;
@@ -1477,7 +1477,7 @@ function renderShort(mode){
   if($('#serpStop'))$('#serpStop').onclick=()=>{STATE.serpCancel=true;};
   // auto-fetch rankings once per page load (only where a key or the /api proxy is available)
   const onServer = /^https?:$/.test(location.protocol) && !/^(localhost|127\.|0\.0\.0\.0|\[|$)/.test(location.hostname);
-  if((STATE.config.serperKey||onServer) && !STATE.serpAuto && !STATE.serpRunning && svcPending().some(r=>!r.serpDone)){
+  if((STATE.config.serperKey||onServer) && !STATE.serpAuto && !STATE.serpRunning && svcPending().some(r=>!r.serpDone||!(ICP_CACHE[r.kw]&&ICP_CACHE[r.kw].audience))){
     STATE.serpAuto=true; setTimeout(()=>fetchSerpBulk(svcPending(), true), 60);
   }
   $('#view').querySelectorAll('.miniact button[data-id]').forEach(b=>b.onclick=()=>{
@@ -1539,23 +1539,35 @@ let ICP_CACHE={};
 function loadIcpCache(){ try{ICP_CACHE=JSON.parse(localStorage.getItem(ICP_CACHE_KEY)||'{}');}catch(e){ICP_CACHE={};} }
 function saveIcpCache(){ try{localStorage.setItem(ICP_CACHE_KEY, JSON.stringify(ICP_CACHE));}catch(e){} }
 const onServerHost=()=>/^https?:$/.test(location.protocol) && !/^(localhost|127\.|0\.0\.0\.0|\[|$)/.test(location.hostname);
-/* LLM intent classification (keyword + ranking titles) — batched, cached, falls back to the heuristic */
+function clientCtx(){ const c=STATE.config; return {offering:c.offering, sells:(c.services||[]).join(', '), icp:(c.industries||[]).join(', '), site:c.website}; }
+/* apply a cached LLM classification (audience + type + keep/reject) to a row */
+function applyIcp(r){
+  if(r.profileEdited) return false;
+  let c=ICP_CACHE[r.kw]; if(!c) return false;
+  if(typeof c==='string') c={audience:c};                 // migrate old string-only cache
+  if(c.audience) r.profile=c.audience;
+  if(c.type) r.family=c.type;                             // GPT-defined semantic Type (overrides keyword family)
+  if(c.keep===false && !r.manual && r.status!=='rejected'){ r.status='rejected'; r.reason=c.reason||'Off-intent'; r.autoReason=c.reason||'Off-intent'; }
+  return true;
+}
+/* LLM intent classification (keyword + ranking titles) — sets audience + type, rejects off-intent; batched, cached, heuristic fallback */
 async function llmClassify(rows){
-  rows.forEach(r=>{ if(!r.profileEdited && ICP_CACHE[r.kw]) r.profile=ICP_CACHE[r.kw]; });   // apply cached
+  rows.forEach(r=>{ if(ICP_CACHE[r.kw]) applyIcp(r); });   // apply cached first (free)
   const fallback=r=>{ if(!r.profileEdited) r.profile = classifyProfileFromSerp(r) || classifyProfile(r); };
   const need=rows.filter(r=>!r.profileEdited && !ICP_CACHE[r.kw]);
   if(!need.length) return;
-  if(!onServerHost()){ need.forEach(fallback); return; }                                     // LLM endpoint only exists on the server
+  if(!onServerHost()){ need.forEach(fallback); return; }   // LLM endpoint only exists on the server
+  const client=clientCtx();
   let down=false;
   for(let i=0;i<need.length && !STATE.serpCancel;i+=40){
     const batch=need.slice(i,i+40);
     if(down){ batch.forEach(fallback); continue; }
     const items=batch.map(r=>({id:r.id,kw:r.kw,titles:(r.serpTitles||[]).slice(0,6)}));
     try{
-      const res=await fetch('/api/classify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items})});
+      const res=await fetch('/api/classify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items,client})});
       if(!res.ok) throw new Error('classify '+res.status);
       const j=await res.json();
-      (j.results||[]).forEach(o=>{ const r=STATE.rows.find(x=>x.id===o.id); if(r&&!r.profileEdited){ r.profile=o.audience; ICP_CACHE[r.kw]=o.audience; } });
+      (j.results||[]).forEach(o=>{ const r=STATE.rows.find(x=>x.id===o.id); if(r){ ICP_CACHE[r.kw]={audience:o.audience,type:o.type,keep:o.keep,reason:o.reason}; applyIcp(r); } });
       saveIcpCache();
     }catch(e){ down=true; if(i===0)toast('Intent AI unavailable — using fallback'); batch.forEach(fallback); }
     const pe=document.getElementById('serpProg'); if(pe)pe.textContent='reading intent '+Math.min(i+40,need.length)+'/'+need.length;
@@ -1596,23 +1608,25 @@ async function fetchSerp(r){
 }
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function fetchSerpBulk(rows, auto){
-  rows=rows.filter(r=>!r.serpDone && r.status!=='rejected');   // never spend calls on rejected topics
-  if(!rows.length){ if(!auto)toast('Nothing to fetch (rejected topics are skipped)'); return; }
+  const active=rows.filter(r=>r.status!=='rejected');                 // never spend calls on rejected topics
+  const toFetch=active.filter(r=>!r.serpDone);
+  const toClassify=active.filter(r=>!r.profileEdited && !(ICP_CACHE[r.kw]&&ICP_CACHE[r.kw].audience));
+  if(!toFetch.length && !toClassify.length){ if(!auto)toast('Already processed'); return; }
   if(STATE.serpRunning)return;
-  STATE.serpRunning=true; STATE.serpCancel=false; render();   // show the live status bar
+  STATE.serpRunning=true; STATE.serpCancel=false; render();           // show the live status bar
   let done=0,err=0;
-  for(const r of rows){
+  for(const r of toFetch){
     if(STATE.serpCancel)break;
     let hit=false;
     try{ const o=await fetchSerp(r); hit=o&&o.cached; }catch(e){ err++; if(err===1)toast('SERP error: '+e.message); }
     done++;
-    const pe=document.getElementById('serpProg'); if(pe)pe.textContent=done+'/'+rows.length;
+    const pe=document.getElementById('serpProg'); if(pe)pe.textContent=done+'/'+toFetch.length;
     if(done%10===0){renderStats();saveState();}
     if(!hit) await sleep(300);   // no rate-limit wait for cached results
   }
-  await llmClassify(rows);       // read buyer intent (keyword + ranking titles) via the LLM, then cache
+  await llmClassify(active);     // read buyer intent (keyword + ranking titles): audience + type + reject off-intent
   STATE.serpRunning=false;
-  saveState(); toast('Processed '+done+' topics'+(STATE.serpCancel?' (stopped)':'')+(err?' · '+err+' errors':'')); render();
+  saveState(); toast('Processed '+active.length+' topics'+(STATE.serpCancel?' (stopped)':'')+(err?' · '+err+' errors':'')); render();
 }
 function exportCsv(selectedOnly){
   const src = selectedOnly ? STATE.rows.filter(r=>r.status==='selected') : STATE.rows;
