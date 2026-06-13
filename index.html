@@ -1217,7 +1217,7 @@ function rejInfo(r){
 }
 /* coarse, merged rejection reason — first rule only, location/brand specifics stripped (limited set for filtering) */
 function canonicalReason(r){
-  if(/^Branded query/i.test((r.reason||'')+' '+(r.autoReason||''))) return 'Branded query';
+  if(/branded query|other brand/i.test((r.reason||'')+' '+(r.autoReason||''))) return 'Branded query';
   const src=(r.autoReason||r.reason||'').trim();
   if(!src) return 'Not relevant';
   return src.split(';')[0].trim().replace(/:.*$/,'').trim() || 'Not relevant';

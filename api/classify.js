@@ -12,7 +12,7 @@ const AUDIENCES = [
   'General',                // genuinely ambiguous — no clear buyer
 ];
 // when keep=false, reason MUST be one of these (keeps the Rejected reason list short + intent-based)
-const REJECT_REASONS = ['Job-seeker intent', 'Researcher/student intent', 'Other brand', 'Off-ICP audience', 'No commercial intent'];
+const REJECT_REASONS = ['Job-seeker intent', 'Researcher/student intent', 'Branded query', 'Off-ICP audience', 'No commercial intent'];
 
 module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
@@ -49,7 +49,7 @@ For each keyword return:
 Judge real intent, not surface words:
 - "custom bathroom remodeling experts" = homeowner hiring a contractor => Individual / Consumer, keep.
 - "mesh basket bulk supplier india" = business sourcing in bulk => B2B / Corporate, keep.
-- keep=false for: job/career seekers ("jobs", "salary", "career"), pure researchers/students ("what is", "meaning", "statistics" with no buying intent), searches for a DIFFERENT company's brand, or an audience clearly outside the client's ICP.
+- keep=false for: job/career seekers ("jobs", "salary", "career") => "Job-seeker intent"; pure researchers/students ("what is", "meaning", "statistics") => "Researcher/student intent"; searches for a specific company's brand (the client's OR a competitor's) => "Branded query"; an audience clearly outside the client's ICP => "Off-ICP audience".
 - When unsure, keep=true (do not over-reject).
 
 Return ONLY JSON: {"results":[{"id":<id>,"audience":"...","type":"...","keep":true|false,"reason":"..."}]} — one entry per input id.`;
