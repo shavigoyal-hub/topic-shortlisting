@@ -418,7 +418,7 @@ const STATE = {
   eAud:'all',                   // E view: audience filter
   fSearch:'',                   // filters view: keyword/topic text filter
   fSort:{key:'',dir:-1},        // filters view: '' (default) | 'kw' | 'vol'
-  rejFilter:{aud:'all',type:'all',why:'all',reason:'all',q:''},  // rejected tab column filters
+  rejFilter:{aud:[],type:[],why:[],reason:[],q:''},  // rejected tab column filters (multi-select)
   rejSort:{key:'',dir:1},        // rejected tab column sort
   focusIdx:0,                   // keyboard-focused row index in the filters table
   colWidths:{},                 // user-dragged column widths, keyed by "<tab>:<colIndex>"
@@ -1363,21 +1363,21 @@ function renderShort(mode){
   const rejAll=STATE.rows.filter(r=>r.status==='rejected'&&r.pageType===phase);
   const nPre=rejAll.filter(r=>rejInfo(r).type==='Pre-rule').length;
   const rf=STATE.rejFilter;
-  // context-aware: each dropdown counts within the OTHER active filters, so counts always match the table
+  // multi-select + context-aware: each chip's count reflects the OTHER active filters; empty axis = all
   const rq=rf.q.toLowerCase();
-  const pAud=r=>rf.aud==='all'||r.profile===rf.aud;
-  const pType=r=>rf.type==='all'||r.family===rf.type;
-  const pWhy=r=>rf.why==='all'||rejInfo(r).type===rf.why;
-  const pReason=r=>rf.reason==='all'||canonicalReason(r)===rf.reason;
+  const pAud=r=>!rf.aud.length||rf.aud.includes(r.profile);
+  const pType=r=>!rf.type.length||rf.type.includes(r.family);
+  const pWhy=r=>!rf.why.length||rf.why.includes(rejInfo(r).type);
+  const pReason=r=>!rf.reason.length||rf.reason.includes(canonicalReason(r));
   const pQ=r=>!rq||(r.kw+' '+(r.topic||'')).toLowerCase().includes(rq);
   const audCtx=r=>pType(r)&&pWhy(r)&&pReason(r)&&pQ(r);
   const typeCtx=r=>pAud(r)&&pWhy(r)&&pReason(r)&&pQ(r);
   const whyCtx=r=>pAud(r)&&pType(r)&&pReason(r)&&pQ(r);
   const reasonCtx=r=>pAud(r)&&pType(r)&&pWhy(r)&&pQ(r);
-  const optList=(keyFn,ctx,selVal,sortByCount)=>{const o=[...new Set(rejAll.map(keyFn))].map(k=>[k,rejAll.filter(r=>keyFn(r)===k&&ctx(r)).length]).filter(([k,n])=>n>0||selVal===k); return sortByCount?o.sort((a,b)=>b[1]-a[1]):o;};
+  const optList=(keyFn,ctx,selArr,sortByCount)=>{const o=[...new Set(rejAll.map(keyFn))].map(k=>[k,rejAll.filter(r=>keyFn(r)===k&&ctx(r)).length]).filter(([k,n])=>n>0||selArr.includes(k)); return sortByCount?o.sort((a,b)=>b[1]-a[1]):o;};
   const rejAudOpts=optList(r=>r.profile,audCtx,rf.aud,false).sort((a,b)=>profileSort(a[0],b[0]));
   const rejTypeOpts=optList(r=>r.family,typeCtx,rf.type,true);
-  const whyOpts=['Pre-rule','Decision'].map(w=>[w,rejAll.filter(r=>rejInfo(r).type===w&&whyCtx(r)).length]).filter(([w,n])=>n>0||rf.why===w);
+  const whyOpts=['Pre-rule','Decision'].map(w=>[w,rejAll.filter(r=>rejInfo(r).type===w&&whyCtx(r)).length]).filter(([w,n])=>n>0||rf.why.includes(w));
   const reasonOpts=optList(r=>canonicalReason(r),reasonCtx,rf.reason,true);
   const rjKey={aud:r=>r.profile, type:r=>r.family, kw:r=>r.kw, why:r=>rejInfo(r).type, reason:r=>canonicalReason(r)};
   const rs=STATE.rejSort;
@@ -1385,19 +1385,19 @@ function renderShort(mode){
     rs.key&&rjKey[rs.key] ? (a,b)=>rs.dir*String(rjKey[rs.key](a)).localeCompare(String(rjKey[rs.key](b)))||b.vol-a.vol
                           : (a,b)=>{const ta=rejInfo(a).type,tb=rejInfo(b).type; return ta.localeCompare(tb)||b.vol-a.vol;});
   const rjAr=k=>rs.key===k?`<span class="ar">${rs.dir===1?'▲':'▼'}</span>`:'';
-  const rejSel=(id,val,opts,allLabel,allCount)=>`<select id="${id}" style="padding:5px 8px;border:1px solid var(--line);border-radius:7px;font-size:12px"><option value="all" ${val==='all'?'selected':''}>${allLabel} (${allCount})</option>${opts.map(([o,n])=>`<option value="${esc(o)}" ${val===o?'selected':''}>${esc(o)} (${n})</option>`).join('')}</select>`;
+  const anyRf=rf.aud.length||rf.type.length||rf.why.length||rf.reason.length||rf.q;
+  const rRow=(label,axis,opts,cls)=>`<div style="display:flex;gap:7px;align-items:baseline;flex-wrap:wrap;margin-bottom:5px"><b style="font-size:11.5px;width:64px;flex-shrink:0">${label}</b>${opts.length?opts.map(([v,n])=>`<span class="fpill ${cls} ${rf[axis].includes(v)?'on':''}" data-rfk="${axis}" data-rfv="${esc(v)}">${esc(v)} <span class="muted">${n}</span></span>`).join(''):'<span class="muted" style="font-size:11.5px">—</span>'}</div>`;
   const rejectedBody=`
   <div class="tablewrap">
     <div class="tbar"><b style="font-size:13px">${rejAll.length} rejected</b>
-      <span class="muted" style="font-size:12px">· ${nPre} pre-rule · ${rejAll.length-nPre} decision${rejRows.length!==rejAll.length?` · ${rejRows.length} shown`:''}</span>
+      <span class="muted" style="font-size:12px">· ${nPre} pre-rule · ${rejAll.length-nPre} decision${rejRows.length!==rejAll.length?` · <b style="color:var(--ink)">${rejRows.length}</b> shown`:''}</span>
       <span style="flex:1"></span><button class="btn sec sm" id="export" title="Export every topic with its decision">⤓ Export all</button></div>
-    <div class="tbar" style="border-bottom:1px solid var(--line);flex-wrap:wrap;gap:7px">
-      <input type="text" id="rejQ" placeholder="🔎 keyword / topic…" value="${esc(rf.q)}" style="width:180px;padding:6px 9px;border:1px solid var(--line);border-radius:7px;font-size:12px">
-      ${rejSel('rejAud',rf.aud,rejAudOpts,'All audiences',rejAll.filter(audCtx).length)}
-      ${rejSel('rejType',rf.type,rejTypeOpts,'All types',rejAll.filter(typeCtx).length)}
-      ${rejSel('rejWhy',rf.why,whyOpts,'All (why)',rejAll.filter(whyCtx).length)}
-      ${rejSel('rejReason',rf.reason,reasonOpts,'Any reason',rejAll.filter(reasonCtx).length)}
-      ${(rf.aud!=='all'||rf.type!=='all'||rf.why!=='all'||rf.reason!=='all'||rf.q)?`<button class="btn ghost sm" id="rejClear">Clear filters</button>`:''}
+    <div style="padding:9px 14px;border-bottom:1px solid var(--line)">
+      ${rRow('Audience','aud',rejAudOpts,'aud')}
+      ${rRow('Type','type',rejTypeOpts,'type')}
+      ${rRow('Why','why',whyOpts,'')}
+      ${rRow('Reason','reason',reasonOpts,'mod')}
+      <div style="display:flex;gap:8px;align-items:center;margin-top:4px"><input type="text" id="rejQ" placeholder="🔎 keyword / topic…" value="${esc(rf.q)}" style="width:220px;padding:6px 9px;border:1px solid var(--line);border-radius:7px;font-size:12px">${anyRf?`<button class="btn ghost sm" id="rejClear">↺ Clear filters</button>`:''}</div>
     </div>
     <div class="scrollx">
       <table class="ftbl" style="min-width:880px">
@@ -1463,12 +1463,9 @@ function renderShort(mode){
   if($('#faClear'))$('#faClear').onclick=()=>{STATE.fAud=[];render();};
   if($('#fmAll'))$('#fmAll').onclick=()=>{STATE.fMods=[...new Set(STATE.rows.filter(r=>r.pageType===phase&&r.status==='pending').flatMap(r=>r.modIds))];render();};
   if($('#fmClear'))$('#fmClear').onclick=()=>{STATE.fMods=[];render();};
-  // rejected-tab column filters
-  if($('#rejAud'))$('#rejAud').onchange=e=>{STATE.rejFilter.aud=e.target.value;render();};
-  if($('#rejType'))$('#rejType').onchange=e=>{STATE.rejFilter.type=e.target.value;render();};
-  if($('#rejWhy'))$('#rejWhy').onchange=e=>{STATE.rejFilter.why=e.target.value;render();};
-  if($('#rejReason'))$('#rejReason').onchange=e=>{STATE.rejFilter.reason=e.target.value;render();};
-  if($('#rejClear'))$('#rejClear').onclick=()=>{STATE.rejFilter={aud:'all',type:'all',why:'all',reason:'all',q:''};render();};
+  // rejected-tab multi-select chip filters
+  $('#view').querySelectorAll('.fpill[data-rfk]').forEach(c=>c.onclick=()=>{const k=c.dataset.rfk,v=c.dataset.rfv;const arr=STATE.rejFilter[k];STATE.rejFilter[k]=arr.includes(v)?arr.filter(x=>x!==v):[...arr,v];render();});
+  if($('#rejClear'))$('#rejClear').onclick=()=>{STATE.rejFilter={aud:[],type:[],why:[],reason:[],q:''};render();};
   $('#view').querySelectorAll('th.fsort[data-rk]').forEach(th=>th.onclick=()=>{ const k=th.dataset.rk; if(STATE.rejSort.key===k)STATE.rejSort.dir*=-1; else STATE.rejSort={key:k,dir:1}; render(); });
   if($('#rejQ')){const ri=$('#rejQ');ri.oninput=()=>{STATE.rejFilter.q=ri.value;$('#view').querySelectorAll('.ftbl tbody tr').forEach(tr=>{const t=tr.textContent.toLowerCase();tr.style.display=(!ri.value||t.includes(ri.value.toLowerCase()))?'':'none';});};}
   // Smart suggest — pre-tick types/audience that match the client's configured services
