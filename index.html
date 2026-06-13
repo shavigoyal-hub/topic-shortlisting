@@ -1465,7 +1465,11 @@ function loadState(){ try{ const s=localStorage.getItem(LS_KEY); if(!s)return fa
   STATE.rejFilter={aud:[],type:[],why:[],reason:[],q:''}; STATE.selFilter={aud:[],type:[],mod:[],q:''};
   STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.fSearch='';STATE.checked={};STATE.modal=null;STATE.focusIdx=0;
   if(typeof STATE.colWidths!=='object'||!STATE.colWidths)STATE.colWidths={};
-  (STATE.rows||[]).forEach(r=>{ if(!Array.isArray(r.serp))r.serp=[]; if(!Array.isArray(r.serpTitles))r.serpTitles=[]; });  // serp arrays are stripped on save — restore so renders don't crash
+  (STATE.rows||[]).forEach(r=>{
+    if(!Array.isArray(r.serp))r.serp=[]; if(!Array.isArray(r.serpTitles))r.serpTitles=[];  // serp arrays are stripped on save — restore so renders don't crash
+    // drop any audience not backed by the current AI cache so it re-classifies (don't touch user decisions)
+    if(!r.profileEdited && !r.manual && !(ICP_CACHE[r.kw]&&ICP_CACHE[r.kw].audience)) r.profile='Unclassified';
+  });
   return !!(STATE.rows&&STATE.rows.length); }catch(e){return false;} }
 function clearSession(){ if(confirm('Start over? This clears the loaded AKR and all decisions on this device.')){ localStorage.removeItem(LS_KEY); STATE.rows=[]; STATE.step=0; location.reload(); } }
 function exportSession(){
