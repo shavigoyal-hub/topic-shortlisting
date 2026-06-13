@@ -1271,13 +1271,15 @@ function renderShort(mode){
   const sortAr=k=>fs.key===k?`<span class="ar">${fs.dir===1?'▲':'▼'}</span>`:'';
   const shown=matchRows.slice(0,400);
   const nChecked=shown.filter(r=>STATE.checked[r.id]).length;
-  const totalAll=all.length, decided=all.filter(r=>r.status!=='pending').length, pct=totalAll?Math.round(decided/totalAll*100):0;
+  const scopeRows=all.filter(matchPred);   // progress reflects the current filter scope, so it matches the audience-chip sum
+  const totalAll=scopeRows.length, decided=scopeRows.filter(r=>r.status!=='pending').length, pct=totalAll?Math.round(decided/totalAll*100):0;
+  const anyFilter=STATE.fAud.length||STATE.fTypes.length||STATE.fMods.length;
   const filterRow=(label,allId,clrId,html,sep)=>`<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;${sep?'padding-bottom:9px;margin-bottom:9px;border-bottom:1px solid var(--line)':'margin-bottom:6px'}"><b style="font-size:12px;width:82px">${label}</b><button class="btn ghost sm" id="${allId}">All</button><button class="btn ghost sm" id="${clrId}">Clear</button>${html}</div>`;
   const filtersBody=`
   <div class="tablewrap">
     <div class="tbar"><b style="font-size:13px">Pick relevant audiences, types &amp; modifiers</b><span style="flex:1"></span>${serpStatus}<button class="btn sec sm" id="smartSuggest" title="Pre-tick the types &amp; audience that match this client's configured services">✨ Smart suggest</button><button class="btn sm" id="export">⤓ Export CSV</button></div>
     <div style="padding:8px 14px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px">
-      <span class="muted" style="font-size:12px;white-space:nowrap"><b style="color:var(--ink)">${decided}</b> of ${totalAll} reviewed</span>
+      <span class="muted" style="font-size:12px;white-space:nowrap"><b style="color:var(--ink)">${decided}</b> of ${totalAll} reviewed${anyFilter?' <span style="color:var(--accent)">(in filter)</span>':''}</span>
       <div style="flex:1;height:7px;background:var(--line);border-radius:4px;overflow:hidden"><div style="width:${pct}%;height:100%;background:var(--accent);transition:width .2s"></div></div>
       <span class="muted" style="font-size:12px">${pct}%</span>
       <span class="muted" style="font-size:11px;white-space:nowrap;border-left:1px solid var(--line);padding-left:12px">⌨ <b>K</b> keep · <b>R</b> reject · <b>U</b> undo · <b>↑↓</b> move</span>
