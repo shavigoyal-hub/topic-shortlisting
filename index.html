@@ -441,18 +441,6 @@ function undoEntry(i){ const e=STATE.history[i]; if(!e)return;
   e.changed.forEach(c=>{ const r=STATE.rows.find(x=>x.id===c.id); if(r){ r.status=c.from.status; r.reason=c.from.reason; r.autoReason=c.from.autoReason; r.manual=c.from.manual; } });
   STATE.history.splice(i,1); logActivity('Undo: '+e.label, e.n); toast('Undone: '+e.label); renderStats(); render();
 }
-function decide(pred, action, label){
-  const _b=_snap();
-  let n=0; STATE.rows.forEach(r=>{ if(r.pageType!==STATE.phase||!pred(r))return;
-    if(action==='select'){ if(r.status==='pending'){r.status='selected';r.reason=label||'Shortlisted';r.manual=true;n++;} }
-    else if(action==='reject'){ if(r.status!=='rejected'){r.status='rejected';r.reason=label||'Not relevant';r.manual=true;n++;} }
-    else { r.status='pending';r.reason='';r.autoReason='';r.manual=false;n++; }
-  });
-  const msg=(action==='select'?'Kept ':action==='reject'?'Rejected ':'Reset ')+n+' topics';
-  _commit(label?msg+' · '+label:msg, _b);
-  toast(msg);
-  renderStats(); render();
-}
 const PAGE_SIZE = 60;
 
 /* ============================ STEPS ============================ */
@@ -570,7 +558,6 @@ function classifyProfiles(){ STATE.rows.forEach(r=>{ if(r.profileEdited)return;
   if(applyIcp(r)) return;                                                                        // LLM intent (cached) wins: audience + type + reject
   r.profile = r.serpDone ? (classifyProfileFromSerp(r)||classifyProfile(r)) : 'Unclassified';
 }); }
-function profileOptions(){ return [...PROFILES.map(p=>p.name), ...STATE.config.industries, 'General']; }
 
 /* ============================ RENDER SHELL ============================ */
 function renderNav(){
@@ -894,74 +881,7 @@ function runAutoReject(){
   });
   return n;
 }
-function ruleCount(key){
-  const saved=JSON.stringify(STATE.rules);
-  const obj=JSON.parse(saved); Object.keys(obj).forEach(k=>obj[k]=false); obj[key]=true;
-  const real=STATE.rules; STATE.rules=obj;
-  let n=0; STATE.rows.forEach(r=>{if(evalRow(r).length)n++;});
-  STATE.rules=real; return n;
-}
 
-/* ============================ VIEW: REJECT ============================ */
-VIEWS.reject=function(){
-  const R=STATE.rules;
-  const ruleDefs=[
-    ['zero','Remove zero-volume rows','Topics with 0 total search volume — no traffic upside.'],
-    ['free','Reject "free" keywords','Searchers wanting free resources rarely convert to paid services.'],
-    ['nearme','Reject "near me" queries','Hyperlocal intent that is hard to win and often off-geo.'],
-    ['competitor','Reject other / competitor brand terms','Branded searches for '+(STATE.config.competitors.join(', ')||'competitors')+'.'],
-    ['location','Reject locations not served','Geo terms outside '+(STATE.config.geoMode==='national'?'(national — off)':STATE.config.locations.join(', ')||'served list')+'.'],
-    ['info','Reject informational/DIY intent (Service pages)','"how to", "what is", youtube, pdf, at-home — keeps blog intent, drops it from service topics.'],
-    ['jobs','Reject job / education-seeker intent','jobs, salary, certification, courses — wrong audience for the ICP.'],
-    ['format','Reject wrong-format intent','login, app, download, coupon — not content opportunities.'],
-    ['lowrel','Reject low relevance score','Drops rows at or below a relevance threshold.'],
-  ];
-  $('#view').innerHTML=`
-  <div class="pagehead"><h2>Auto-Reject Rules</h2>
-    <p>Toggle the rules to apply. Every rejected row gets a <b>reason</b> you can review and override in the shortlist. Manual decisions are never overwritten by a re-run.</p></div>
-  <div class="card">
-    <h3>Rules</h3>
-    <div class="hint">Counts show how many topics each rule would reject on its own (overlaps possible).</div>
-    <div id="ruleList">
-      ${ruleDefs.map(([k,t,d])=>`
-        <div class="rule">
-          <label class="sw"><input type="checkbox" data-k="${k}" ${R[k]?'checked':''}><span class="sl"></span></label>
-          <div class="rt"><b>${t}</b><span>${esc(d)}</span>${k==='lowrel'?`<div style="margin-top:6px">threshold ≤ <input type="number" id="relTh" value="${STATE.lowRelThreshold}" style="width:60px;padding:4px 6px;display:inline-block"></div>`:''}</div>
-          <div class="cnt ${ruleCount(k)?'':'zero'}">${ruleCount(k).toLocaleString()}</div>
-        </div>`).join('')}
-    </div>
-  </div>
-  <div class="card">
-    <h3>More ways to reject (ideas)</h3>
-    <div class="hint">Beyond the toggles above, these are also worth considering — some are handled in later steps.</div>
-    <ul style="margin:0;padding-left:18px;color:var(--ink);font-size:13px;line-height:1.9">
-      <li><b>Duplicate / near-duplicate topics</b> — same topic mapped to multiple primary keywords (keep highest volume).</li>
-      <li><b>Specific person / author names</b> (e.g. "deepak chopra", "jennifer piercy") — branded to individuals, not the client.</li>
-      <li><b>Non-ICP audience</b> — keywords aimed at consumers when the client sells B2B (or vice-versa). Handled in <b>Relevance Q&A</b>.</li>
-      <li><b>Out-of-scope service category</b> — services the client doesn't offer. Driven by <b>Word Identifiers</b>.</li>
-      <li><b>Non-English / wrong-language</b> queries.</li>
-      <li><b>Pure-research / academic</b> intent ("study", "statistics", "history of").</li>
-      <li><b>Seasonal / event one-offs</b> with no evergreen value.</li>
-      <li><b>Extremely long-tail, ultra-low volume</b> below a floor (e.g. &lt; 10) once zero-volume is handled.</li>
-    </ul>
-    <label class="sw" style="margin-top:14px;display:inline-flex;align-items:center;gap:10px;width:auto">
-      <span style="position:relative;width:40px;height:23px"><input type="checkbox" data-k="person" ${R.person?'checked':''} id="swPerson"><span class="sl" style="position:absolute;inset:0;background:${R.person?'var(--accent)':'#cbd0db'};border-radius:20px"></span></span>
-    </label>
-    <span style="font-weight:600">Also reject specific-person/author name terms</span>
-    <span class="cnt" style="margin-left:8px;color:var(--red)">${ruleCount('person')||''}</span>
-  </div>
-  <div class="row-actions">
-    <button class="btn" id="apply">Apply rules & reject</button>
-    <button class="btn sec" id="next">Continue to Identifiers →</button>
-    <span id="applyMsg" style="color:var(--muted);font-size:12.5px"></span>
-  </div>`;
-  // person rule uses PERSON detection
-  $('#ruleList').querySelectorAll('input[type=checkbox]').forEach(cb=>cb.onchange=()=>{STATE.rules[cb.dataset.k]=cb.checked;VIEWS.reject();});
-  if($('#relTh'))$('#relTh').onchange=e=>{STATE.lowRelThreshold=+e.target.value;VIEWS.reject();};
-  if($('#swPerson'))$('#swPerson').onchange=e=>{STATE.rules.person=e.target.checked;VIEWS.reject();};
-  $('#apply').onclick=()=>{const n=runAutoReject();renderStats();$('#applyMsg').textContent=`Rejected ${n} topics. ${STATE.rows.length-n} remain for review.`;toast('Rejected '+n+' topics');VIEWS.reject();};
-  $('#next').onclick=()=>{buildIdentifiers();go(3);};
-};
 // add person rule into engine
 const PERSON_RX=/\b(deepak chopra|jennifer piercy|rod stryker|sara raymond|ally boothroyd|lizzy hill|kristen rose|sn goenka|goenka|shawn achor|steve wolf)\b/;
 const _evalOrig=evalRow;
@@ -1041,117 +961,7 @@ function buildFamilies(rows){
   const arr=[...m.values()]; arr.forEach(counts);
   return arr;
 }
-VIEWS.ident=function(){
-  buildIdentifiers();
-  const freq=STATE._freq||{};
-  const entries=Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,60);
-  const max=entries.length?entries[0][1]:1;
-  // auto-suggest classes
-  entries.forEach(([w])=>{ if(STATE.identifiers[w])return;
-    if(STATE.config.competitors.some(c=>norm(c)===w))STATE.identifiers[w]='brand';
-    else if(US_STATES.includes(w)||BIG_CITIES.includes(w))STATE.identifiers[w]='loc';
-  });
-  $('#view').innerHTML=`
-  <div class="pagehead"><h2>Word Identifiers</h2>
-    <p>Every <b>word</b> (not full keyword) across all primary + secondary keywords, counted by how many topics it appears in. Classify the major identifiers — your choices bulk-drive selection & rejection in the shortlist.</p></div>
-  <div class="banner">Tip: mark <b>Core</b> = must-have relevant words, <b>Irrelevant</b>/<b>Other brand</b>/<b>Off-geo</b> = reject any topic containing them. Then re-run rejection.</div>
-  <div class="card">
-    <h3>Top identifiers <span style="font-weight:400;color:var(--muted)">(${entries.length} of ${Object.keys(freq).length} unique words)</span></h3>
-    <div class="legend">
-      <span><i class="dot" style="background:var(--green)"></i>Core / relevant</span>
-      <span><i class="dot" style="background:var(--red)"></i>Irrelevant — reject</span>
-      <span><i class="dot" style="background:var(--blue)"></i>Other brand — reject</span>
-      <span><i class="dot" style="background:var(--amber)"></i>Off-geo location — reject</span>
-    </div>
-    <div class="idgrid" style="margin-top:14px">
-      ${entries.map(([w,n])=>{const cl=STATE.identifiers[w]||'';return `
-        <div class="idcard">
-          <div class="top"><span class="word">${esc(w)}</span><span class="freq">${n} topics</span></div>
-          <div class="bar"><i style="width:${Math.round(n/max*100)}%"></i></div>
-          <div class="idclass">
-            <button class="core ${cl==='core'?'on':''}" data-w="${esc(w)}" data-c="core">Core</button>
-            <button class="rej ${cl==='rej'?'on':''}" data-w="${esc(w)}" data-c="rej">Reject</button>
-            <button class="brand ${cl==='brand'?'on':''}" data-w="${esc(w)}" data-c="brand">Brand</button>
-            <button class="loc ${cl==='loc'?'on':''}" data-w="${esc(w)}" data-c="loc">Geo</button>
-          </div>
-        </div>`;}).join('')}
-    </div>
-  </div>
-  <div class="row-actions">
-    <button class="btn" id="applyId">Apply identifier rejections</button>
-    <button class="btn sec" id="next">Continue to Relevance Q&A →</button>
-    <span id="idMsg" style="color:var(--muted);font-size:12.5px"></span>
-  </div>`;
-  $('#view').querySelectorAll('.idclass button').forEach(b=>b.onclick=()=>{
-    const w=b.dataset.w,c=b.dataset.c;
-    STATE.identifiers[w]=STATE.identifiers[w]===c?'':c;
-    VIEWS.ident();
-  });
-  $('#applyId').onclick=()=>{const n=runAutoReject();renderStats();$('#idMsg').textContent='Re-ran rejection — '+n+' topics rejected total.';toast('Applied identifiers');};
-  $('#next').onclick=()=>{buildQuestions();go(4);};
-};
-
-/* ============================ VIEW: Q&A ============================ */
-function buildQuestions(){
-  if(STATE.questions.length)return;
-  const freq=STATE._freq||{};
-  const c=STATE.config;
-  const qs=[];
-  // industry questions
-  c.industries.forEach(ind=>{const key=norm(ind).split(/\s+/)[0];
-    qs.push({id:'ind:'+ind, type:'keep-or-drop', word:key,
-      h:`Is "${ind}" a relevant audience?`,
-      m:`Keep = select every still-pending topic with "${key}". Drop = reject them all.`});});
-  // top identifiers — the biggest topic groups to decide in bulk
-  STATE.majorIds.slice(0,14)
-    .filter(w=>!c.industries.some(i=>norm(i).includes(w)))
-    .forEach(w=>qs.push({id:'w:'+w, type:'keep-or-drop', word:w,
-      h:`Is "${w}" relevant to what the client offers?`,
-      m:`Keep selects all pending "${w}" topics; Drop rejects every "${w}" topic.`}));
-  STATE.questions=qs.map(q=>({...q,answer:null,kept:0,dropped:0}));
-}
-function countWord(w){const rx=new RegExp('\\b'+w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b');return STATE.rows.filter(r=>rx.test(blob(r))).length;}
-VIEWS.ask=function(){
-  buildQuestions();
-  const qs=STATE.questions;
-  $('#view').innerHTML=`
-  <div class="pagehead"><h2>Relevance Q&A</h2>
-    <p>Decide the biggest topic groups in one click. <b>Select all</b> marks every pending topic in that group as selected; <b>Reject all</b> rejects the whole group. Auto-rejected rows (zero-volume, off-geo…) stay rejected. Optional — skip any you'd rather handle by hand.</p></div>
-  <div class="card">
-    <h3>Questions <span style="font-weight:400;color:var(--muted)">(${qs.filter(q=>q.answer).length}/${qs.length} answered)</span></h3>
-    ${qs.length?qs.map((q,i)=>`
-      <div class="q ${q.answer?'answered':''}">
-        <div class="qh">${esc(q.h)}${q.answer==='keep'?`<span class="ans" style="color:var(--green)">✓ Kept ${q.kept} selected</span>`:q.answer==='drop'?`<span class="ans" style="color:var(--red)">✕ Dropped ${q.dropped}</span>`:q.answer==='skip'?`<span class="ans" style="color:var(--muted)">Skipped</span>`:''}</div>
-        <div class="qm">${esc(q.m)}</div>
-        ${q.answer?`<button class="btn ghost sm" data-i="${i}" data-a="undo" style="padding:2px 0">Undo</button>`:`<div class="qopts"><button class="keep" data-i="${i}" data-a="keep">Relevant — select all</button><button class="drop" data-i="${i}" data-a="drop">Not relevant — reject all</button><button data-i="${i}" data-a="skip" style="color:var(--muted)">Skip</button></div>`}
-      </div>`).join(''):'<div class="empty">No questions generated. Add industries in Setup to generate audience questions.</div>'}
-  </div>
-  <div class="row-actions">
-    <button class="btn" id="next">Continue to Shortlist →</button>
-  </div>`;
-  $('#view').querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>{
-    const q=STATE.questions[+b.dataset.i], a=b.dataset.a;
-    const rx=new RegExp('\\b'+q.word.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b');
-    if(a==='undo'){ q.answer=null;q.kept=0;q.dropped=0;VIEWS.ask();return; }
-    if(a==='skip'){q.answer='skip';VIEWS.ask();return;}
-    q.answer=a; q.kept=0; q.dropped=0;
-    STATE.rows.forEach(r=>{ if(!rx.test(blob(r)))return;
-      if(a==='drop'){ if(r.status!=='rejected'){r.status='rejected';r.reason='Q&A: "'+q.word+'" not relevant';r.manual=true;} q.dropped++; }
-      else { // keep = bulk-SELECT this group (only promote pending; auto-rejected stay rejected)
-        if(r.status==='pending'){r.status='selected';r.reason='Q&A: "'+q.word+'" relevant';r.manual=true;q.kept++;} }
-    });
-    toast(a==='drop'?('Rejected '+q.dropped+' "'+q.word+'" topics'):('Selected '+q.kept+' "'+q.word+'" topics'));
-    renderStats();VIEWS.ask();
-  });
-  $('#next').onclick=()=>go(2);
-};
-
 /* ============================ VIEW: SHORTLIST ============================ */
-function pageTypes(){
-  const set=[...new Set(STATE.rows.map(r=>r.pageType))];
-  // transactional first (Service/Product/Category…), Blog last
-  return set.sort((a,b)=>(a==='Blog')-(b==='Blog')||a.localeCompare(b));
-}
 /* ---- merged identifiers: one combined "qualifier + service-type" phrase per topic ---- */
 const WEDGE=new Set(['corporate','executive','executives','team','teams','employee','employees','staff','workplace','workforce','company','business','b2b']);
 /* the MODIFIER half of the identifier — can be MULTIPLE modifiers (e.g. corporate + online).
@@ -1166,60 +976,6 @@ function pickMods(r){
 }
 function primMod(r){ return (r.comboMods&&r.comboMods[0]) || '(no modifier)'; }
 function counts(o){o.total=o.rows.length;o.sel=o.rows.filter(r=>r.status==='selected').length;o.rej=o.rows.filter(r=>r.status==='rejected').length;o.pen=o.total-o.sel-o.rej;}
-/* group phase rows by their merged identifier — single flat list */
-function buildGroups(rows){
-  const m=new Map();
-  rows.forEach(r=>{const k=r.combo||'(no identifier)'; if(!m.has(k))m.set(k,{key:k,type:r.comboType,mods:r.comboMods||[],rows:[]}); m.get(k).rows.push(r);});
-  const arr=[...m.values()]; arr.forEach(counts);
-  arr.sort((a,b)=>b.total-a.total);
-  return arr;
-}
-/* group phase rows by Customer Profile (ICP) */
-function buildProfileGroups(rows){
-  const m=new Map();
-  rows.forEach(r=>{const k=r.profile||'General'; if(!m.has(k))m.set(k,{key:k,rows:[]}); m.get(k).rows.push(r);});
-  const arr=[...m.values()]; arr.forEach(counts);
-  return arr;
-}
-function applyProfileGroup(profile,key,action){
-  const _b=_snap();
-  const rows=STATE.rows.filter(r=>r.pageType===STATE.phase && r.profile===profile && (r.combo||'(no identifier)')===key);
-  let n=0;
-  rows.forEach(r=>{
-    if(action==='select'){ if(r.status==='pending'){r.status='selected';r.reason='ICP '+profile+' · '+key;r.manual=true;n++;} }
-    else if(action==='reject'){ if(r.status!=='rejected'){r.status='rejected';r.reason='ICP '+profile+' · '+key;r.manual=true;n++;} }
-    else { r.status='pending';r.reason='';r.autoReason='';r.manual=false;n++; }
-  });
-  const msg=(action==='select'?'Kept ':action==='reject'?'Rejected ':'Reset ')+n+' · '+key;
-  _commit(msg,_b); toast(msg);
-  renderStats();render();
-}
-function applyProfile(profile,action){
-  const _b=_snap();
-  const rows=STATE.rows.filter(r=>r.pageType===STATE.phase && r.profile===profile);
-  let n=0;
-  rows.forEach(r=>{
-    if(action==='select'){ if(r.status==='pending'){r.status='selected';r.reason='ICP approved: '+profile;r.manual=true;n++;} }
-    else if(action==='reject'){ if(r.status!=='rejected'){r.status='rejected';r.reason='ICP not relevant: '+profile;r.manual=true;n++;} }
-    else { r.status='pending';r.reason='';r.autoReason='';r.manual=false;n++; }
-  });
-  const msg=(action==='select'?'Approved ':action==='reject'?'Rejected ':'Reset ')+n+' · '+profile;
-  _commit(msg,_b); toast(msg);
-  renderStats();render();
-}
-function applyGroup(key,action){
-  const _b=_snap();
-  const g=buildGroups(STATE.rows.filter(r=>r.pageType===STATE.phase)).find(x=>x.key===key);
-  if(!g)return; let n=0;
-  g.rows.forEach(r=>{
-    if(action==='select'){ if(r.status==='pending'){r.status='selected';r.reason='Group: '+key;r.manual=true;n++;} }
-    else if(action==='reject'){ if(r.status!=='rejected'){r.status='rejected';r.reason='Group: '+key;r.manual=true;n++;} }
-    else { r.status='pending';r.reason='';r.autoReason='';r.manual=false;n++; }
-  });
-  const msg=(action==='select'?'Selected ':action==='reject'?'Rejected ':'Reset ')+n+' · '+key;
-  _commit(msg,_b); toast(msg);
-  renderStats();render();
-}
 function rejInfo(r){
   if(/^Branded query/i.test(r.reason||'')||/^Branded query/i.test(r.autoReason||'')) return {type:'Pre-rule', detail:'Branded query'};
   if(r.autoReason) return {type:'Pre-rule', detail:r.autoReason};
@@ -1232,11 +988,8 @@ function canonicalReason(r){
   if(!src) return 'Not relevant';
   return src.split(';')[0].trim().replace(/:.*$/,'').trim() || 'Not relevant';
 }
-function secList(r){ return (r.sec||'').split(/[\n,;|]+/).map(s=>s.trim()).filter(Boolean); }
-function secCell(r){ const s=secList(r); if(!s.length)return '<span class="muted">—</span>'; const txt=s.join(', '); return `<span class="seccell" title="${esc(txt)}">${esc(txt)}</span>`; }
 function renderShort(mode){
-  STATE.shortView=mode;                // 'icp' (review profiles) or 'groups' (decide topics)
-  const types=pageTypes();
+  STATE.shortView=mode;
   const phase=STATE.phase==='Blog'?'Blog':'Service';   // Service/Product or Blog/Category
   STATE.phase=phase;
   let all=STATE.rows.filter(r=>r.pageType===phase);
@@ -1249,10 +1002,6 @@ function renderShort(mode){
   const isTrans=phase!=='Blog';
   const tabLabel=(t,i)=>`${'①②③④⑤'[i]||(i+1)+'.'} ${t==='Blog'?'Blogs':t+(t==='Service'?' / Product':'')} (${STATE.rows.filter(r=>r.pageType===t).length})`;
 
-  const pendOnly=STATE.groupPendingOnly;
-  // topicList — shared by the matching-topics popup
-  const topicList=rows=>`<div class="grplist">${rows.slice().sort((a,b)=>(a.combo||'').localeCompare(b.combo||'')||b.vol-a.vol).map(r=>`<div class="grpitem">${pendOnly?'':`<span class="pill ${r.status==='selected'?'sel':r.status==='rejected'?'rej':'pend'}">${r.status}</span>`}<span class="kw" style="flex:1;min-width:0">${esc(r.kw)}${r.topic?`<span style="color:var(--muted);font-weight:400;font-size:11.5px"> — ${esc(r.topic)}</span>`:''}</span><span class="gv">${r.vol.toLocaleString()}</span><span class="miniact"><button class="y" data-id="${r.id}" data-act="selected">Keep</button><button class="n" data-id="${r.id}" data-act="rejected">Reject</button></span></div>`).join('')}</div>`;
-
   // shared rankings status (shown in the toolbar)
   const serpStatus = STATE.serpRunning
     ? `<span style="font-size:12.5px;font-weight:600;color:var(--accent)">⏳ Processing <span id="serpProg">…</span></span> <button class="btn sec sm" id="serpStop">Stop</button>`
@@ -1262,7 +1011,6 @@ function renderShort(mode){
   const pendP=p=>all.filter(r=>r.profile===p&&r.status==='pending').length;
   const famList=buildFamilies(all).sort((a,b)=>b.total-a.total).map(f=>f.key).filter(f=>pendN(f)>0);   // hide zero-topic options
   const profList=[...new Set(all.map(r=>r.profile))].filter(p=>pendP(p)>0).sort(profileSort);
-  const cstat=rs=>({pen:rs.filter(r=>r.status==='pending').length,sel:rs.filter(r=>r.status==='selected').length,rej:rs.filter(r=>r.status==='rejected').length,total:rs.length});
 
   // ---------- B · FILTERS  (audience → type → modifier, context-aware counts) ----------
   const audMatch=r=>!STATE.fAud.length||STATE.fAud.includes(r.profile);
@@ -1434,20 +1182,6 @@ function renderShort(mode){
     </div>
   </div>`;
 
-  // topic popup (B filter matches)
-  let modalHtml='';
-  if(STATE.modal){
-    let title='', mrows=[];
-    if(STATE.modal.type==='cell'){ mrows=all.filter(r=>r.family===STATE.modal.f&&r.profile===STATE.modal.p); title=`<span class="ichip">${esc(STATE.modal.f)}</span><span class="ichip aud">${esc(STATE.modal.p)}</span>`; }
-    else { mrows=all.filter(matchPred); title='<b>Matching topics</b>'; }
-    const s=cstat(mrows), list=pendOnly?mrows.filter(r=>r.status==='pending'):mrows;
-    modalHtml=`<div class="modal" id="modalBg"><div class="modal-card">
-      <div class="modal-head">${title}<span class="muted" style="font-size:12px">${s.pen} to review · ${s.sel}✓ · ${s.rej}✕</span>
-        <button class="btn sec sm modact" data-a="select" ${s.pen?'':'disabled'}>✓ Keep all</button><button class="btn sec sm modact" data-a="reject" ${s.pen?'':'disabled'}>✕ Reject all</button>
-        <span style="flex:1"></span><button class="modal-x" id="modalClose">✕</button></div>
-      <div class="modal-body">${topicList(list)}</div></div></div>`;
-  }
-
   let vm=STATE.viewMode; if(!['filters','selected','rejected'].includes(vm))vm=STATE.viewMode='filters';
   const blurb={filters:'Tick the audiences, types and modifiers that fit the client, then keep or reject the matching topics.',
     selected:'Every topic you have kept, updating live. Remove any that slipped in.',
@@ -1464,15 +1198,10 @@ function renderShort(mode){
     <button class="vtab ${vm==='selected'?'on':''}" data-vm="selected">✓ Selected (${selRows.length})</button>
     <button class="vtab ${vm==='rejected'?'on':''}" data-vm="rejected">✕ Rejected (${rejRows.length})</button>
   </div>
-  ${vm==='selected'?selectedBody:vm==='rejected'?rejectedBody:filtersBody}
-  ${modalHtml}`;
+  ${vm==='selected'?selectedBody:vm==='rejected'?rejectedBody:filtersBody}`;
   $('#view').querySelectorAll('.phaseseg button').forEach(b=>b.onclick=()=>{ STATE.phase=b.dataset.phase; STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.fSearch='';STATE.checked={};STATE.focusIdx=0; STATE.serpAuto=false; render(); });
 
-  $('#view').querySelectorAll('.vtab').forEach(b=>b.onclick=()=>{STATE.viewMode=b.dataset.vm;STATE.modal=null;render();});
-  // matching-topics popup
-  if($('#modalClose'))$('#modalClose').onclick=()=>{STATE.modal=null;render();};
-  if($('#modalBg'))$('#modalBg').onclick=e=>{if(e.target.id==='modalBg'){STATE.modal=null;render();}};
-  $('#view').querySelectorAll('.modact').forEach(b=>b.onclick=()=>decide(matchPred,b.dataset.a,'Shortlisted (filters)'));
+  $('#view').querySelectorAll('.vtab').forEach(b=>b.onclick=()=>{STATE.viewMode=b.dataset.vm;render();});
   $('#view').querySelectorAll('.fpill[data-ft]').forEach(c=>c.onclick=()=>{const v=c.dataset.ft;STATE.fTypes=STATE.fTypes.includes(v)?STATE.fTypes.filter(x=>x!==v):[...STATE.fTypes,v];render();});
   $('#view').querySelectorAll('.fpill[data-fa]').forEach(c=>c.onclick=()=>{const v=c.dataset.fa;STATE.fAud=STATE.fAud.includes(v)?STATE.fAud.filter(x=>x!==v):[...STATE.fAud,v];render();});
   $('#view').querySelectorAll('.fpill[data-fm]').forEach(c=>c.onclick=()=>{const v=c.dataset.fm;STATE.fMods=STATE.fMods.includes(v)?STATE.fMods.filter(x=>x!==v):[...STATE.fMods,v];render();});
@@ -1517,7 +1246,6 @@ function renderShort(mode){
   // keyword/topic text filter — hides non-matching rows live (no re-render, keeps focus)
   const applyFSearch=()=>{ const q=(STATE.fSearch||'').toLowerCase(); $('#view').querySelectorAll('.ftbl tbody tr[data-kwt]').forEach(tr=>{ tr.style.display = (!q||tr.dataset.kwt.includes(q))?'':'none'; }); };
   if($('#fSearch')){ const fi=$('#fSearch'); fi.oninput=()=>{ STATE.fSearch=fi.value; applyFSearch(); }; applyFSearch(); }
-  if($('#viewMatches'))$('#viewMatches').onclick=()=>{STATE.modal={type:'filter'};render();};
 
   // handlers
   $('#view').querySelectorAll('.phasetabs [data-p]').forEach(b=>b.onclick=()=>{STATE.phase=b.dataset.p;STATE.page=0;render();});
@@ -1733,6 +1461,10 @@ function loadState(){ try{ const s=localStorage.getItem(LS_KEY); if(!s)return fa
   const config={...STATE.config, ...(p.config||{})};
   Object.assign(STATE, p); STATE.rules=rules; STATE.config=config;
   if(!Array.isArray(STATE.history))STATE.history=[];
+  // reset transient UI state to current shapes (avoids old saved shapes, e.g. rejFilter strings, breaking filters)
+  STATE.rejFilter={aud:[],type:[],why:[],reason:[],q:''}; STATE.selFilter={aud:[],type:[],mod:[],q:''};
+  STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.fSearch='';STATE.checked={};STATE.modal=null;STATE.focusIdx=0;
+  if(typeof STATE.colWidths!=='object'||!STATE.colWidths)STATE.colWidths={};
   (STATE.rows||[]).forEach(r=>{ if(!Array.isArray(r.serp))r.serp=[]; if(!Array.isArray(r.serpTitles))r.serpTitles=[]; });  // serp arrays are stripped on save — restore so renders don't crash
   return !!(STATE.rows&&STATE.rows.length); }catch(e){return false;} }
 function clearSession(){ if(confirm('Start over? This clears the loaded AKR and all decisions on this device.')){ localStorage.removeItem(LS_KEY); STATE.rows=[]; STATE.step=0; location.reload(); } }
