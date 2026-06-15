@@ -148,6 +148,7 @@
   .fpill.aud{background:#f6f8fb;border-color:#e2e8f0;color:#51607a;box-shadow:inset 3px 0 0 #94a3b8}
   .fpill.type{background:#f5f6fe;border-color:#e3e5fc;color:var(--accent-d);box-shadow:inset 3px 0 0 #8b92f5}
   .fpill.mod{background:#fbf7ee;border-color:#efe4cd;color:#a9710f;box-shadow:inset 3px 0 0 #d9a23f}
+  .fpill.bofu{background:#eefaf3;border-color:#cdeedd;color:#0f7a4d;box-shadow:inset 3px 0 0 #34b27b}
   .fpill:hover{border-color:#94a3b8}
   /* on-state: solid fill of the same hue so the selection clearly stands out */
   .fpill.on{box-shadow:none}
@@ -155,6 +156,7 @@
   .fpill.aud.on{background:var(--blue);border-color:var(--blue);color:#fff}
   .fpill.type.on{background:var(--accent);border-color:var(--accent);color:#fff}
   .fpill.mod.on{background:var(--amber);border-color:var(--amber);color:#fff}
+  .fpill.bofu.on{background:#16a06a;border-color:#16a06a;color:#fff}
   /* secondary-keyword cell: one truncated line, click to expand */
   .seccell{display:block;max-width:190px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11.5px;color:#64748b;cursor:pointer}
   .seccell:hover{color:var(--accent)}
@@ -412,16 +414,16 @@ const STATE = {
   groupPendingOnly:true,        // hide fully-decided combinations
   serpRunning:false, serpCancel:false, serpAuto:false,   // auto rankings fetch state (transient)
   viewMode:'svc',               // svc | blog (filter & pick per phase) | selected | rejected (both phases)
-  fTypes:[], fAud:[], fMods:[], // filters view: selected service types / audiences / modifiers
+  fTypes:[], fAud:[], fMods:[], fBofu:[], // filters view: selected service types / audiences / modifiers / BOFU(Y|N)
   checked:{},                   // filters view: checkbox multi-select (id -> true)
   gridCell:null,                // {f,p} currently-opened grid cell
   modal:null,                   // {type:'cell',f,p} | {type:'filter'} topic popup
   eAud:'all',                   // E view: audience filter
   fSearch:'',                   // filters view: keyword/topic text filter
   fSort:{key:'',dir:-1},        // filters view: '' (default) | 'kw' | 'vol'
-  rejFilter:{pt:[],aud:[],type:[],why:[],reason:[],q:''},  // rejected tab column filters (multi-select)
+  rejFilter:{pt:[],aud:[],type:[],why:[],reason:[],bofu:[],q:''},  // rejected tab column filters (multi-select)
   rejSort:{key:'',dir:1},        // rejected tab column sort
-  selFilter:{pt:[],aud:[],type:[],mod:[],q:''},  // selected tab multi-select filters
+  selFilter:{pt:[],aud:[],type:[],mod:[],bofu:[],q:''},  // selected tab multi-select filters
   processed:{},                  // {Service:true, Blog:true} — a phase shows results only after you process it
   focusIdx:0,                   // keyboard-focused row index in the filters table
   colWidths:{},                 // user-dragged column widths, keyed by "<tab>:<colIndex>"
@@ -488,6 +490,16 @@ const INFO_RX = /\b(how to|how-to|what is|what's|meaning|definition|define|youtu
 const JOBS_RX = /\b(jobs?|salary|salaries|hiring|career|careers|certification|certified|certificate|course|courses|degree|class schedule|teacher training|become a|how to become|exam|syllabus)\b/;
 /* wrong-format / commercial mismatch */
 const FORMAT_RX = /\b(login|sign in|app|apk|download|coupon|promo code|discount code|cracked|torrent|free pdf)\b/;
+/* bottom-of-funnel (high purchase / commercial intent) signal */
+const BOFU_RX = /\b(buy|buying|purchase|purchasing|order|ordering|for sale|price|prices|pricing|cost|costs|how much|cheap|cheapest|affordable|discount|near me|supplier|suppliers|wholesale|bulk|vendor|vendors|manufacturer|manufacturers|distributor|company|companies|service|services|custom|customized|customised|personalized|personalised|made to order|hire|rent|rental|shop|store|online|best|top)\b/;
+/* is this row bottom-of-funnel? research/info loses; explicit buy signals or transactional page type wins */
+function isBofu(r){
+  const t=blob(r);
+  if(INFO_RX.test(t)||JOBS_RX.test(t)) return false;   // research / informational = not BOFU
+  if(BOFU_RX.test(t)) return true;                      // explicit buying / commercial signal
+  return r.pageType!=='Blog';                           // Service / Product pages are transactional by default
+}
+const bofuTag=r=>isBofu(r)?'Y':'N';
 /* likely a specific brand / named organisation (not a generic topic) → reject */
 const ORG_RX = /\b(institutes?|academ(y|ies)|society|societies|foundations?|associations?|ashram|sangha|vihara|monastery|university|college|ll[cp]|gmbh|pvt|dhamma|goenka|chopra|mindvalley|headspace|deepak|sadhguru|isha)\b/;
 /* other companies' brand/event keywords — irrelevant to the client (e.g. "nvidia keynote") */
@@ -1053,12 +1065,15 @@ function renderShort(mode){
   const audMatch=r=>!STATE.fAud.length||STATE.fAud.includes(r.profile);
   const typeMatch=r=>!STATE.fTypes.length||STATE.fTypes.includes(r.family);
   const modMatch=r=>!STATE.fMods.length||r.modIds.some(m=>STATE.fMods.includes(m));
-  const matchPred=r=>audMatch(r)&&typeMatch(r)&&modMatch(r);
+  const bofuMatch=r=>!STATE.fBofu.length||STATE.fBofu.includes(bofuTag(r));
+  const matchPred=r=>audMatch(r)&&typeMatch(r)&&modMatch(r)&&bofuMatch(r);
   const pend=all.filter(r=>r.status==='pending');
   // context-aware counts (each axis counts within the OTHER selected filters)
-  const profCnt=p=>pend.filter(r=>r.profile===p&&typeMatch(r)&&modMatch(r)).length;
-  const famCnt=f=>pend.filter(r=>r.family===f&&audMatch(r)&&modMatch(r)).length;
-  const modCnt=m=>pend.filter(r=>r.modIds.includes(m)&&audMatch(r)&&typeMatch(r)).length;
+  const profCnt=p=>pend.filter(r=>r.profile===p&&typeMatch(r)&&modMatch(r)&&bofuMatch(r)).length;
+  const famCnt=f=>pend.filter(r=>r.family===f&&audMatch(r)&&modMatch(r)&&bofuMatch(r)).length;
+  const modCnt=m=>pend.filter(r=>r.modIds.includes(m)&&audMatch(r)&&typeMatch(r)&&bofuMatch(r)).length;
+  const bofuCnt=v=>pend.filter(r=>bofuTag(r)===v&&audMatch(r)&&typeMatch(r)&&modMatch(r)).length;
+  const bofuOpts=['Y','N'].map(v=>[v,bofuCnt(v)]).filter(([v,n])=>n>0||STATE.fBofu.includes(v));
   const audOpts=[...new Set(pend.map(r=>r.profile))].filter(p=>profCnt(p)>0||STATE.fAud.includes(p)).sort(profileSort);
   const typeOpts=[...new Set(pend.map(r=>r.family))].filter(f=>famCnt(f)>0||STATE.fTypes.includes(f)).sort((a,b)=>famCnt(b)-famCnt(a));
   const modOpts=[...new Set(pend.flatMap(r=>r.modIds))].map(m=>[m,modCnt(m)]).filter(([m,n])=>n>0||STATE.fMods.includes(m)).sort((a,b)=>b[1]-a[1]).slice(0,30);
@@ -1077,7 +1092,7 @@ function renderShort(mode){
   const nChecked=shown.filter(r=>STATE.checked[r.id]).length;
   const scopeRows=all.filter(matchPred);   // progress reflects the current filter scope, so it matches the audience-chip sum
   const totalAll=scopeRows.length, decided=scopeRows.filter(r=>r.status!=='pending').length, pct=totalAll?Math.round(decided/totalAll*100):0;
-  const anyFilter=STATE.fAud.length||STATE.fTypes.length||STATE.fMods.length;
+  const anyFilter=STATE.fAud.length||STATE.fTypes.length||STATE.fMods.length||STATE.fBofu.length;
   const filterRow=(label,allId,clrId,html,sep)=>`<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;${sep?'padding-bottom:9px;margin-bottom:9px;border-bottom:1px solid var(--line)':'margin-bottom:6px'}"><b style="font-size:12px;width:82px">${label}</b><button class="btn ghost sm" id="${allId}">All</button><button class="btn ghost sm" id="${clrId}">Clear</button>${html}</div>`;
   const filtersBody=`
   <div class="tablewrap">
@@ -1091,9 +1106,10 @@ function renderShort(mode){
     <div style="padding:10px 14px;border-bottom:1px solid var(--line)">
       ${filterRow('Audiences','faAll','faClear',audOpts.map(p=>`<span class="fpill aud ${STATE.fAud.includes(p)?'on':''}" data-fa="${esc(p)}">${esc(p)} <span class="muted">${profCnt(p)}</span></span>`).join(''),true)}
       ${filterRow('Types','ftAll','ftClear',typeOpts.map(f=>`<span class="fpill type ${STATE.fTypes.includes(f)?'on':''}" data-ft="${esc(f)}">${esc(f)} <span class="muted">${famCnt(f)}</span></span>`).join(''),true)}
-      ${filterRow('Modifiers','fmAll','fmClear',modOpts.map(([m,n])=>`<span class="fpill mod ${STATE.fMods.includes(m)?'on':''}" data-fm="${esc(m)}">${esc(m)} <span class="muted">${n}</span></span>`).join('')||'<span class="muted" style="font-size:12px">none</span>',false)}
+      ${filterRow('Modifiers','fmAll','fmClear',modOpts.map(([m,n])=>`<span class="fpill mod ${STATE.fMods.includes(m)?'on':''}" data-fm="${esc(m)}">${esc(m)} <span class="muted">${n}</span></span>`).join('')||'<span class="muted" style="font-size:12px">none</span>',true)}
+      ${filterRow('BOFU','fbAll','fbClear',bofuOpts.map(([v,n])=>`<span class="fpill bofu ${STATE.fBofu.includes(v)?'on':''}" data-fb="${v}">${v==='Y'?'Yes (BOFU)':'No (TOFU/MOFU)'} <span class="muted">${n}</span></span>`).join('')||'<span class="muted" style="font-size:12px">none</span>',false)}
       <div style="margin-top:8px"><span class="muted" style="font-size:12px">${matchN} matching topic${matchN===1?'':'s'} shown below (empty filter = “any”). Tick rows and use <b>Keep / Reject checked</b>, or decide each row.</span>
-      <button class="btn ghost sm" id="resetAll" style="margin-left:8px"${(STATE.fAud.length||STATE.fTypes.length||STATE.fMods.length||nChecked)?'':' disabled'}>↺ Reset selection</button></div>
+      <button class="btn ghost sm" id="resetAll" style="margin-left:8px"${(STATE.fAud.length||STATE.fTypes.length||STATE.fMods.length||STATE.fBofu.length||nChecked)?'':' disabled'}>↺ Reset selection</button></div>
     </div>
     <div class="tbar" style="border-bottom:1px solid var(--line)">
       <label class="chk" style="gap:6px"><input type="checkbox" id="chkAll" ${shown.length&&nChecked===shown.length?'checked':''}> <span style="font-size:12.5px">Select all shown</span></label>
@@ -1130,16 +1146,18 @@ function renderShort(mode){
   const sAud=r=>!sf.aud.length||sf.aud.includes(r.profile);
   const sType=r=>!sf.type.length||sf.type.includes(r.family);
   const sMod=r=>!sf.mod.length||r.modIds.some(m=>sf.mod.includes(m));
+  const sBofu=r=>!sf.bofu.length||sf.bofu.includes(bofuTag(r));
   const sQ=r=>!sq||(r.kw+' '+(r.topic||'')).toLowerCase().includes(sq);
   const sOpt=(keyFn,ctxFns)=>{const o={};selAll.forEach(r=>{if(ctxFns.every(f=>f(r)))keyFn(r).forEach(k=>o[k]=(o[k]||0)+1);});return Object.entries(o);};
-  const selPtOpts=sOpt(r=>[r.pageType],[sAud,sType,sMod,sQ]).filter(([k,n])=>n>0||sf.pt.includes(k)).sort();
-  const selAudOpts=sOpt(r=>[r.profile],[sPt,sType,sMod,sQ]).filter(([k,n])=>n>0||sf.aud.includes(k)).sort((a,b)=>profileSort(a[0],b[0]));
-  const selTypeOpts=sOpt(r=>[r.family],[sPt,sAud,sMod,sQ]).filter(([k,n])=>n>0||sf.type.includes(k)).sort((a,b)=>b[1]-a[1]);
-  const selModOpts=sOpt(r=>r.modIds,[sPt,sAud,sType,sQ]).filter(([k,n])=>n>0||sf.mod.includes(k)).sort((a,b)=>b[1]-a[1]).slice(0,30);
-  const selRows=selAll.filter(r=>sPt(r)&&sAud(r)&&sType(r)&&sMod(r)&&sQ(r))
+  const selPtOpts=sOpt(r=>[r.pageType],[sAud,sType,sMod,sBofu,sQ]).filter(([k,n])=>n>0||sf.pt.includes(k)).sort();
+  const selAudOpts=sOpt(r=>[r.profile],[sPt,sType,sMod,sBofu,sQ]).filter(([k,n])=>n>0||sf.aud.includes(k)).sort((a,b)=>profileSort(a[0],b[0]));
+  const selTypeOpts=sOpt(r=>[r.family],[sPt,sAud,sMod,sBofu,sQ]).filter(([k,n])=>n>0||sf.type.includes(k)).sort((a,b)=>b[1]-a[1]);
+  const selModOpts=sOpt(r=>r.modIds,[sPt,sAud,sType,sBofu,sQ]).filter(([k,n])=>n>0||sf.mod.includes(k)).sort((a,b)=>b[1]-a[1]).slice(0,30);
+  const selBofuOpts=sOpt(r=>[bofuTag(r)],[sPt,sAud,sType,sMod,sQ]).filter(([k,n])=>n>0||sf.bofu.includes(k)).sort();
+  const selRows=selAll.filter(r=>sPt(r)&&sAud(r)&&sType(r)&&sMod(r)&&sBofu(r)&&sQ(r))
     .sort((a,b)=>profileSort(a.profile,b.profile)||a.family.localeCompare(b.family)||b.vol-a.vol);
   const selVol=selRows.reduce((s,r)=>s+r.vol,0);
-  const anySf=sf.pt.length||sf.aud.length||sf.type.length||sf.mod.length||sf.q;
+  const anySf=sf.pt.length||sf.aud.length||sf.type.length||sf.mod.length||sf.bofu.length||sf.q;
   const sRow=(label,axis,opts,cls,labelFn)=>opts.length>1||sf[axis].length?`<div style="display:flex;gap:7px;align-items:baseline;flex-wrap:wrap;margin-bottom:5px"><b style="font-size:11.5px;width:64px;flex-shrink:0">${label}</b>${opts.map(([v,n])=>`<span class="fpill ${cls} ${sf[axis].includes(v)?'on':''}" data-sfk="${axis}" data-sfv="${esc(v)}">${labelFn?labelFn(v):esc(v)} <span class="muted">${n}</span></span>`).join('')}</div>`:'';
   const selectedBody=`
   <div class="tablewrap">
@@ -1151,6 +1169,7 @@ function renderShort(mode){
       ${sRow('Audience','aud',selAudOpts,'aud')}
       ${sRow('Type','type',selTypeOpts,'type')}
       ${sRow('Modifier','mod',selModOpts,'mod')}
+      ${sRow('BOFU','bofu',selBofuOpts,'bofu',v=>v==='Y'?'Yes (BOFU)':'No (TOFU/MOFU)')}
       <div style="display:flex;gap:8px;align-items:center;margin-top:4px"><input type="text" id="selQ" placeholder="🔎 keyword / topic…" value="${esc(sf.q)}" style="width:220px;padding:6px 9px;border:1px solid var(--line);border-radius:7px;font-size:12px">${anySf?`<button class="btn ghost sm" id="selClear">↺ Clear filters</button>`:''}</div>
     </div>`:''}
     <div class="scrollx">
@@ -1181,25 +1200,28 @@ function renderShort(mode){
   const pType=r=>!rf.type.length||rf.type.includes(r.family);
   const pWhy=r=>!rf.why.length||rf.why.includes(rejInfo(r).type);
   const pReason=r=>!rf.reason.length||rf.reason.includes(canonicalReason(r));
+  const pBofu=r=>!rf.bofu.length||rf.bofu.includes(bofuTag(r));
   const pQ=r=>!rq||(r.kw+' '+(r.topic||'')).toLowerCase().includes(rq);
-  const ptCtx=r=>pAud(r)&&pType(r)&&pWhy(r)&&pReason(r)&&pQ(r);
-  const audCtx=r=>pPt(r)&&pType(r)&&pWhy(r)&&pReason(r)&&pQ(r);
-  const typeCtx=r=>pPt(r)&&pAud(r)&&pWhy(r)&&pReason(r)&&pQ(r);
-  const whyCtx=r=>pPt(r)&&pAud(r)&&pType(r)&&pReason(r)&&pQ(r);
-  const reasonCtx=r=>pPt(r)&&pAud(r)&&pType(r)&&pWhy(r)&&pQ(r);
+  const ptCtx=r=>pAud(r)&&pType(r)&&pWhy(r)&&pReason(r)&&pBofu(r)&&pQ(r);
+  const audCtx=r=>pPt(r)&&pType(r)&&pWhy(r)&&pReason(r)&&pBofu(r)&&pQ(r);
+  const typeCtx=r=>pPt(r)&&pAud(r)&&pWhy(r)&&pReason(r)&&pBofu(r)&&pQ(r);
+  const whyCtx=r=>pPt(r)&&pAud(r)&&pType(r)&&pReason(r)&&pBofu(r)&&pQ(r);
+  const reasonCtx=r=>pPt(r)&&pAud(r)&&pType(r)&&pWhy(r)&&pBofu(r)&&pQ(r);
+  const bofuCtxR=r=>pPt(r)&&pAud(r)&&pType(r)&&pWhy(r)&&pReason(r)&&pQ(r);
   const optList=(keyFn,ctx,selArr,sortByCount)=>{const o=[...new Set(rejAll.map(keyFn))].map(k=>[k,rejAll.filter(r=>keyFn(r)===k&&ctx(r)).length]).filter(([k,n])=>n>0||selArr.includes(k)); return sortByCount?o.sort((a,b)=>b[1]-a[1]):o;};
   const rejPtOpts=optList(r=>r.pageType,ptCtx,rf.pt,false).sort();
   const rejAudOpts=optList(r=>r.profile,audCtx,rf.aud,false).sort((a,b)=>profileSort(a[0],b[0]));
   const rejTypeOpts=optList(r=>r.family,typeCtx,rf.type,true);
   const whyOpts=['Pre-rule','Decision'].map(w=>[w,rejAll.filter(r=>rejInfo(r).type===w&&whyCtx(r)).length]).filter(([w,n])=>n>0||rf.why.includes(w));
   const reasonOpts=optList(r=>canonicalReason(r),reasonCtx,rf.reason,true);
+  const rejBofuOpts=optList(r=>bofuTag(r),bofuCtxR,rf.bofu,false).sort();
   const rjKey={pt:r=>r.pageType, aud:r=>r.profile, type:r=>r.family, kw:r=>r.kw, why:r=>rejInfo(r).type, reason:r=>canonicalReason(r)};
   const rs=STATE.rejSort;
-  const rejRows=rejAll.filter(r=>pPt(r)&&pAud(r)&&pType(r)&&pWhy(r)&&pReason(r)&&pQ(r)).sort(
+  const rejRows=rejAll.filter(r=>pPt(r)&&pAud(r)&&pType(r)&&pWhy(r)&&pReason(r)&&pBofu(r)&&pQ(r)).sort(
     rs.key&&rjKey[rs.key] ? (a,b)=>rs.dir*String(rjKey[rs.key](a)).localeCompare(String(rjKey[rs.key](b)))||b.vol-a.vol
                           : (a,b)=>{const ta=rejInfo(a).type,tb=rejInfo(b).type; return ta.localeCompare(tb)||b.vol-a.vol;});
   const rjAr=k=>rs.key===k?`<span class="ar">${rs.dir===1?'▲':'▼'}</span>`:'';
-  const anyRf=rf.pt.length||rf.aud.length||rf.type.length||rf.why.length||rf.reason.length||rf.q;
+  const anyRf=rf.pt.length||rf.aud.length||rf.type.length||rf.why.length||rf.reason.length||rf.bofu.length||rf.q;
   const rRow=(label,axis,opts,cls,labelFn)=>(opts.length>1||rf[axis].length)?`<div style="display:flex;gap:7px;align-items:baseline;flex-wrap:wrap;margin-bottom:5px"><b style="font-size:11.5px;width:64px;flex-shrink:0">${label}</b>${opts.map(([v,n])=>`<span class="fpill ${cls} ${rf[axis].includes(v)?'on':''}" data-rfk="${axis}" data-rfv="${esc(v)}">${labelFn?labelFn(v):esc(v)} <span class="muted">${n}</span></span>`).join('')}</div>`:'';
   const rejectedBody=`
   <div class="tablewrap">
@@ -1212,6 +1234,7 @@ function renderShort(mode){
       ${rRow('Type','type',rejTypeOpts,'type')}
       ${rRow('Why','why',whyOpts,'')}
       ${rRow('Reason','reason',reasonOpts,'mod')}
+      ${rRow('BOFU','bofu',rejBofuOpts,'bofu',v=>v==='Y'?'Yes (BOFU)':'No (TOFU/MOFU)')}
       <div style="display:flex;gap:8px;align-items:center;margin-top:4px"><input type="text" id="rejQ" placeholder="🔎 keyword / topic…" value="${esc(rf.q)}" style="width:220px;padding:6px 9px;border:1px solid var(--line);border-radius:7px;font-size:12px">${anyRf?`<button class="btn ghost sm" id="rejClear">↺ Clear filters</button>`:''}</div>
     </div>
     <div class="scrollx">
@@ -1259,7 +1282,7 @@ function renderShort(mode){
   </div>
   ${isPick ? (isProcessed?filtersBody:gateCard) : (vm==='selected'?selectedBody:rejectedBody)}`;
 
-  $('#view').querySelectorAll('.vtab').forEach(b=>b.onclick=()=>{STATE.viewMode=b.dataset.vm; STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.fSearch='';STATE.checked={};STATE.focusIdx=0; render();});
+  $('#view').querySelectorAll('.vtab').forEach(b=>b.onclick=()=>{STATE.viewMode=b.dataset.vm; STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.fBofu=[];STATE.fSearch='';STATE.checked={};STATE.focusIdx=0; render();});
   $('#view').querySelectorAll('.fpill[data-ft]').forEach(c=>c.onclick=()=>{const v=c.dataset.ft;STATE.fTypes=STATE.fTypes.includes(v)?STATE.fTypes.filter(x=>x!==v):[...STATE.fTypes,v];render();});
   $('#view').querySelectorAll('.fpill[data-fa]').forEach(c=>c.onclick=()=>{const v=c.dataset.fa;STATE.fAud=STATE.fAud.includes(v)?STATE.fAud.filter(x=>x!==v):[...STATE.fAud,v];render();});
   $('#view').querySelectorAll('.fpill[data-fm]').forEach(c=>c.onclick=()=>{const v=c.dataset.fm;STATE.fMods=STATE.fMods.includes(v)?STATE.fMods.filter(x=>x!==v):[...STATE.fMods,v];render();});
@@ -1269,12 +1292,15 @@ function renderShort(mode){
   if($('#faClear'))$('#faClear').onclick=()=>{STATE.fAud=[];render();};
   if($('#fmAll'))$('#fmAll').onclick=()=>{STATE.fMods=[...new Set(STATE.rows.filter(r=>r.pageType===phase&&r.status==='pending').flatMap(r=>r.modIds))];render();};
   if($('#fmClear'))$('#fmClear').onclick=()=>{STATE.fMods=[];render();};
+  $('#view').querySelectorAll('.fpill[data-fb]').forEach(c=>c.onclick=()=>{const v=c.dataset.fb;STATE.fBofu=STATE.fBofu.includes(v)?STATE.fBofu.filter(x=>x!==v):[...STATE.fBofu,v];render();});
+  if($('#fbAll'))$('#fbAll').onclick=()=>{STATE.fBofu=['Y','N'];render();};
+  if($('#fbClear'))$('#fbClear').onclick=()=>{STATE.fBofu=[];render();};
   // rejected-tab multi-select chip filters
   $('#view').querySelectorAll('.fpill[data-rfk]').forEach(c=>c.onclick=()=>{const k=c.dataset.rfk,v=c.dataset.rfv;const arr=STATE.rejFilter[k];STATE.rejFilter[k]=arr.includes(v)?arr.filter(x=>x!==v):[...arr,v];render();});
-  if($('#rejClear'))$('#rejClear').onclick=()=>{STATE.rejFilter={pt:[],aud:[],type:[],why:[],reason:[],q:''};render();};
+  if($('#rejClear'))$('#rejClear').onclick=()=>{STATE.rejFilter={pt:[],aud:[],type:[],why:[],reason:[],bofu:[],q:''};render();};
   // selected-tab multi-select chip filters
   $('#view').querySelectorAll('.fpill[data-sfk]').forEach(c=>c.onclick=()=>{const k=c.dataset.sfk,v=c.dataset.sfv;const arr=STATE.selFilter[k];STATE.selFilter[k]=arr.includes(v)?arr.filter(x=>x!==v):[...arr,v];render();});
-  if($('#selClear'))$('#selClear').onclick=()=>{STATE.selFilter={pt:[],aud:[],type:[],mod:[],q:''};render();};
+  if($('#selClear'))$('#selClear').onclick=()=>{STATE.selFilter={pt:[],aud:[],type:[],mod:[],bofu:[],q:''};render();};
   if($('#selQ')){const si=$('#selQ');si.oninput=()=>{STATE.selFilter.q=si.value;$('#view').querySelectorAll('.ftbl tbody tr').forEach(tr=>{const t=tr.textContent.toLowerCase();tr.style.display=(!si.value||t.includes(si.value.toLowerCase()))?'':'none';});};}
   $('#view').querySelectorAll('th.fsort[data-rk]').forEach(th=>th.onclick=()=>{ const k=th.dataset.rk; if(STATE.rejSort.key===k)STATE.rejSort.dir*=-1; else STATE.rejSort={key:k,dir:1}; render(); });
   if($('#rejQ')){const ri=$('#rejQ');ri.oninput=()=>{STATE.rejFilter.q=ri.value;$('#view').querySelectorAll('.ftbl tbody tr').forEach(tr=>{const t=tr.textContent.toLowerCase();tr.style.display=(!ri.value||t.includes(ri.value.toLowerCase()))?'':'none';});};}
@@ -1297,7 +1323,7 @@ function renderShort(mode){
   const applyChecked=act=>{ const _b=_snap(); const ids=new Set(Object.keys(STATE.checked)); let n=0; STATE.rows.forEach(r=>{ if(!ids.has(String(r.id)))return; if(act==='select'){if(r.status==='pending'){r.status='selected';r.reason='Shortlisted';r.manual=true;n++;}} else {if(r.status!=='rejected'){r.status='rejected';r.reason='Not relevant';r.manual=true;n++;}} }); STATE.checked={}; const msg=(act==='select'?'Kept ':'Rejected ')+n+' checked'; _commit(msg,_b); toast(msg); renderStats(); render(); };
   if($('#keepChecked'))$('#keepChecked').onclick=()=>applyChecked('select');
   if($('#rejChecked'))$('#rejChecked').onclick=()=>applyChecked('reject');
-  if($('#resetAll'))$('#resetAll').onclick=()=>{ STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.checked={}; toast('Selection reset'); render(); };
+  if($('#resetAll'))$('#resetAll').onclick=()=>{ STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.fBofu=[];STATE.checked={}; toast('Selection reset'); render(); };
   $('#view').querySelectorAll('.seccell,.cellx,.audx').forEach(c=>c.onclick=()=>c.classList.toggle('expanded'));
   // sortable headers (Keyword A→Z, Vol)
   $('#view').querySelectorAll('th.fsort[data-fk]').forEach(th=>th.onclick=()=>{ const k=th.dataset.fk; if(STATE.fSort.key===k)STATE.fSort.dir*=-1; else STATE.fSort={key:k,dir:k==='vol'?-1:1}; render(); });
@@ -1492,7 +1518,7 @@ async function fetchSerpBulk(rows, auto){
 function exportCsv(selectedOnly){
   const src = selectedOnly ? STATE.rows.filter(r=>r.status==='selected') : STATE.rows;
   if(selectedOnly && !src.length){ toast('No selected topics to export yet'); return; }
-  const cols=['Primary Keyword','Secondary Keywords','Page Type','Topic','Total Search Volume','Relevance Score','Service/Product Type','Modifier','Customer Profile','Decision','Reason'];
+  const cols=['Primary Keyword','Secondary Keywords','Page Type','Topic','Total Search Volume','Relevance Score','Service/Product Type','Modifier','Customer Profile','BOFU','Decision','Reason'];
   const q=s=>'"'+String(s==null?'':s).replace(/"/g,'""')+'"';
   const decLabel=s=>s==='selected'?'Approved':s==='rejected'?'Rejected':'Pending';
   const lines=[cols.join(',')];
@@ -1501,6 +1527,7 @@ function exportCsv(selectedOnly){
     r.typeIds.join('; '),                       // identifier columns — each can hold more than one
     r.modIds.join('; '),
     r.profile,
+    isBofu(r)?'Yes':'No',
     decLabel(r.status),                         // Decision: Approved / Rejected / Pending
     r.reason
   ].map(q).join(',')));
@@ -1522,8 +1549,8 @@ function loadState(){ try{ const s=localStorage.getItem(LS_KEY); if(!s)return fa
   Object.assign(STATE, p); STATE.rules=rules; STATE.config=config;
   if(!Array.isArray(STATE.history))STATE.history=[];
   // reset transient UI state to current shapes (avoids old saved shapes, e.g. rejFilter strings, breaking filters)
-  STATE.rejFilter={pt:[],aud:[],type:[],why:[],reason:[],q:''}; STATE.selFilter={pt:[],aud:[],type:[],mod:[],q:''};
-  STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.fSearch='';STATE.checked={};STATE.modal=null;STATE.focusIdx=0;
+  STATE.rejFilter={pt:[],aud:[],type:[],why:[],reason:[],bofu:[],q:''}; STATE.selFilter={pt:[],aud:[],type:[],mod:[],bofu:[],q:''};
+  STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.fBofu=[];STATE.fSearch='';STATE.checked={};STATE.modal=null;STATE.focusIdx=0;
   if(typeof STATE.colWidths!=='object'||!STATE.colWidths)STATE.colWidths={};
   // LLM intent reasons (from /api/classify) — these must NOT be healed away by the rule re-eval below
   const AI_REASONS=new Set(['Job-seeker intent','Researcher/student intent','Branded query','Off-ICP audience','No commercial intent','Off-intent']);
