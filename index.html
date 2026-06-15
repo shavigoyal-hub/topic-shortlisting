@@ -418,9 +418,9 @@ const STATE = {
   eAud:'all',                   // E view: audience filter
   fSearch:'',                   // filters view: keyword/topic text filter
   fSort:{key:'',dir:-1},        // filters view: '' (default) | 'kw' | 'vol'
-  rejFilter:{aud:[],type:[],why:[],reason:[],q:''},  // rejected tab column filters (multi-select)
+  rejFilter:{pt:[],aud:[],type:[],why:[],reason:[],q:''},  // rejected tab column filters (multi-select)
   rejSort:{key:'',dir:1},        // rejected tab column sort
-  selFilter:{aud:[],type:[],mod:[],q:''},  // selected tab multi-select filters
+  selFilter:{pt:[],aud:[],type:[],mod:[],q:''},  // selected tab multi-select filters
   processed:{},                  // {Service:true, Blog:true} — a phase shows results only after you process it
   focusIdx:0,                   // keyboard-focused row index in the filters table
   colWidths:{},                 // user-dragged column widths, keyed by "<tab>:<colIndex>"
@@ -1115,28 +1115,34 @@ function renderShort(mode){
     </div>
   </div>`;
 
+  // page-type helpers (shared by Selected + Rejected)
+  const ptShort=p=>p==='Blog'?'Blog / Category':'Service / Product';
+  const ptPill=r=>`<span class="ichip" style="background:${r.pageType==='Blog'?'var(--blue-soft);color:var(--blue)':'var(--accent-soft);color:var(--accent-d)'}">${ptShort(r.pageType)}</span>`;
   // ---------- SELECTED · live review of everything kept ----------
   const selAll=STATE.rows.filter(r=>r.status==='selected');   // all phases (Service + Blog)
   const sf=STATE.selFilter; const sq=sf.q.toLowerCase();
+  const sPt=r=>!sf.pt.length||sf.pt.includes(r.pageType);
   const sAud=r=>!sf.aud.length||sf.aud.includes(r.profile);
   const sType=r=>!sf.type.length||sf.type.includes(r.family);
   const sMod=r=>!sf.mod.length||r.modIds.some(m=>sf.mod.includes(m));
   const sQ=r=>!sq||(r.kw+' '+(r.topic||'')).toLowerCase().includes(sq);
   const sOpt=(keyFn,ctxFns)=>{const o={};selAll.forEach(r=>{if(ctxFns.every(f=>f(r)))keyFn(r).forEach(k=>o[k]=(o[k]||0)+1);});return Object.entries(o);};
-  const selAudOpts=sOpt(r=>[r.profile],[sType,sMod,sQ]).filter(([k,n])=>n>0||sf.aud.includes(k)).sort((a,b)=>profileSort(a[0],b[0]));
-  const selTypeOpts=sOpt(r=>[r.family],[sAud,sMod,sQ]).filter(([k,n])=>n>0||sf.type.includes(k)).sort((a,b)=>b[1]-a[1]);
-  const selModOpts=sOpt(r=>r.modIds,[sAud,sType,sQ]).filter(([k,n])=>n>0||sf.mod.includes(k)).sort((a,b)=>b[1]-a[1]).slice(0,30);
-  const selRows=selAll.filter(r=>sAud(r)&&sType(r)&&sMod(r)&&sQ(r))
+  const selPtOpts=sOpt(r=>[r.pageType],[sAud,sType,sMod,sQ]).filter(([k,n])=>n>0||sf.pt.includes(k)).sort();
+  const selAudOpts=sOpt(r=>[r.profile],[sPt,sType,sMod,sQ]).filter(([k,n])=>n>0||sf.aud.includes(k)).sort((a,b)=>profileSort(a[0],b[0]));
+  const selTypeOpts=sOpt(r=>[r.family],[sPt,sAud,sMod,sQ]).filter(([k,n])=>n>0||sf.type.includes(k)).sort((a,b)=>b[1]-a[1]);
+  const selModOpts=sOpt(r=>r.modIds,[sPt,sAud,sType,sQ]).filter(([k,n])=>n>0||sf.mod.includes(k)).sort((a,b)=>b[1]-a[1]).slice(0,30);
+  const selRows=selAll.filter(r=>sPt(r)&&sAud(r)&&sType(r)&&sMod(r)&&sQ(r))
     .sort((a,b)=>profileSort(a.profile,b.profile)||a.family.localeCompare(b.family)||b.vol-a.vol);
   const selVol=selRows.reduce((s,r)=>s+r.vol,0);
-  const anySf=sf.aud.length||sf.type.length||sf.mod.length||sf.q;
-  const sRow=(label,axis,opts,cls)=>opts.length?`<div style="display:flex;gap:7px;align-items:baseline;flex-wrap:wrap;margin-bottom:5px"><b style="font-size:11.5px;width:64px;flex-shrink:0">${label}</b>${opts.map(([v,n])=>`<span class="fpill ${cls} ${sf[axis].includes(v)?'on':''}" data-sfk="${axis}" data-sfv="${esc(v)}">${esc(v)} <span class="muted">${n}</span></span>`).join('')}</div>`:'';
+  const anySf=sf.pt.length||sf.aud.length||sf.type.length||sf.mod.length||sf.q;
+  const sRow=(label,axis,opts,cls,labelFn)=>opts.length>1||sf[axis].length?`<div style="display:flex;gap:7px;align-items:baseline;flex-wrap:wrap;margin-bottom:5px"><b style="font-size:11.5px;width:64px;flex-shrink:0">${label}</b>${opts.map(([v,n])=>`<span class="fpill ${cls} ${sf[axis].includes(v)?'on':''}" data-sfk="${axis}" data-sfv="${esc(v)}">${labelFn?labelFn(v):esc(v)} <span class="muted">${n}</span></span>`).join('')}</div>`:'';
   const selectedBody=`
   <div class="tablewrap">
     <div class="tbar"><b style="font-size:13px">${selAll.length} selected</b>
       <span class="muted" style="font-size:12px">· ${selVol.toLocaleString()} total volume${selRows.length!==selAll.length?` · <b style="color:var(--ink)">${selRows.length}</b> shown`:''} · updates live</span>
       <span style="flex:1"></span><button class="btn sec sm" id="export" title="Export every topic with its decision">⤓ Export all</button><button class="btn sm" id="exportSel" title="Export only the selected/kept topics">⤓ Export selected</button></div>
     ${selAll.length?`<div style="padding:9px 14px;border-bottom:1px solid var(--line)">
+      ${sRow('Page type','pt',selPtOpts,'',v=>esc(ptShort(v)))}
       ${sRow('Audience','aud',selAudOpts,'aud')}
       ${sRow('Type','type',selTypeOpts,'type')}
       ${sRow('Modifier','mod',selModOpts,'mod')}
@@ -1144,8 +1150,9 @@ function renderShort(mode){
     </div>`:''}
     <div class="scrollx">
       <table class="ftbl">
-        <thead><tr><th style="width:96px">Audience</th><th style="width:124px">Product / Service Type</th><th style="width:82px">Modifier</th><th style="width:210px">Keyword</th><th>Topic</th><th style="width:62px">Vol</th><th style="width:84px"></th></tr></thead>
+        <thead><tr><th style="width:120px">Page Type</th><th style="width:96px">Audience</th><th style="width:124px">Product / Service Type</th><th style="width:82px">Modifier</th><th style="width:210px">Keyword</th><th>Topic</th><th style="width:62px">Vol</th><th style="width:84px"></th></tr></thead>
         <tbody>${selRows.length?selRows.map(r=>`<tr>
+          <td>${ptPill(r)}</td>
           <td><span class="ichip aud audx" title="${esc(r.profile)}">${esc(r.profile)}</span></td>
           <td><span class="ichip fam2" title="${esc(r.family)}">${esc(r.family)}</span></td>
           <td>${r.modIds.map(m=>`<span class="ichip mod">${esc(m)}</span>`).join('')||'<span class="muted">—</span>'}</td>
@@ -1153,7 +1160,7 @@ function renderShort(mode){
           <td>${r.topic?`<span class="cellx tp" title="${esc(r.topic)}">${esc(r.topic)}</span>`:'<span class="muted">—</span>'}</td>
           <td>${r.vol.toLocaleString()}</td>
           <td><span class="miniact"><button class="n" data-id="${r.id}" data-act="pending" title="Remove from shortlist">↩ Remove</button></span></td>
-        </tr>`).join(''):'<tr><td colspan="7"><div class="empty">No topics selected yet. Use the Filter & Pick tab to shortlist.</div></td></tr>'}</tbody>
+        </tr>`).join(''):'<tr><td colspan="8"><div class="empty">No topics selected yet. Pick topics in the Service or Blog tab.</div></td></tr>'}</tbody>
       </table>
     </div>
   </div>`;
@@ -1164,34 +1171,38 @@ function renderShort(mode){
   const rf=STATE.rejFilter;
   // multi-select + context-aware: each chip's count reflects the OTHER active filters; empty axis = all
   const rq=rf.q.toLowerCase();
+  const pPt=r=>!rf.pt.length||rf.pt.includes(r.pageType);
   const pAud=r=>!rf.aud.length||rf.aud.includes(r.profile);
   const pType=r=>!rf.type.length||rf.type.includes(r.family);
   const pWhy=r=>!rf.why.length||rf.why.includes(rejInfo(r).type);
   const pReason=r=>!rf.reason.length||rf.reason.includes(canonicalReason(r));
   const pQ=r=>!rq||(r.kw+' '+(r.topic||'')).toLowerCase().includes(rq);
-  const audCtx=r=>pType(r)&&pWhy(r)&&pReason(r)&&pQ(r);
-  const typeCtx=r=>pAud(r)&&pWhy(r)&&pReason(r)&&pQ(r);
-  const whyCtx=r=>pAud(r)&&pType(r)&&pReason(r)&&pQ(r);
-  const reasonCtx=r=>pAud(r)&&pType(r)&&pWhy(r)&&pQ(r);
+  const ptCtx=r=>pAud(r)&&pType(r)&&pWhy(r)&&pReason(r)&&pQ(r);
+  const audCtx=r=>pPt(r)&&pType(r)&&pWhy(r)&&pReason(r)&&pQ(r);
+  const typeCtx=r=>pPt(r)&&pAud(r)&&pWhy(r)&&pReason(r)&&pQ(r);
+  const whyCtx=r=>pPt(r)&&pAud(r)&&pType(r)&&pReason(r)&&pQ(r);
+  const reasonCtx=r=>pPt(r)&&pAud(r)&&pType(r)&&pWhy(r)&&pQ(r);
   const optList=(keyFn,ctx,selArr,sortByCount)=>{const o=[...new Set(rejAll.map(keyFn))].map(k=>[k,rejAll.filter(r=>keyFn(r)===k&&ctx(r)).length]).filter(([k,n])=>n>0||selArr.includes(k)); return sortByCount?o.sort((a,b)=>b[1]-a[1]):o;};
+  const rejPtOpts=optList(r=>r.pageType,ptCtx,rf.pt,false).sort();
   const rejAudOpts=optList(r=>r.profile,audCtx,rf.aud,false).sort((a,b)=>profileSort(a[0],b[0]));
   const rejTypeOpts=optList(r=>r.family,typeCtx,rf.type,true);
   const whyOpts=['Pre-rule','Decision'].map(w=>[w,rejAll.filter(r=>rejInfo(r).type===w&&whyCtx(r)).length]).filter(([w,n])=>n>0||rf.why.includes(w));
   const reasonOpts=optList(r=>canonicalReason(r),reasonCtx,rf.reason,true);
-  const rjKey={aud:r=>r.profile, type:r=>r.family, kw:r=>r.kw, why:r=>rejInfo(r).type, reason:r=>canonicalReason(r)};
+  const rjKey={pt:r=>r.pageType, aud:r=>r.profile, type:r=>r.family, kw:r=>r.kw, why:r=>rejInfo(r).type, reason:r=>canonicalReason(r)};
   const rs=STATE.rejSort;
-  const rejRows=rejAll.filter(r=>pAud(r)&&pType(r)&&pWhy(r)&&pReason(r)&&pQ(r)).sort(
+  const rejRows=rejAll.filter(r=>pPt(r)&&pAud(r)&&pType(r)&&pWhy(r)&&pReason(r)&&pQ(r)).sort(
     rs.key&&rjKey[rs.key] ? (a,b)=>rs.dir*String(rjKey[rs.key](a)).localeCompare(String(rjKey[rs.key](b)))||b.vol-a.vol
                           : (a,b)=>{const ta=rejInfo(a).type,tb=rejInfo(b).type; return ta.localeCompare(tb)||b.vol-a.vol;});
   const rjAr=k=>rs.key===k?`<span class="ar">${rs.dir===1?'▲':'▼'}</span>`:'';
-  const anyRf=rf.aud.length||rf.type.length||rf.why.length||rf.reason.length||rf.q;
-  const rRow=(label,axis,opts,cls)=>`<div style="display:flex;gap:7px;align-items:baseline;flex-wrap:wrap;margin-bottom:5px"><b style="font-size:11.5px;width:64px;flex-shrink:0">${label}</b>${opts.length?opts.map(([v,n])=>`<span class="fpill ${cls} ${rf[axis].includes(v)?'on':''}" data-rfk="${axis}" data-rfv="${esc(v)}">${esc(v)} <span class="muted">${n}</span></span>`).join(''):'<span class="muted" style="font-size:11.5px">—</span>'}</div>`;
+  const anyRf=rf.pt.length||rf.aud.length||rf.type.length||rf.why.length||rf.reason.length||rf.q;
+  const rRow=(label,axis,opts,cls,labelFn)=>(opts.length>1||rf[axis].length)?`<div style="display:flex;gap:7px;align-items:baseline;flex-wrap:wrap;margin-bottom:5px"><b style="font-size:11.5px;width:64px;flex-shrink:0">${label}</b>${opts.map(([v,n])=>`<span class="fpill ${cls} ${rf[axis].includes(v)?'on':''}" data-rfk="${axis}" data-rfv="${esc(v)}">${labelFn?labelFn(v):esc(v)} <span class="muted">${n}</span></span>`).join('')}</div>`:'';
   const rejectedBody=`
   <div class="tablewrap">
     <div class="tbar"><b style="font-size:13px">${rejAll.length} rejected</b>
       <span class="muted" style="font-size:12px">· ${nPre} pre-rule · ${rejAll.length-nPre} decision${rejRows.length!==rejAll.length?` · <b style="color:var(--ink)">${rejRows.length}</b> shown`:''}</span>
       <span style="flex:1"></span><button class="btn sec sm" id="export" title="Export every topic with its decision">⤓ Export all</button></div>
     <div style="padding:9px 14px;border-bottom:1px solid var(--line)">
+      ${rRow('Page type','pt',rejPtOpts,'',v=>esc(ptShort(v)))}
       ${rRow('Audience','aud',rejAudOpts,'aud')}
       ${rRow('Type','type',rejTypeOpts,'type')}
       ${rRow('Why','why',whyOpts,'')}
@@ -1199,9 +1210,10 @@ function renderShort(mode){
       <div style="display:flex;gap:8px;align-items:center;margin-top:4px"><input type="text" id="rejQ" placeholder="🔎 keyword / topic…" value="${esc(rf.q)}" style="width:220px;padding:6px 9px;border:1px solid var(--line);border-radius:7px;font-size:12px">${anyRf?`<button class="btn ghost sm" id="rejClear">↺ Clear filters</button>`:''}</div>
     </div>
     <div class="scrollx">
-      <table class="ftbl" style="min-width:880px">
-        <thead><tr><th class="fsort" data-rk="aud" style="width:92px">Audience ${rjAr('aud')}</th><th class="fsort" data-rk="type" style="width:120px">Product / Service Type ${rjAr('type')}</th><th class="fsort" data-rk="kw" style="width:200px">Keyword ${rjAr('kw')}</th><th>Topic</th><th class="fsort" data-rk="why" style="width:96px">Why ${rjAr('why')}</th><th class="fsort" data-rk="reason" style="width:170px">Reason ${rjAr('reason')}</th><th style="width:84px"></th></tr></thead>
+      <table class="ftbl" style="min-width:980px">
+        <thead><tr><th class="fsort" data-rk="pt" style="width:120px">Page Type ${rjAr('pt')}</th><th class="fsort" data-rk="aud" style="width:92px">Audience ${rjAr('aud')}</th><th class="fsort" data-rk="type" style="width:120px">Product / Service Type ${rjAr('type')}</th><th class="fsort" data-rk="kw" style="width:200px">Keyword ${rjAr('kw')}</th><th>Topic</th><th class="fsort" data-rk="why" style="width:96px">Why ${rjAr('why')}</th><th class="fsort" data-rk="reason" style="width:170px">Reason ${rjAr('reason')}</th><th style="width:84px"></th></tr></thead>
         <tbody>${rejRows.length?rejRows.map(r=>{const ri=rejInfo(r);return `<tr>
+          <td>${ptPill(r)}</td>
           <td><span class="ichip aud audx" title="${esc(r.profile)}">${esc(r.profile)}</span></td>
           <td><span class="ichip fam2" title="${esc(r.family)}">${esc(r.family)}</span></td>
           <td><span class="cellx kw" title="${esc(r.kw)}">${esc(r.kw)}</span></td>
@@ -1209,7 +1221,7 @@ function renderShort(mode){
           <td><span class="rej-badge ${ri.type==='Pre-rule'?'pre':'dec'}">${ri.type}</span></td>
           <td><span class="cellx tp" title="${esc(canonicalReason(r))}">${esc(canonicalReason(r))}</span></td>
           <td><span class="miniact"><button class="y" data-id="${r.id}" data-act="pending" title="Restore to pending">↩ Restore</button></span></td>
-        </tr>`;}).join(''):`<tr><td colspan="7"><div class="empty">${rejAll.length?'No rejected topics match these filters.':'Nothing rejected yet.'}</div></td></tr>`}</tbody>
+        </tr>`;}).join(''):`<tr><td colspan="8"><div class="empty">${rejAll.length?'No rejected topics match these filters.':'Nothing rejected yet.'}</div></td></tr>`}</tbody>
       </table>
     </div>
   </div>`;
@@ -1254,10 +1266,10 @@ function renderShort(mode){
   if($('#fmClear'))$('#fmClear').onclick=()=>{STATE.fMods=[];render();};
   // rejected-tab multi-select chip filters
   $('#view').querySelectorAll('.fpill[data-rfk]').forEach(c=>c.onclick=()=>{const k=c.dataset.rfk,v=c.dataset.rfv;const arr=STATE.rejFilter[k];STATE.rejFilter[k]=arr.includes(v)?arr.filter(x=>x!==v):[...arr,v];render();});
-  if($('#rejClear'))$('#rejClear').onclick=()=>{STATE.rejFilter={aud:[],type:[],why:[],reason:[],q:''};render();};
+  if($('#rejClear'))$('#rejClear').onclick=()=>{STATE.rejFilter={pt:[],aud:[],type:[],why:[],reason:[],q:''};render();};
   // selected-tab multi-select chip filters
   $('#view').querySelectorAll('.fpill[data-sfk]').forEach(c=>c.onclick=()=>{const k=c.dataset.sfk,v=c.dataset.sfv;const arr=STATE.selFilter[k];STATE.selFilter[k]=arr.includes(v)?arr.filter(x=>x!==v):[...arr,v];render();});
-  if($('#selClear'))$('#selClear').onclick=()=>{STATE.selFilter={aud:[],type:[],mod:[],q:''};render();};
+  if($('#selClear'))$('#selClear').onclick=()=>{STATE.selFilter={pt:[],aud:[],type:[],mod:[],q:''};render();};
   if($('#selQ')){const si=$('#selQ');si.oninput=()=>{STATE.selFilter.q=si.value;$('#view').querySelectorAll('.ftbl tbody tr').forEach(tr=>{const t=tr.textContent.toLowerCase();tr.style.display=(!si.value||t.includes(si.value.toLowerCase()))?'':'none';});};}
   $('#view').querySelectorAll('th.fsort[data-rk]').forEach(th=>th.onclick=()=>{ const k=th.dataset.rk; if(STATE.rejSort.key===k)STATE.rejSort.dir*=-1; else STATE.rejSort={key:k,dir:1}; render(); });
   if($('#rejQ')){const ri=$('#rejQ');ri.oninput=()=>{STATE.rejFilter.q=ri.value;$('#view').querySelectorAll('.ftbl tbody tr').forEach(tr=>{const t=tr.textContent.toLowerCase();tr.style.display=(!ri.value||t.includes(ri.value.toLowerCase()))?'':'none';});};}
@@ -1505,7 +1517,7 @@ function loadState(){ try{ const s=localStorage.getItem(LS_KEY); if(!s)return fa
   Object.assign(STATE, p); STATE.rules=rules; STATE.config=config;
   if(!Array.isArray(STATE.history))STATE.history=[];
   // reset transient UI state to current shapes (avoids old saved shapes, e.g. rejFilter strings, breaking filters)
-  STATE.rejFilter={aud:[],type:[],why:[],reason:[],q:''}; STATE.selFilter={aud:[],type:[],mod:[],q:''};
+  STATE.rejFilter={pt:[],aud:[],type:[],why:[],reason:[],q:''}; STATE.selFilter={pt:[],aud:[],type:[],mod:[],q:''};
   STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.fSearch='';STATE.checked={};STATE.modal=null;STATE.focusIdx=0;
   if(typeof STATE.colWidths!=='object'||!STATE.colWidths)STATE.colWidths={};
   (STATE.rows||[]).forEach(r=>{
