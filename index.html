@@ -375,7 +375,7 @@
 
 <script>
 /* ============================ BUILD ============================ */
-const BUILD='2026-06-15.10';   // bump on every deploy — used to detect a stale browser tab
+const BUILD='2026-06-15.11';   // bump on every deploy — used to detect a stale browser tab
 /* ============================ STATE ============================ */
 const STATE = {
   step: 0,
@@ -427,6 +427,7 @@ const STATE = {
   rejSort:{key:'',dir:1},        // rejected tab column sort
   selFilter:{pt:[],aud:[],type:[],mod:[],bofu:[],q:''},  // selected tab multi-select filters
   processed:{},                  // {Service:true, Blog:true} — a phase shows results only after you process it
+  review:{source:'session', uploaded:[], results:{}, running:false, ran:false, prog:''},  // step 3 self-review (verdicts keyed by item id)
   focusIdx:0,                   // keyboard-focused row index in the filters table
   colWidths:{},                 // user-dragged column widths, keyed by "<tab>:<colIndex>"
   history:[],                   // action log (session-only): {ts,label,n,changed:[{id,from}]}
@@ -453,6 +454,7 @@ const PAGE_SIZE = 60;
 const STEPS = [
   {id:'setup',  lbl:'Setup & Upload',    sub:'Inputs + AKR file'},
   {id:'short',  lbl:'Shortlist',         sub:'ICP → identifiers → topics'},
+  {id:'review', lbl:'Self-review',       sub:'QC the selected topics'},
 ];
 
 /* ============================ HELPERS ============================ */
@@ -616,7 +618,7 @@ function renderStats(){
     toast('Reset '+n+' selected topics'); renderStats(); render();
   };
 }
-function go(i){ if(i===1||STATE.rows.length||i===0){STATE.step=Math.max(0,Math.min(STEPS.length-1,i));render();} }
+function go(i){ if(i===0||STATE.rows.length||i===STEPS.length-1){STATE.step=Math.max(0,Math.min(STEPS.length-1,i));render();} }   // review (last) step is reachable even with no session (can upload a list there)
 function render(){ renderNav(); renderStats(); VIEWS[STEPS[STATE.step].id](); }
 
 /* ============================ VIEW: SETUP ============================ */
@@ -1283,7 +1285,7 @@ function renderShort(mode){
         <button class="btn" id="serpAll">↻ Process ${phase==='Blog'?'blog':'service'} topics (${needN})</button>
       </div>`;
   $('#view').innerHTML=`
-  <div class="pagehead" style="display:flex;align-items:flex-start;gap:14px"><div style="flex:1"><h2>Shortlist — ${h2} <span style="font-weight:400;color:var(--muted);font-size:14px">→ pages to build</span></h2><p>${blurb}</p></div><button class="btn" id="export" title="Export every topic across all tabs (with its decision) to CSV" style="white-space:nowrap">⤓ Export all (${STATE.rows.length})</button></div>
+  <div class="pagehead" style="display:flex;align-items:flex-start;gap:14px"><div style="flex:1"><h2>Shortlist — ${h2} <span style="font-weight:400;color:var(--muted);font-size:14px">→ pages to build</span></h2><p>${blurb}</p></div><button class="btn sec" id="gotoReview" title="QC your selected topics with AI — flags ones that look wrongly selected" style="white-space:nowrap">🔍 Self-review (${selAll.length})</button><button class="btn" id="export" title="Export every topic across all tabs (with its decision) to CSV" style="white-space:nowrap">⤓ Export all (${STATE.rows.length})</button></div>
   <div class="phasetabs" style="margin-bottom:14px">
     <button class="vtab ${vm==='svc'?'on':''}" data-vm="svc">Service / Product (${svcCount})</button>
     <button class="vtab ${vm==='blog'?'on':''}" data-vm="blog">Blog / Category (${blogCount})</button>
@@ -1346,6 +1348,7 @@ function renderShort(mode){
   if($('#toBlog'))$('#toBlog').onclick=()=>{STATE.phase='Blog';STATE.page=0;render();};
   if($('#export'))$('#export').onclick=()=>exportCsv(false);
   if($('#exportSel'))$('#exportSel').onclick=()=>exportCsv(true);
+  if($('#gotoReview'))$('#gotoReview').onclick=()=>{STATE.review.source='session';go(2);};
   const svcPending=()=>STATE.rows.filter(r=>r.status==='pending'&&r.pageType===phase);
   if($('#serpAll'))$('#serpAll').onclick=()=>fetchSerpBulk(svcPending());
   if($('#serpStop'))$('#serpStop').onclick=()=>{STATE.serpCancel=true;};
@@ -1360,6 +1363,127 @@ function renderShort(mode){
   });
 }
 VIEWS.short=()=>renderShort('icp');
+
+/* ============================ STEP 3 · SELF-REVIEW ============================ */
+// The current list under review: either this session's selected topics, or an uploaded list.
+function reviewItems(){
+  if(STATE.review.source==='upload') return STATE.review.uploaded||[];
+  return STATE.rows.filter(r=>r.status==='selected').map(r=>({id:String(r.id),kw:r.kw,topic:r.topic,profile:r.profile,family:r.family,vol:r.vol,pageType:r.pageType}));
+}
+function parseReviewAoa(aoa){
+  if(!aoa||!aoa.length) return [];
+  const head=(aoa[0]||[]).map(h=>String(h==null?'':h).toLowerCase().trim());
+  const find=(...ns)=>head.findIndex(h=>ns.some(n=>h.includes(n)));
+  const ci={kw:find('primary keyword','keyword','kw'),topic:find('topic'),vol:find('search volume','volume','msv'),aud:find('customer profile','audience','profile'),fam:find('service/product type','product / service','type')};
+  if(ci.kw<0)ci.kw=0;
+  const out=[];
+  for(let i=1;i<aoa.length;i++){ const a=aoa[i]||[]; const kw=(a[ci.kw]||'').toString().trim(); if(!kw)continue;
+    out.push({id:'u'+i,kw,topic:ci.topic>=0?(a[ci.topic]||'').toString().trim():'',vol:ci.vol>=0?(parseInt((a[ci.vol]||'').toString().replace(/[^0-9]/g,''))||0):'',profile:ci.aud>=0?(a[ci.aud]||'').toString().trim():'',family:ci.fam>=0?(a[ci.fam]||'').toString().trim():'',pageType:''}); }
+  return out;
+}
+function loadReviewFile(file){
+  const ext=file.name.split('.').pop().toLowerCase();
+  const reader=new FileReader();
+  reader.onload=e=>{ try{
+    let aoa;
+    if(ext==='csv') aoa=csvToAoa(e.target.result);
+    else { const wb=XLSX.read(e.target.result,{type:'array'}); const ws=wb.Sheets[wb.SheetNames[0]]; aoa=XLSX.utils.sheet_to_json(ws,{header:1}); }
+    const items=parseReviewAoa(aoa);
+    if(!items.length){ alert('No keyword column found in that file.'); return; }
+    STATE.review.uploaded=items; STATE.review.source='upload'; STATE.review.results={}; STATE.review.ran=false;
+    saveState(); render(); toast('Loaded '+items.length+' topics to review');
+  }catch(err){ alert('Could not parse file: '+err.message); } };
+  if(ext==='csv')reader.readAsText(file); else reader.readAsArrayBuffer(file);
+}
+async function runReview(){
+  const items=reviewItems();
+  if(!items.length){ toast('Nothing to review'); return; }
+  if(!onServerHost()){ toast('AI self-review only works on the deployed site'); return; }
+  STATE.review.running=true; STATE.review.ran=false; STATE.review.results={}; STATE.review.prog='0/'+items.length; render();
+  const client=clientCtx();
+  try{
+    for(let i=0;i<items.length;i+=30){
+      const batch=items.slice(i,i+30);
+      const payload=batch.map(it=>({id:String(it.id),kw:it.kw,topic:it.topic,audience:it.profile,type:it.family}));
+      const res=await fetch('/api/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:payload,client})});
+      if(!res.ok) throw new Error('review '+res.status);
+      const j=await res.json();
+      (j.results||[]).forEach(o=>{ STATE.review.results[String(o.id)]={ok:o.ok!==false,reason:o.reason||'',severity:o.severity==='high'?'high':'low'}; });
+      STATE.review.prog=Math.min(i+30,items.length)+'/'+items.length;
+      const pe=document.getElementById('revProg'); if(pe)pe.textContent='Reviewing '+STATE.review.prog+'…';
+    }
+  }catch(e){ STATE.review.running=false; render(); toast('Review failed — '+e.message); return; }
+  STATE.review.running=false; STATE.review.ran=true; saveState(); render();
+}
+function exportReview(){
+  const items=reviewItems(), res=STATE.review.results||{};
+  const reviewed=items.filter(it=>res[String(it.id)]); if(!reviewed.length){ toast('Run the review first'); return; }
+  const cols=['Keyword','Topic','Audience','Type','Search Volume','Verdict','Issue'];
+  const q=s=>'"'+String(s==null?'':s).replace(/"/g,'""')+'"';
+  const lines=[cols.join(',')];
+  reviewed.forEach(it=>{ const v=res[String(it.id)]; lines.push([it.kw,it.topic,it.profile,it.family,it.vol,v.ok?'OK':'Flagged',v.ok?'':v.reason].map(q).join(',')); });
+  const b=new Blob([lines.join('\n')],{type:'text/csv'}); const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download='self-review.csv'; a.click();
+}
+VIEWS.review=function(){
+  const R=STATE.review, items=reviewItems(), res=R.results||{};
+  const reviewed=items.filter(it=>res[String(it.id)]);
+  const flagged=reviewed.filter(it=>res[String(it.id)].ok===false);
+  const clean=reviewed.filter(it=>res[String(it.id)].ok!==false);
+  const isUp=R.source==='upload';
+  const sevPill=v=>`<span class="ichip" style="background:${v.severity==='high'?'var(--red-soft);color:var(--red)':'#fff4e0;color:#a9710f'}">${v.severity==='high'?'Likely wrong':'Check'}</span>`;
+  const rowHtml=(it,bad)=>{ const v=res[String(it.id)]; return `<tr style="${bad?'background:var(--red-soft)':''}">
+    <td><span class="cellx kw" title="${esc(it.kw)}">${esc(it.kw)}</span></td>
+    <td>${it.topic?`<span class="cellx tp" title="${esc(it.topic)}">${esc(it.topic)}</span>`:'<span class="muted">—</span>'}</td>
+    <td>${it.profile?`<span class="ichip aud audx">${esc(it.profile)}</span>`:'<span class="muted">—</span>'}</td>
+    <td>${it.vol===''||it.vol==null?'<span class="muted">—</span>':Number(it.vol).toLocaleString()}</td>
+    ${bad?`<td>${sevPill(v)}</td><td><b style="color:var(--red)">${esc(v.reason||'Looks off')}</b></td>`:`<td colspan="2"><span style="color:var(--green);font-weight:600">✓ Looks good</span></td>`}
+    ${!isUp?`<td>${bad?`<button class="btn ghost sm unsel" data-id="${esc(it.id)}" title="Move back to Pending">↩ Unselect</button>`:''}</td>`:''}
+  </tr>`; };
+  const thead=`<thead><tr><th style="width:230px">Keyword</th><th>Topic</th><th style="width:120px">Audience</th><th style="width:64px">Vol</th><th style="width:96px">Verdict</th><th style="min-width:200px">Issue</th>${!isUp?'<th style="width:96px"></th>':''}</tr></thead>`;
+
+  const summary = R.ran ? `<div style="display:flex;gap:10px;flex-wrap:wrap;margin:4px 0 14px">
+      <div style="flex:1;min-width:150px;background:var(--green-soft,#e9f8ef);border:1px solid #cdeedd;border-radius:11px;padding:12px 14px"><div style="font-size:22px;font-weight:800;color:#0f7a4d">${clean.length}</div><div class="muted" style="font-size:12px">look good</div></div>
+      <div style="flex:1;min-width:150px;background:var(--red-soft);border:1px solid #f3c2c2;border-radius:11px;padding:12px 14px"><div style="font-size:22px;font-weight:800;color:var(--red)">${flagged.length}</div><div class="muted" style="font-size:12px">flagged — review below</div></div>
+    </div>` : '';
+
+  $('#view').innerHTML=`
+  <div class="pagehead" style="display:flex;align-items:flex-start;gap:14px">
+    <div style="flex:1"><h2>Self-review <span style="font-weight:400;color:var(--muted);font-size:14px">→ catch wrongly-selected topics</span></h2>
+    <p>An AI second pass over your <b>selected</b> topics. It flags any that look off — irrelevant to the client, wrong audience, no buying intent, branded, or junk — with a reason. Your selections aren't changed unless you act on a flag.</p></div>
+    ${reviewed.length?`<button class="btn sec" id="revExport" style="white-space:nowrap">⤓ Export review</button>`:''}
+  </div>
+  <div class="tablewrap" style="margin-bottom:14px">
+    <div style="padding:12px 14px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <span style="font-size:12px;font-weight:700;color:var(--muted)">SOURCE</span>
+      <div class="phasetabs" style="margin:0">
+        <button class="vtab ${!isUp?'on':''}" id="srcSession">This session’s selected (${STATE.rows.filter(r=>r.status==='selected').length})</button>
+        <button class="vtab ${isUp?'on':''}" id="srcUpload">Upload a list${R.uploaded&&R.uploaded.length?` (${R.uploaded.length})`:''}</button>
+      </div>
+      <span style="flex:1"></span>
+      ${R.running
+        ? `<span id="revProg" style="font-size:12.5px;font-weight:600;color:var(--accent)">Reviewing ${esc(R.prog||'')}…</span>`
+        : `<button class="btn" id="runReview" ${items.length?'':'disabled'}>🔍 Run self-review (${items.length})</button>`}
+    </div>
+    ${isUp?`<div style="padding:12px 14px;border-bottom:1px solid var(--line)">
+      <div class="drop" id="revDrop" style="padding:22px">${R.uploaded&&R.uploaded.length?`<b>${R.uploaded.length}</b> topics loaded — drop another file to replace, or `:''}Click to choose or drop a <b>.csv / .xlsx</b> of selected topics (needs a <b>Keyword</b> column; Topic/Audience optional)<input type="file" id="revFile" accept=".csv,.xlsx,.xls" style="display:none"></div>
+    </div>`:''}
+    ${summary}
+    ${R.ran && reviewed.length ? `
+      ${flagged.length?`<div style="padding:8px 14px;font-weight:700;font-size:13px;color:var(--red)">⚠ ${flagged.length} flagged</div>
+      <div class="scrollx"><table class="ftbl">${thead}<tbody>${flagged.map(it=>rowHtml(it,true)).join('')}</tbody></table></div>`:`<div style="padding:24px;text-align:center;color:var(--green);font-weight:600">✓ All ${clean.length} selected topics look good — nothing flagged.</div>`}
+      ${clean.length?`<details style="padding:10px 14px"><summary style="cursor:pointer;font-size:12.5px;color:var(--muted)">Show ${clean.length} that look good</summary><div class="scrollx" style="margin-top:8px"><table class="ftbl">${thead}<tbody>${clean.map(it=>rowHtml(it,false)).join('')}</tbody></table></div></details>`:''}
+    ` : (R.running?'<div style="padding:40px;text-align:center;color:var(--muted)">Reviewing…</div>':`<div style="padding:40px;text-align:center;color:var(--muted)">${items.length?`Click <b>Run self-review</b> to QC ${items.length} topic${items.length===1?'':'s'}.`:(isUp?'Upload a list of selected topics to review.':'No selected topics yet — pick some in the Shortlist, or switch to “Upload a list”.')}</div>`)}
+  </div>`;
+
+  if($('#srcSession'))$('#srcSession').onclick=()=>{STATE.review.source='session';STATE.review.ran=false;STATE.review.results={};render();};
+  if($('#srcUpload'))$('#srcUpload').onclick=()=>{STATE.review.source='upload';STATE.review.ran=false;STATE.review.results={};render();};
+  if($('#runReview'))$('#runReview').onclick=runReview;
+  if($('#revExport'))$('#revExport').onclick=exportReview;
+  const rf=$('#revFile'), rd=$('#revDrop');
+  if(rd){ rd.onclick=()=>rf.click(); ['dragover','dragenter'].forEach(ev=>rd.addEventListener(ev,e=>{e.preventDefault();rd.classList.add('over');})); ['dragleave','drop'].forEach(ev=>rd.addEventListener(ev,e=>{e.preventDefault();rd.classList.remove('over');})); rd.addEventListener('drop',e=>e.dataTransfer.files[0]&&loadReviewFile(e.dataTransfer.files[0])); }
+  if(rf)rf.onchange=e=>e.target.files[0]&&loadReviewFile(e.target.files[0]);
+  $('#view').querySelectorAll('.unsel').forEach(b=>b.onclick=()=>{ const r=STATE.rows.find(x=>String(x.id)===b.dataset.id); if(!r)return; const _b=_snap(); r.status='pending'; r.reason=''; r.manual=false; delete STATE.review.results[b.dataset.id]; _commit('Unselected · '+r.kw,_b); toast('Moved back to Pending'); renderStats(); render(); });
+};
 /* ---- keyboard review: K keep · R reject · U undo · ↑↓ move ---- */
 function visFilterRows(){ return [...document.querySelectorAll('.ftbl tbody tr[data-rid]')].filter(tr=>tr.style.display!=='none'); }
 function refocusFilter(){ const vis=visFilterRows(); document.querySelectorAll('tr.rowfocus').forEach(t=>t.classList.remove('rowfocus')); if(!vis.length)return; STATE.focusIdx=Math.max(0,Math.min(STATE.focusIdx||0,vis.length-1)); const tr=vis[STATE.focusIdx]; tr.classList.add('rowfocus'); tr.scrollIntoView({block:'nearest'}); }
@@ -1603,6 +1727,8 @@ function loadState(){ try{ const s=localStorage.getItem(LS_KEY); if(!s)return fa
   // reset transient UI state to current shapes (avoids old saved shapes, e.g. rejFilter strings, breaking filters)
   STATE.rejFilter={pt:[],aud:[],type:[],why:[],reason:[],bofu:[],q:''}; STATE.selFilter={pt:[],aud:[],type:[],mod:[],bofu:[],q:''};
   STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.fBofu=[];STATE.fSearch='';STATE.checked={};STATE.modal=null;STATE.focusIdx=0;
+  if(!STATE.review||typeof STATE.review!=='object')STATE.review={source:'session',uploaded:[],results:{},running:false,ran:false,prog:''};
+  STATE.review.running=false;   // never restore a mid-run state
   if(typeof STATE.colWidths!=='object'||!STATE.colWidths)STATE.colWidths={};
   // LLM intent reasons (from /api/classify) — these must NOT be healed away by the rule re-eval below
   const AI_REASONS=new Set(['Job-seeker intent','Researcher/student intent','Branded query','Off-ICP audience','No commercial intent','Off-intent']);
