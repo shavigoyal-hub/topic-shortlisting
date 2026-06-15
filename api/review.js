@@ -41,7 +41,7 @@ Flag ok=false ONLY when the topic is:
 - Genuinely about a DIFFERENT product/industry than the client offers (and the ranking titles confirm it is unrelated).
 - Wrong audience / clearly outside the client's ICP.
 - Job/career/education seeker intent ("jobs", "salary", "course", "certification").
-- A specific competitor's or other company's BRAND name (navigational) — NOT generic descriptive words like "branded/custom/personalized/promotional/foil/engraved".
+- A specific company's / competitor's BRAND NAME (navigational). This includes named companies you may not recognise: a proper-noun name + a business/org word — e.g. "Letterpress Communications", "Acme Press", "Smith Printing Co", "Vista Studio", "... Inc/LLC/Agency/Group" — is almost always a brand, ESPECIALLY when the ranking titles show one company's own site. Reason: "Other brand / company name". But do NOT flag generic descriptive words ("branded/custom/personalized/promotional/foil/engraved/letterpress" by themselves).
 - Obvious junk, duplicate-looking, or nonsensical.
 
 Be CONSERVATIVE — when it is a plausible fit for the client, return ok=true. Judge real intent from the ranking titles, never surface words alone.
