@@ -375,7 +375,7 @@
 
 <script>
 /* ============================ BUILD ============================ */
-const BUILD='2026-06-15.9';   // bump on every deploy — used to detect a stale browser tab
+const BUILD='2026-06-15.10';   // bump on every deploy — used to detect a stale browser tab
 /* ============================ STATE ============================ */
 const STATE = {
   step: 0,
@@ -1106,7 +1106,7 @@ function renderShort(mode){
   const filterRow=(label,allId,clrId,html,sep)=>`<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;${sep?'padding-bottom:9px;margin-bottom:9px;border-bottom:1px solid var(--line)':'margin-bottom:6px'}"><b style="font-size:12px;width:82px">${label}</b><button class="btn ghost sm" id="${allId}">All</button><button class="btn ghost sm" id="${clrId}">Clear</button>${html}</div>`;
   const filtersBody=`
   <div class="tablewrap">
-    <div class="tbar"><b style="font-size:13px">Pick relevant audiences, types &amp; modifiers</b><span style="flex:1"></span>${serpStatus}<button class="btn sec sm" id="smartSuggest" title="Pre-tick the types &amp; audience that match this client's configured services">✨ Smart suggest</button><button class="btn sm" id="export">⤓ Export CSV</button></div>
+    <div class="tbar"><b style="font-size:13px">Pick relevant audiences, types &amp; modifiers</b><span style="flex:1"></span>${serpStatus}<button class="btn sec sm" id="smartSuggest" title="Pre-tick the types &amp; audience that match this client's configured services">✨ Smart suggest</button></div>
     <div style="padding:8px 14px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px">
       <span class="muted" style="font-size:12px;white-space:nowrap"><b style="color:var(--ink)">${totalAll-decided}</b> to review${anyFilter?' <span style="color:var(--accent)">(in filter)</span>':''} <span style="opacity:.7">· ${decided}/${totalAll} done</span></span>
       <div style="flex:1;height:7px;background:var(--line);border-radius:4px;overflow:hidden"><div style="width:${pct}%;height:100%;background:var(--accent);transition:width .2s"></div></div>
@@ -1173,7 +1173,7 @@ function renderShort(mode){
   <div class="tablewrap">
     <div class="tbar"><b style="font-size:13px">${selAll.length} selected</b>
       <span class="muted" style="font-size:12px">· ${selVol.toLocaleString()} total volume${selRows.length!==selAll.length?` · <b style="color:var(--ink)">${selRows.length}</b> shown`:''} · updates live</span>
-      <span style="flex:1"></span><button class="btn sec sm" id="export" title="Export every topic with its decision">⤓ Export all</button><button class="btn sm" id="exportSel" title="Export only the selected/kept topics">⤓ Export selected</button></div>
+      <span style="flex:1"></span></div>
     ${selAll.length?`<div style="padding:9px 14px;border-bottom:1px solid var(--line)">
       ${sRow('Page type','pt',selPtOpts,'',v=>esc(ptShort(v)))}
       ${sRow('Audience','aud',selAudOpts,'aud')}
@@ -1237,7 +1237,7 @@ function renderShort(mode){
   <div class="tablewrap">
     <div class="tbar"><b style="font-size:13px">${rejAll.length} rejected</b>
       <span class="muted" style="font-size:12px">· ${nPre} pre-rule · ${rejAll.length-nPre} decision${rejRows.length!==rejAll.length?` · <b style="color:var(--ink)">${rejRows.length}</b> shown`:''}</span>
-      <span style="flex:1"></span><button class="btn sec sm" id="export" title="Export every topic with its decision">⤓ Export all</button></div>
+      <span style="flex:1"></span></div>
     <div style="padding:9px 14px;border-bottom:1px solid var(--line)">
       ${rRow('Page type','pt',rejPtOpts,'',v=>esc(ptShort(v)))}
       ${rRow('Audience','aud',rejAudOpts,'aud')}
@@ -1283,7 +1283,7 @@ function renderShort(mode){
         <button class="btn" id="serpAll">↻ Process ${phase==='Blog'?'blog':'service'} topics (${needN})</button>
       </div>`;
   $('#view').innerHTML=`
-  <div class="pagehead"><h2>Shortlist — ${h2} <span style="font-weight:400;color:var(--muted);font-size:14px">→ pages to build</span></h2><p>${blurb}</p></div>
+  <div class="pagehead" style="display:flex;align-items:flex-start;gap:14px"><div style="flex:1"><h2>Shortlist — ${h2} <span style="font-weight:400;color:var(--muted);font-size:14px">→ pages to build</span></h2><p>${blurb}</p></div><button class="btn" id="export" title="Export every topic across all tabs (with its decision) to CSV" style="white-space:nowrap">⤓ Export all (${STATE.rows.length})</button></div>
   <div class="phasetabs" style="margin-bottom:14px">
     <button class="vtab ${vm==='svc'?'on':''}" data-vm="svc">Service / Product (${svcCount})</button>
     <button class="vtab ${vm==='blog'?'on':''}" data-vm="blog">Blog / Category (${blogCount})</button>
@@ -1576,8 +1576,8 @@ function exportCsv(selectedOnly){
   const lines=[cols.join(',')];
   src.forEach(r=>lines.push([
     r.kw, r.sec, r.pageType, r.topic, r.vol, r.rel,
-    r.typeIds.join('; '),                       // identifier columns — each can hold more than one
-    r.modIds.join('; '),
+    (r.typeIds||[]).join('; '),                 // identifier columns — each can hold more than one
+    (r.modIds||[]).join('; '),
     r.profile,
     isBofu(r)?'Yes':'No',
     decLabel(r.status),                         // Decision: Approved / Rejected / Pending
