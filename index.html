@@ -375,7 +375,7 @@
 
 <script>
 /* ============================ BUILD ============================ */
-const BUILD='2026-06-15.13';   // bump on every deploy — used to detect a stale browser tab
+const BUILD='2026-06-15.14';   // bump on every deploy — used to detect a stale browser tab
 /* ============================ STATE ============================ */
 const STATE = {
   step: 0,
@@ -1412,21 +1412,23 @@ async function runReview(){
   });
   // ---- LAYER 2: LLM intent pass — only on items the rules did NOT already flag ----
   const need=items.filter(it=>!results[String(it.id)]);
+  let aiFail=0;
   if(onServerHost() && need.length){
     const client=clientCtx();
-    try{
-      for(let i=0;i<need.length;i+=30){
-        const batch=need.slice(i,i+30);
-        const payload=batch.map(it=>({id:String(it.id),kw:it.kw,topic:it.topic,audience:it.profile,type:it.family,titles:(it.titles||[]).slice(0,6)}));
+    for(let i=0;i<need.length;i+=30){
+      const batch=need.slice(i,i+30);
+      const payload=batch.map(it=>({id:String(it.id),kw:it.kw,topic:it.topic,audience:it.profile,type:it.family,titles:(it.titles||[]).slice(0,6)}));
+      try{
         const res=await fetch('/api/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:payload,client})});
-        if(!res.ok) throw new Error('review '+res.status);
+        if(!res.ok) throw new Error('HTTP '+res.status);
         const j=await res.json();
         (j.results||[]).forEach(o=>{ if(o.ok===false) results[String(o.id)]={ok:false,reason:o.reason||'Off intent',severity:o.severity==='high'?'high':'low',layer:'AI'}; });
-        STATE.review.prog=Math.min(i+30,need.length)+'/'+need.length+' (AI)';
-        const pe=document.getElementById('revProg'); if(pe)pe.textContent='Reviewing '+STATE.review.prog+'…';
-      }
-    }catch(e){ STATE.review.running=false; render(); toast('AI layer failed — '+e.message+' (rule checks still applied)'); STATE.review.ran=true; saveState(); render(); return; }
-  } else if(!onServerHost() && need.length){ toast('Rule checks ran; AI layer needs the deployed site'); }
+      }catch(e){ aiFail+=batch.length; }   // a failed batch never aborts the run — rule results + the rest still stand
+      STATE.review.prog=Math.min(i+30,need.length)+'/'+need.length+' (AI)';
+      const pe=document.getElementById('revProg'); if(pe)pe.textContent='Reviewing '+STATE.review.prog+'…';
+    }
+    if(aiFail) toast('AI layer couldn’t check '+aiFail+' topic'+(aiFail===1?'':'s')+' — rule checks still applied');
+  } else if(!onServerHost() && need.length){ toast('Rule checks ran; the AI layer only works on the deployed site'); }
   items.forEach(it=>{ if(!results[String(it.id)]) results[String(it.id)]={ok:true,reason:'',severity:'low',layer:''}; });   // everything not flagged passed both layers
   STATE.review.running=false; STATE.review.ran=true; saveState(); render();
 }
