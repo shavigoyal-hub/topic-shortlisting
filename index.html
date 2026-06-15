@@ -751,6 +751,7 @@ function collectAkrSheets(wb){
 // auto-fill config from the Services / Industry / Competitors tabs of one workbook
 function autoPopulateFromWorkbook(wb){
   const c=STATE.config, det={services:0,industries:0,competitors:0};
+  c.services=[]; c.industries=[]; c.competitors=[];   // fresh per upload — a new sheet defines a new client (no carry-over from the previous one)
   const aoaOf=n=>XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,blankrows:false});
   const colVals=(aoa,ci,startRow=1)=>{const out=[];for(let r=startRow;r<aoa.length;r++){const v=(aoa[r]||[])[ci];if(v!=null&&String(v).trim())out.push(String(v).replace(/\s+/g,' ').trim());}return out;};
   wb.SheetNames.forEach(name=>{
