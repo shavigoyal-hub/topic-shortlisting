@@ -359,7 +359,7 @@
   <aside class="side">
     <div class="brand">Topic Shortlisting<small id="brandClient">Keyword → Topic curation</small></div>
     <nav class="steps" id="stepNav"></nav>
-    <div class="side-foot">Local & private · auto-saved in this browser<div class="side-links"><span class="signout" id="openAdmin">⚙︎ Admin</span><span class="signout" id="signout">Sign out</span></div></div>
+    <div class="side-foot">Local & private · auto-saved in this browser · <span id="buildTag" title="App version running in this tab"></span><div class="side-links"><span class="signout" id="openAdmin">⚙︎ Admin</span><span class="signout" id="signout">Sign out</span></div></div>
   </aside>
 
   <!-- MAIN -->
@@ -374,6 +374,8 @@
 <div class="toast" id="toast"></div>
 
 <script>
+/* ============================ BUILD ============================ */
+const BUILD='2026-06-15.6';   // bump on every deploy — used to detect a stale browser tab
 /* ============================ STATE ============================ */
 const STATE = {
   step: 0,
@@ -1756,6 +1758,31 @@ function initAdmin(){
     renderStats(); render();
   };
 }
+
+/* ============================ STALE-TAB DETECTION ============================ */
+// Most "the bug is back" reports are a browser tab still running an OLD deploy. Show the running build,
+// and poll the server's index.html for a newer BUILD; if found, prompt a one-click hard reload.
+function showBuildTag(){ const e=document.getElementById('buildTag'); if(e)e.textContent='build '+BUILD; }
+function showUpdateBanner(latest){
+  if(document.getElementById('updateBar'))return;
+  const bar=document.createElement('div'); bar.id='updateBar';
+  bar.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;background:#16a06a;color:#fff;font-size:13px;font-weight:600;padding:9px 14px;display:flex;align-items:center;gap:12px;justify-content:center;box-shadow:0 2px 10px rgba(0,0,0,.2)';
+  bar.innerHTML='🔄 A newer version of the tool is available (build '+latest+'). This tab is running an older one ('+BUILD+').<button id="updReload" style="background:#fff;color:#0f7a4d;border:0;border-radius:7px;padding:5px 12px;font-weight:700;cursor:pointer">Reload now</button>';
+  document.body.appendChild(bar);
+  document.getElementById('updReload').onclick=()=>location.reload(true);
+}
+async function checkForUpdate(){
+  try{
+    const r=await fetch('index.html?_b='+Date.now(),{cache:'no-store'});
+    if(!r.ok)return; const t=await r.text();
+    const m=t.match(/const BUILD='([^']+)'/);
+    if(m && m[1] && m[1]!==BUILD) showUpdateBanner(m[1]);
+  }catch(e){}
+}
+showBuildTag();
+checkForUpdate();
+setInterval(checkForUpdate, 180000);   // re-check every 3 min
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden)checkForUpdate(); });
 
 /* ============================ BOOT ============================ */
 initAuth();
