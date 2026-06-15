@@ -1524,10 +1524,19 @@ function loadState(){ try{ const s=localStorage.getItem(LS_KEY); if(!s)return fa
   STATE.rejFilter={pt:[],aud:[],type:[],why:[],reason:[],q:''}; STATE.selFilter={pt:[],aud:[],type:[],mod:[],q:''};
   STATE.fAud=[];STATE.fTypes=[];STATE.fMods=[];STATE.fSearch='';STATE.checked={};STATE.modal=null;STATE.focusIdx=0;
   if(typeof STATE.colWidths!=='object'||!STATE.colWidths)STATE.colWidths={};
+  // LLM intent reasons (from /api/classify) — these must NOT be healed away by the rule re-eval below
+  const AI_REASONS=new Set(['Job-seeker intent','Researcher/student intent','Branded query','Off-ICP audience','No commercial intent','Off-intent']);
   (STATE.rows||[]).forEach(r=>{
     if(!Array.isArray(r.serp))r.serp=[]; if(!Array.isArray(r.serpTitles))r.serpTitles=[];  // serp arrays are stripped on save — restore so renders don't crash
     // drop any audience not backed by the current AI cache so it re-classifies (don't touch user decisions)
     if(!r.profileEdited && !r.manual && !(ICP_CACHE[r.kw]&&ICP_CACHE[r.kw].audience)) r.profile='Unclassified';
+    // self-heal stale RULE-based auto-rejections (e.g. an old build's SV-parse bug): re-run current rules.
+    // Skip manual decisions and LLM intent rejections so only outdated rule hits get cleared/refreshed.
+    if(r.status==='rejected' && !r.manual && !AI_REASONS.has(r.autoReason)){
+      const hit=evalRow(r);
+      if(!hit.length){ r.status='pending'; r.reason=''; r.autoReason=''; }
+      else { r.autoReason=hit.join('; '); r.reason=r.autoReason; }
+    }
   });
   return !!(STATE.rows&&STATE.rows.length); }catch(e){return false;} }
 function clearSession(){ if(confirm('Start over? This clears the loaded AKR and all decisions on this device.')){ localStorage.removeItem(LS_KEY); STATE.rows=[]; STATE.step=0; location.reload(); } }
