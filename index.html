@@ -375,7 +375,7 @@
 
 <script>
 /* ============================ BUILD ============================ */
-const BUILD='2026-06-15.8';   // bump on every deploy — used to detect a stale browser tab
+const BUILD='2026-06-15.9';   // bump on every deploy — used to detect a stale browser tab
 /* ============================ STATE ============================ */
 const STATE = {
   step: 0,
@@ -493,13 +493,13 @@ const JOBS_RX = /\b(jobs?|salary|salaries|hiring|career|careers|certification|ce
 /* wrong-format / commercial mismatch */
 const FORMAT_RX = /\b(login|sign in|app|apk|download|coupon|promo code|discount code|cracked|torrent|free pdf)\b/;
 /* bottom-of-funnel (high purchase / commercial intent) signal */
-const BOFU_RX = /\b(buy|buying|purchase|purchasing|order|ordering|for sale|price|prices|pricing|cost|costs|how much|cheap|cheapest|affordable|discount|near me|supplier|suppliers|wholesale|bulk|vendor|vendors|manufacturer|manufacturers|distributor|company|companies|service|services|custom|customized|customised|personalized|personalised|made to order|hire|rent|rental|shop|store|online|best|top)\b/;
-/* is this row bottom-of-funnel? research/info loses; explicit buy signals or transactional page type wins */
+const BOFU_RX = /\b(buy|buying|purchase|purchasing|order|ordering|reorder|for sale|price|prices|pricing|cost|costs|how much|cheap|cheapest|affordable|discount|quote|quotation|estimate|near me|nearby|supplier|suppliers|wholesale|bulk|vendor|vendors|manufacturer|manufacturers|distributor|distributors|compan(y|ies)|service|services|shop|store|online|hire|rent|rental|custom|customi(z|s)ed?|personali(z|s)ed?|monogram|monogrammed|engraved|branded|promotional|made to order|best|top)\b/;
+/* is this row bottom-of-funnel? Judge the SEARCH KEYWORD (not the editorial topic, which is stuffed with
+   words like "Services"/"Custom"). BOFU = an explicit commercial/purchase-intent signal; otherwise not. */
 function isBofu(r){
-  const t=blob(r);
+  const t=norm(r.kw);
   if(INFO_RX.test(t)||JOBS_RX.test(t)) return false;   // research / informational = not BOFU
-  if(BOFU_RX.test(t)) return true;                      // explicit buying / commercial signal
-  return r.pageType!=='Blog';                           // Service / Product pages are transactional by default
+  return BOFU_RX.test(t);                                // explicit buying / commercial signal in the keyword
 }
 const bofuTag=r=>isBofu(r)?'Y':'N';
 /* likely a specific brand / named organisation (not a generic topic) → reject */
