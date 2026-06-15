@@ -338,7 +338,8 @@
       <div class="admin-sec">
         <h4>AI classification <span class="admin-badge" id="icpBadge"></span></h4>
         <p>Audience &amp; type come from the AI and are cached per keyword. If you've improved the model/prompt or set the client profile, clear the cache and re-run <b>Process topics</b> to re-classify. Your keep/reject decisions are kept.</p>
-        <div class="admin-row"><button class="btn sec sm" id="reclassify" style="color:var(--accent);border-color:#cdd1fb">↻ Clear AI cache &amp; re-classify</button></div>
+        <div class="admin-row"><button class="btn sec sm" id="clrProj" style="color:var(--accent);border-color:#cdd1fb">↻ Clear cache for this project</button><button class="btn sec sm" id="reclassify" style="color:var(--red);border-color:#f3c2c2">↻ Clear ALL cache (every project)</button></div>
+        <p class="muted" style="font-size:12px;margin:6px 0 0">“This project” clears SERP rankings &amp; AI classifications only for the keywords in the currently loaded sheet — other clients’ cached data is untouched. “ALL” wipes the cache across every project on this browser.</p>
         <div class="admin-msg" id="icpMsg"></div>
       </div>
       <div class="admin-sec">
@@ -1661,6 +1662,24 @@ function initAdmin(){
     STATE.serpAuto=false; saveState(); adminPopulate();
     const m=document.getElementById('icpMsg'); m.style.color='var(--green)'; m.textContent='AI cache cleared. Close this and click “Process topics” to re-classify.';
     renderStats();
+  };
+  document.getElementById('clrProj').onclick=()=>{
+    const rows=STATE.rows||[]; const m=document.getElementById('icpMsg');
+    if(!rows.length){ m.style.color='var(--red)'; m.textContent='No project loaded — nothing to clear.'; return; }
+    if(!confirm('Clear cached SERP rankings & AI classifications for the '+rows.length+' keywords in the currently loaded project? Other clients’ cached data is untouched. Your keep/reject decisions are kept — re-run Process afterward.'))return;
+    const fams=new Set();
+    rows.forEach(r=>{
+      delete SERP_CACHE[r.kw]; delete ICP_CACHE[r.kw];
+      if(r.family)fams.add(r.family.toLowerCase());
+      r.serp=[]; r.serpTitles=[]; r.serpDone=false;
+      if(!r.manual){ r.status='pending'; r.reason=''; r.autoReason=''; }   // reset auto decisions; keep manual keep/reject
+      if(!r.profileEdited && !r.manual) r.profile='Unclassified';
+    });
+    fams.forEach(f=>{ delete TYPE_MAP[f]; });
+    saveSerpCache(); saveIcpCache(); saveTypeMap();
+    STATE.processed={Service:false,Blog:false};   // re-gate both phases so the user reprocesses fresh
+    STATE.serpAuto=false; saveState(); adminPopulate(); renderStats(); render();
+    m.style.color='var(--green)'; m.textContent='Cleared cache for '+rows.length+' keywords in this project. Close this and click “Process” in each phase to re-run.';
   };
 }
 
