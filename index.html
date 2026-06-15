@@ -375,7 +375,7 @@
 
 <script>
 /* ============================ BUILD ============================ */
-const BUILD='2026-06-15.7';   // bump on every deploy — used to detect a stale browser tab
+const BUILD='2026-06-15.8';   // bump on every deploy — used to detect a stale browser tab
 /* ============================ STATE ============================ */
 const STATE = {
   step: 0,
@@ -553,8 +553,15 @@ function serpBrandHit(r){
   const cnt={}; domains.forEach(h=>cnt[h]=(cnt[h]||0)+1);
   const dom=Object.entries(cnt).sort((a,b)=>b[1]-a[1])[0];
   if(dom && dom[1]>=4) return dom[0];                               // one site clearly owns the results → navigational/brand
-  // NOTE: removed the "keyword word appears in a top domain" heuristic — it flagged generic
-  // exact-match-domain competitors (e.g. "glass engraving" → glassengraving.com) as brands.
+  // EXACT-match domain: a top result's domain name IS (or wraps) the WHOLE keyword phrase collapsed,
+  // e.g. "glass engraving" → glassengraving.com. Requires the full phrase (≥8 chars), so a long
+  // descriptive keyword ("graphic design services for schools…") can never match a real domain.
+  const kwc=r.kw.toLowerCase().replace(/[^a-z0-9]/g,'');
+  if(kwc.length>=8){
+    const top=domains.slice(0,5);
+    const hit=top.find(h=>{ const name=h.replace(/\.[a-z.]+$/,'').replace(/[^a-z0-9]/g,''); return name && (name===kwc || name.includes(kwc)); });
+    if(hit) return hit;
+  }
   return null;
 }
 /* read the ICP from WHAT RANKS for the keyword, in two layers:
