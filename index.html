@@ -614,7 +614,7 @@ VIEWS.setup=function(){
     </div>
     <input type="file" id="file" accept=".csv,.xlsx,.xls" style="display:none">
     ${loaded?`<div class="banner" style="margin-top:14px">✓ Loaded <b>${STATE.rows.length}</b> topics · <b>${STATE.rows.filter(r=>r.status==='rejected').length}</b> auto-rejected · <b>${STATE.rows.filter(r=>r.status!=='rejected').length}</b> ready.
-      ${d?` &nbsp;Auto-filled: ${d.services?`<b>${d.services}</b> services · `:''}${d.industries?`<b>${d.industries}</b> industries · `:''}${d.competitors?`<b>${d.competitors}</b> competitors`:''}${!d.services&&!d.industries&&!d.competitors?'no Services/Industry/Competitors tabs found — fill inputs below':''}.`:''}</div>`:''}
+      ${d?` &nbsp;Auto-filled: ${d.services?`<b>${d.services}</b> offerings · `:''}${d.geo?`<b>${d.geo}</b> locations · `:''}${d.industries?`<b>${d.industries}</b> industries · `:''}${d.competitors?`<b>${d.competitors}</b> competitors`:''}${!d.services&&!d.industries&&!d.competitors&&!d.geo?'no Products/Services/Geographies/Competitors tabs found — fill inputs below':''}.`:''}</div>`:''}
   </div>
 
   ${loaded?`
@@ -750,26 +750,29 @@ function collectAkrSheets(wb){
 }
 // auto-fill config from the Services / Industry / Competitors tabs of one workbook
 function autoPopulateFromWorkbook(wb){
-  const c=STATE.config, det={services:0,industries:0,competitors:0};
+  const c=STATE.config, det={services:0,industries:0,competitors:0,geo:0};
   c.services=[]; c.industries=[]; c.competitors=[];   // fresh per upload — a new sheet defines a new client (no carry-over from the previous one)
   const aoaOf=n=>XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,blankrows:false});
   const colVals=(aoa,ci,startRow=1)=>{const out=[];for(let r=startRow;r<aoa.length;r++){const v=(aoa[r]||[])[ci];if(v!=null&&String(v).trim())out.push(String(v).replace(/\s+/g,' ').trim());}return out;};
   wb.SheetNames.forEach(name=>{
     const ln=norm(name);
-    if(/service/.test(ln)){
+    if(/service|product|offering/.test(ln) && !/competitor/.test(ln)){
       const aoa=aoaOf(name); if(!aoa.length)return;
       const head=(aoa[0]||[]).map(h=>norm(h));
       const di=head.findIndex(h=>h.includes('detail')); const ti=head.findIndex(h=>h.includes('type'));
-      // prefer the specific "Details" offerings; fall back to Service Type, then first column
+      // prefer the specific "Details" offerings; fall back to Service/Product Type, then first column
       let vals = di>=0 ? colVals(aoa,di) : (ti>=0 ? colVals(aoa,ti) : colVals(aoa,0));
       vals=[...new Set(vals)];
-      if(vals.length){c.services=vals;det.services=vals.length;c.offering='Services';}
+      if(vals.length){c.services=vals;det.services=vals.length;c.offering=/product/.test(ln)?'Product':'Services';}
     } else if(/industr/.test(ln)){
       const aoa=aoaOf(name); const vals=[...new Set(colVals(aoa,0))];
       if(vals.length){c.industries=vals;det.industries=vals.length;}
-    } else if(/competitor/.test(ln)){
+    } else if(/competitor|brand/.test(ln)){
       const aoa=aoaOf(name); const vals=[...new Set(colVals(aoa,0))];
       if(vals.length){c.competitors=vals;det.competitors=vals.length;}
+    } else if(/geograph|location|target geo|geo|region|market/.test(ln)){
+      const aoa=aoaOf(name); const vals=[...new Set(colVals(aoa,0))];
+      if(vals.length){c.locations=vals;c.geoMode='restricted';det.geo=vals.length;}
     }
   });
   STATE.detected=det;
