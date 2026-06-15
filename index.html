@@ -720,12 +720,13 @@ function loadFile(file){
   const ext=file.name.split('.').pop().toLowerCase();
   const reader=new FileReader();
   STATE.detected=null;
-  reader.onload=e=>{
+  reader.onload=async e=>{
     try{
       let aoa;
       if(ext==='csv'){ aoa = csvToAoa(e.target.result); }
       else { const wb=XLSX.read(e.target.result,{type:'array'});
-             autoPopulateFromWorkbook(wb);          // fill Services / Industry / Competitors tabs
+             autoPopulateFromWorkbook(wb);          // name-regex baseline (Products/Services/Industry/Competitors/Geographies)
+             await semanticTabRoles(wb);            // LLM fallback: understand tabs by content for any field still empty
              ingestSheets(collectAkrSheets(wb)); aoa=true; }   // combine ALL AKR tabs
       if(ext==='csv') ingest(aoa);
       processRows();                     // auto identifiers + auto-reject, behind the scenes
@@ -774,6 +775,30 @@ function autoPopulateFromWorkbook(wb){
       const aoa=aoaOf(name); const vals=[...new Set(colVals(aoa,0))];
       if(vals.length){c.locations=vals;c.geoMode='restricted';det.geo=vals.length;}
     }
+  });
+  STATE.detected=det;
+}
+/* semantic fallback: ask the LLM what each tab actually contains, then fill any config the name-regex missed */
+async function semanticTabRoles(wb){
+  if(!onServerHost()) return;
+  const aoaOf=n=>XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,blankrows:false});
+  const colVals=(aoa,ci,startRow=1)=>{const out=[];for(let r=startRow;r<aoa.length;r++){const v=(aoa[r]||[])[ci];if(v!=null&&String(v).trim())out.push(String(v).replace(/\s+/g,' ').trim());}return out;};
+  const c=STATE.config, det=STATE.detected||{services:0,industries:0,competitors:0,geo:0};
+  // only bother if something is still unfilled (regex already handled the obvious tabs)
+  if(c.services.length && c.industries.length && c.competitors.length && c.locations.length) return;
+  const tabs=wb.SheetNames.map(n=>({name:n, sample:aoaOf(n).slice(0,5).map(r=>(r||[]).slice(0,5))}));
+  let roles, kind;
+  try{
+    const res=await fetch('/api/classify-tabs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tabs})});
+    if(!res.ok) return; const j=await res.json(); roles=j.roles||{}; kind=j.offeringKind;
+  }catch(e){ return; }
+  wb.SheetNames.forEach(n=>{
+    const role=roles[n]; if(!role||role==='keywords'||role==='other')return;
+    const vals=[...new Set(colVals(aoaOf(n),0))]; if(!vals.length)return;
+    if(role==='offerings' && !c.services.length){ c.services=vals; det.services=vals.length; c.offering=kind==='product'?'Product':kind==='both'?'Both':'Services'; }
+    else if(role==='industries' && !c.industries.length){ c.industries=vals; det.industries=vals.length; }
+    else if(role==='competitors' && !c.competitors.length){ c.competitors=vals; det.competitors=vals.length; }
+    else if(role==='geography' && !c.locations.length){ c.locations=vals; c.geoMode='restricted'; det.geo=vals.length; }
   });
   STATE.detected=det;
 }
