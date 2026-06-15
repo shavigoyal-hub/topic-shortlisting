@@ -1408,6 +1408,17 @@ function canonType(t){ return (t&&TYPE_MAP[t.toLowerCase()])||t; }
 function siteKey(u){ return String(u||'').replace(/^https?:\/\/(www\.)?/i,'').replace(/[\/?#].*$/,'').replace(/\/$/,'').trim().toLowerCase(); }
 function currentSite(){ return siteKey(STATE.config&&STATE.config.website); }
 const UNTAGGED='(untagged · legacy)';
+/* stamp the currently-loaded project's domain onto its own legacy (untagged) cache entries, so old caches group per-project */
+function backfillCacheSite(){
+  const site=currentSite(); if(!site) return 0;
+  let n=0;
+  (STATE.rows||[]).forEach(r=>{
+    const ic=ICP_CACHE[r.kw]; if(ic && typeof ic==='object' && !ic.site){ ic.site=site; n++; }
+    const sc=SERP_CACHE[r.kw]; if(sc && typeof sc==='object' && !sc.site){ sc.site=site; }
+  });
+  if(n){ saveIcpCache(); saveSerpCache(); }
+  return n;
+}
 /* distinct cached keywords per project domain, across SERP + AI caches */
 function cacheDomains(){
   const m={};
@@ -1628,6 +1639,7 @@ function bootApp(){
   loadTypeMap();
   loadState();
   STATE.rows.forEach(r=>{ if(r.serpDone && !r.serp.length){ const c=SERP_CACHE[r.kw]; if(c){ r.serp=c.serp||[]; r.serpTitles=c.titles||[]; } } });   // re-hydrate stripped rankings from the keyword cache
+  backfillCacheSite();   // stamp the loaded project's domain onto any legacy (untagged) cache entries so they group per-project
   const sk=localStorage.getItem(SERPKEY_LS); if(sk)STATE.config.serperKey=sk;   // browser-stored key wins over saved session
   STATE.serpRunning=false; STATE.serpCancel=false; STATE.serpAuto=false;   // reset transient rankings flags each load
   render();
@@ -1667,6 +1679,7 @@ function adminPopulate(){
   // per-domain cache breakdown with a Clear button each
   const cd=document.getElementById('cacheByDomain');
   if(cd){
+    backfillCacheSite();   // tag the open project's legacy cache entries before showing the breakdown
     const doms=cacheDomains(); const cur=currentSite();
     cd.innerHTML = doms.length ? doms.map(([site,cnt])=>{
       const isCur = site!==UNTAGGED && site===cur;
