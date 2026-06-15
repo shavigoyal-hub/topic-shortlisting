@@ -11,7 +11,10 @@ module.exports = async (req, res) => {
   const client = (body && body.client) || {};
   if (!Array.isArray(items) || !items.length) { res.statusCode = 400; return res.end(JSON.stringify({ error: 'missing items' })); }
 
-  const lines = items.slice(0, 60).map(it => `{"id": ${JSON.stringify(it.id)}, "keyword": ${JSON.stringify(String(it.kw || ''))}, "topic": ${JSON.stringify(String(it.topic || ''))}, "audience": ${JSON.stringify(String(it.audience || ''))}, "type": ${JSON.stringify(String(it.type || ''))}}`).join('\n');
+  const lines = items.slice(0, 60).map(it => {
+    const titles = (it.titles || []).slice(0, 6).map(t => String(t).slice(0, 140)).join(' | ');
+    return `{"id": ${JSON.stringify(it.id)}, "keyword": ${JSON.stringify(String(it.kw || ''))}, "topic": ${JSON.stringify(String(it.topic || ''))}, "audience": ${JSON.stringify(String(it.audience || ''))}, "type": ${JSON.stringify(String(it.type || ''))}, "ranking_titles": ${JSON.stringify(titles)}}`;
+  }).join('\n');
 
   const clientDesc = [
     client.offering ? `Offering: ${client.offering}.` : '',
@@ -24,20 +27,24 @@ module.exports = async (req, res) => {
 
 CLIENT: ${clientDesc}
 
+HOW TO JUDGE INTENT (most important):
+- Decide what the searcher ACTUALLY wants from the keyword PLUS the "ranking_titles" (the titles of pages currently ranking on Google). The ranking titles are the strongest evidence of real intent — trust them over your own assumptions about the words.
+- Read the keyword IN THE CLIENT'S CONTEXT. The same words mean different things for different businesses. For a printing / engraving / signage client: "gold foil stamps" = foil-stamping / hot-stamp foil for print (a real product), NOT postage or collectible stamps; "plates" = printing plates; "die cutting" = a print finishing service. If the ranking titles are about the client's industry, it is on-topic — keep it.
+- Do NOT flag a keyword just because a word is ambiguous, broad, or low-volume. Only flag a CLEAR mistake.
+
 For each item decide:
-- "ok": true if it is a reasonable page to build for THIS client; false if it looks wrongly selected.
-- "severity": "high" if it is clearly a mistake (off-topic / wrong business / no buyer), "low" if it is merely questionable / borderline.
+- "ok": true if it is a reasonable page to build for THIS client; false only if it is clearly wrongly selected.
+- "severity": "high" if it is clearly a mistake (off-topic / wrong business / no buyer), "low" if merely questionable / borderline.
 - "reason": when ok=false, a SHORT specific reason (max ~12 words). When ok=true, "".
 
-Flag ok=false when the topic is:
-- Not related to what the client offers (different product/industry/service).
-- Wrong audience / outside the client's ICP.
-- Pure information/research with no path to the client's offering (e.g. "what is", "meaning", "history of") — only if it does not support the offering.
+Flag ok=false ONLY when the topic is:
+- Genuinely about a DIFFERENT product/industry than the client offers (and the ranking titles confirm it is unrelated).
+- Wrong audience / clearly outside the client's ICP.
 - Job/career/education seeker intent ("jobs", "salary", "course", "certification").
-- A specific competitor's or other company's BRAND name (navigational) — NOT generic descriptive words like "branded/custom/personalized/promotional".
+- A specific competitor's or other company's BRAND name (navigational) — NOT generic descriptive words like "branded/custom/personalized/promotional/foil/engraved".
 - Obvious junk, duplicate-looking, or nonsensical.
 
-Be CONSERVATIVE: when it is a plausible fit, return ok=true. Do not flag something just because it is broad or low-volume. Judge real intent, not surface words.
+Be CONSERVATIVE — when it is a plausible fit for the client, return ok=true. Judge real intent from the ranking titles, never surface words alone.
 
 Return ONLY JSON: {"results":[{"id":<id>,"ok":true|false,"severity":"high|low","reason":"..."}]} — one entry per input id.`;
 

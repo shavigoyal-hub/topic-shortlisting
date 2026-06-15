@@ -375,7 +375,7 @@
 
 <script>
 /* ============================ BUILD ============================ */
-const BUILD='2026-06-15.11';   // bump on every deploy — used to detect a stale browser tab
+const BUILD='2026-06-15.12';   // bump on every deploy — used to detect a stale browser tab
 /* ============================ STATE ============================ */
 const STATE = {
   step: 0,
@@ -1368,7 +1368,7 @@ VIEWS.short=()=>renderShort('icp');
 // The current list under review: either this session's selected topics, or an uploaded list.
 function reviewItems(){
   if(STATE.review.source==='upload') return STATE.review.uploaded||[];
-  return STATE.rows.filter(r=>r.status==='selected').map(r=>({id:String(r.id),kw:r.kw,topic:r.topic,profile:r.profile,family:r.family,vol:r.vol,pageType:r.pageType}));
+  return STATE.rows.filter(r=>r.status==='selected').map(r=>({id:String(r.id),kw:r.kw,topic:r.topic,profile:r.profile,family:r.family,vol:r.vol,pageType:r.pageType,titles:(r.serpTitles||[]).slice(0,6)}));
 }
 function parseReviewAoa(aoa){
   if(!aoa||!aoa.length) return [];
@@ -1404,7 +1404,7 @@ async function runReview(){
   try{
     for(let i=0;i<items.length;i+=30){
       const batch=items.slice(i,i+30);
-      const payload=batch.map(it=>({id:String(it.id),kw:it.kw,topic:it.topic,audience:it.profile,type:it.family}));
+      const payload=batch.map(it=>({id:String(it.id),kw:it.kw,topic:it.topic,audience:it.profile,type:it.family,titles:(it.titles||[]).slice(0,6)}));
       const res=await fetch('/api/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:payload,client})});
       if(!res.ok) throw new Error('review '+res.status);
       const j=await res.json();
