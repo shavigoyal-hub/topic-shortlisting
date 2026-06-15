@@ -338,10 +338,10 @@
         <div class="admin-msg" id="sessMsg"></div>
       </div>
       <div class="admin-sec">
-        <h4>AI classification <span class="admin-badge" id="icpBadge"></span></h4>
-        <p>Audience &amp; type come from the AI and are cached per keyword. If you've improved the model/prompt or set the client profile, clear the cache and re-run <b>Process topics</b> to re-classify. Your keep/reject decisions are kept.</p>
-        <div class="admin-row"><button class="btn sec sm" id="clrProj" style="color:var(--accent);border-color:#cdd1fb">↻ Clear cache for this project</button><button class="btn sec sm" id="reclassify" style="color:var(--red);border-color:#f3c2c2">↻ Clear ALL cache (every project)</button></div>
-        <p class="muted" style="font-size:12px;margin:6px 0 0">“This project” clears SERP rankings &amp; AI classifications only for the keywords in the currently loaded sheet — other clients’ cached data is untouched. “ALL” wipes the cache across every project on this browser.</p>
+        <h4>Cached AI &amp; rankings <span class="admin-badge" id="icpBadge"></span></h4>
+        <p>SERP rankings &amp; AI audience/type are cached per keyword and grouped by the project domain they were processed under. Clear a single project to re-classify just that client; your keep/reject decisions are kept. Re-run <b>Process topics</b> afterward.</p>
+        <div id="cacheByDomain" style="margin:8px 0"></div>
+        <div class="admin-row"><button class="btn sec sm" id="reclassify" style="color:var(--red);border-color:#f3c2c2">↻ Clear ALL cache (every project)</button></div>
         <div class="admin-msg" id="icpMsg"></div>
       </div>
       <div class="admin-sec">
@@ -1404,6 +1404,37 @@ let TYPE_MAP={};
 function loadTypeMap(){ try{TYPE_MAP=JSON.parse(localStorage.getItem(TYPE_MAP_KEY)||'{}');}catch(e){TYPE_MAP={};} }
 function saveTypeMap(){ try{localStorage.setItem(TYPE_MAP_KEY, JSON.stringify(TYPE_MAP));}catch(e){} }
 function canonType(t){ return (t&&TYPE_MAP[t.toLowerCase()])||t; }
+/* per-project cache tagging: normalise a website to a bare domain so cache entries can be grouped/cleared by client */
+function siteKey(u){ return String(u||'').replace(/^https?:\/\/(www\.)?/i,'').replace(/[\/?#].*$/,'').replace(/\/$/,'').trim().toLowerCase(); }
+function currentSite(){ return siteKey(STATE.config&&STATE.config.website); }
+const UNTAGGED='(untagged · legacy)';
+/* distinct cached keywords per project domain, across SERP + AI caches */
+function cacheDomains(){
+  const m={};
+  const add=(kw,v)=>{ const s=(v&&v.site)||UNTAGGED; (m[s]=m[s]||new Set()).add(kw); };
+  Object.entries(ICP_CACHE).forEach(([kw,v])=>add(kw,v));
+  Object.entries(SERP_CACHE).forEach(([kw,v])=>add(kw,v));
+  return Object.entries(m).map(([site,set])=>[site,set.size]).sort((a,b)=>b[1]-a[1]);
+}
+/* delete every SERP + AI cache entry for one project domain (UNTAGGED clears entries with no site tag) */
+function clearCacheForSite(site){
+  const want = site===UNTAGGED ? '' : site;
+  const match=v=>((v&&v.site)||'')===want;
+  let n=0;
+  Object.keys(ICP_CACHE).forEach(kw=>{ if(match(ICP_CACHE[kw])){ delete ICP_CACHE[kw]; n++; } });
+  Object.keys(SERP_CACHE).forEach(kw=>{ if(match(SERP_CACHE[kw])) delete SERP_CACHE[kw]; });
+  saveIcpCache(); saveSerpCache();
+  // reset any loaded rows that just lost their cache (i.e. the cleared project is the one open) so they reprocess fresh
+  let touched=false;
+  (STATE.rows||[]).forEach(r=>{
+    if(ICP_CACHE[r.kw]&&ICP_CACHE[r.kw].audience) return;   // still cached — untouched project
+    if(r.serpDone && !SERP_CACHE[r.kw]){ r.serp=[]; r.serpTitles=[]; r.serpDone=false; touched=true; }
+    if(!r.manual && r.status==='rejected'){ r.status='pending'; r.reason=''; r.autoReason=''; touched=true; }
+    if(!r.profileEdited && !r.manual){ r.profile='Unclassified'; touched=true; }
+  });
+  if(touched){ STATE.processed={Service:false,Blog:false}; STATE.serpAuto=false; saveState(); renderStats(); }
+  return n;
+}
 /* cluster the raw GPT type labels into a clean ~8-12 taxonomy (one cheap LLM call), then relabel */
 async function consolidateTypes(rows){
   rows.forEach(r=>{ r.family=canonType(r.family); });                     // apply any known mappings first
@@ -1447,7 +1478,7 @@ async function llmClassify(rows){
       if(!res.ok) throw new Error('classify '+res.status);
       const j=await res.json();
       const got=new Set();
-      (j.results||[]).forEach(o=>{ const r=STATE.rows.find(x=>x.id==o.id); if(r){ got.add(r.id); ICP_CACHE[r.kw]={audience:o.audience,type:o.type,keep:o.keep,reason:o.reason}; applyIcp(r); } });   // loose == : tolerate string/number ids
+      (j.results||[]).forEach(o=>{ const r=STATE.rows.find(x=>x.id==o.id); if(r){ got.add(r.id); ICP_CACHE[r.kw]={audience:o.audience,type:o.type,keep:o.keep,reason:o.reason,site:currentSite()}; applyIcp(r); } });   // loose == : tolerate string/number ids
       batch.forEach(r=>{ if(!got.has(r.id)) fallback(r); });   // any item the model didn't return → heuristic, so nothing is left unclassified
       saveIcpCache();
     }catch(e){ down=true; if(i===0)toast('Intent AI unavailable — using fallback'); batch.forEach(fallback); }
@@ -1483,7 +1514,7 @@ async function fetchSerp(r){
   r.serp=items.map(o=>o.link||'');
   r.serpTitles=items.filter(o=>{const h=hostOf(o.link||'');return !IGNORE_DOMAINS.test(h)&&!isHomepage(o.link||'');}).map(o=>((o.title||'')+' '+(o.snippet||'')).trim());
   r.serpDone=true;
-  SERP_CACHE[r.kw]={serp:r.serp,titles:r.serpTitles}; saveSerpCache();   // cache by keyword
+  SERP_CACHE[r.kw]={serp:r.serp,titles:r.serpTitles,site:currentSite()}; saveSerpCache();   // cache by keyword + project
   applySerpResult(r);
   return {cached:false};
 }
@@ -1633,6 +1664,27 @@ function adminPopulate(){
   let acts=[]; try{acts=JSON.parse(localStorage.getItem(ACTIVITY_LS)||'[]');}catch(e){}
   document.getElementById('actCount').textContent=acts.length;
   const icpN=Object.keys(ICP_CACHE||{}).length, ib=document.getElementById('icpBadge'); if(ib){ib.textContent=icpN?icpN+' cached':'empty';ib.className='admin-badge '+(icpN?'ok':'warn');}
+  // per-domain cache breakdown with a Clear button each
+  const cd=document.getElementById('cacheByDomain');
+  if(cd){
+    const doms=cacheDomains(); const cur=currentSite();
+    cd.innerHTML = doms.length ? doms.map(([site,cnt])=>{
+      const isCur = site!==UNTAGGED && site===cur;
+      const label = site===UNTAGGED ? site : site;
+      return `<div style="display:flex;align-items:center;gap:10px;padding:7px 10px;border:1px solid var(--line);border-radius:9px;margin-bottom:6px">
+        <span style="flex:1;font-size:13px;font-weight:600">${esc(label)}${isCur?' <span class="admin-badge ok" style="font-weight:600">open now</span>':''}</span>
+        <span class="muted" style="font-size:12px;white-space:nowrap">${cnt} keyword${cnt===1?'':'s'}</span>
+        <button class="btn sec sm clrDom" data-site="${esc(site)}" style="color:var(--accent);border-color:#cdd1fb">↻ Clear</button>
+      </div>`;
+    }).join('') : '<p class="muted" style="font-size:12px;margin:0">Nothing cached yet.</p>';
+    cd.querySelectorAll('.clrDom').forEach(b=>b.onclick=()=>{
+      const site=b.dataset.site, m=document.getElementById('icpMsg');
+      if(!confirm('Clear all cached rankings & AI classifications for “'+site+'”? Your keep/reject decisions are kept; re-run Process for that project afterward.'))return;
+      const n=clearCacheForSite(site);
+      adminPopulate();
+      m.style.color='var(--green)'; m.textContent='Cleared '+n+' cached keyword'+(n===1?'':'s')+' for “'+site+'”.';
+    });
+  }
   const f2=x=>String(x).padStart(2,'0');
   document.getElementById('actList').innerHTML = acts.length?acts.slice(0,200).map(a=>{const d=new Date(a.ts);const ds=`${d.getFullYear()}-${f2(d.getMonth()+1)}-${f2(d.getDate())} ${f2(d.getHours())}:${f2(d.getMinutes())}`;const site=(a.site||'').replace(/^https?:\/\/(www\.)?/,'').replace(/\/$/,''); return `<div style="display:flex;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line);font-size:12px"><span class="muted" style="white-space:nowrap;font-variant-numeric:tabular-nums">${ds}</span><span style="flex:1">${esc(a.label)}</span>${site?`<span class="muted" style="white-space:nowrap">${esc(site)}</span>`:''}</div>`;}).join(''):'<div style="padding:14px;color:var(--muted);font-size:12px">No activity recorded yet.</div>';
   ['pwMsg','serpMsg','sessMsg','actMsg','icpMsg'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent='';});
@@ -1683,30 +1735,12 @@ function initAdmin(){
   document.getElementById('actExport').onclick=()=>{ let acts=[]; try{acts=JSON.parse(localStorage.getItem(ACTIVITY_LS)||'[]');}catch(e){} if(!acts.length){const m=document.getElementById('actMsg');m.style.color='var(--red)';m.textContent='Log is empty.';return;} const q=s=>'"'+String(s==null?'':s).replace(/"/g,'""')+'"'; const lines=['Timestamp,Action,Topics,Project']; acts.forEach(a=>lines.push([new Date(a.ts).toISOString(),a.label,a.n,a.site].map(q).join(','))); const b=new Blob([lines.join('\n')],{type:'text/csv'}); const el=document.createElement('a');el.href=URL.createObjectURL(b);el.download='activity-log.csv';el.click(); };
   document.getElementById('actClear').onclick=()=>{ if(confirm('Clear the entire activity log on this browser? This cannot be undone.')){ localStorage.removeItem(ACTIVITY_LS); adminPopulate(); const m=document.getElementById('actMsg');m.style.color='var(--green)';m.textContent='Activity log cleared.'; } };
   document.getElementById('reclassify').onclick=()=>{
-    if(!confirm('Clear all AI audience/type classifications and re-classify? Your keep/reject decisions are kept; run "Process topics" after.'))return;
-    localStorage.removeItem(ICP_CACHE_KEY); localStorage.removeItem(TYPE_MAP_KEY); ICP_CACHE={}; TYPE_MAP={};
-    STATE.rows.forEach(r=>{ if(!r.profileEdited && !r.manual) r.profile='Unclassified'; });   // show as needing processing (keep/reject untouched)
-    STATE.serpAuto=false; saveState(); adminPopulate();
-    const m=document.getElementById('icpMsg'); m.style.color='var(--green)'; m.textContent='AI cache cleared. Close this and click “Process topics” to re-classify.';
-    renderStats();
-  };
-  document.getElementById('clrProj').onclick=()=>{
-    const rows=STATE.rows||[]; const m=document.getElementById('icpMsg');
-    if(!rows.length){ m.style.color='var(--red)'; m.textContent='No project loaded — nothing to clear.'; return; }
-    if(!confirm('Clear cached SERP rankings & AI classifications for the '+rows.length+' keywords in the currently loaded project? Other clients’ cached data is untouched. Your keep/reject decisions are kept — re-run Process afterward.'))return;
-    const fams=new Set();
-    rows.forEach(r=>{
-      delete SERP_CACHE[r.kw]; delete ICP_CACHE[r.kw];
-      if(r.family)fams.add(r.family.toLowerCase());
-      r.serp=[]; r.serpTitles=[]; r.serpDone=false;
-      if(!r.manual){ r.status='pending'; r.reason=''; r.autoReason=''; }   // reset auto decisions; keep manual keep/reject
-      if(!r.profileEdited && !r.manual) r.profile='Unclassified';
-    });
-    fams.forEach(f=>{ delete TYPE_MAP[f]; });
-    saveSerpCache(); saveIcpCache(); saveTypeMap();
-    STATE.processed={Service:false,Blog:false};   // re-gate both phases so the user reprocesses fresh
-    STATE.serpAuto=false; saveState(); adminPopulate(); renderStats(); render();
-    m.style.color='var(--green)'; m.textContent='Cleared cache for '+rows.length+' keywords in this project. Close this and click “Process” in each phase to re-run.';
+    if(!confirm('Clear ALL cached rankings & AI classifications for EVERY project on this browser, and re-classify? Your keep/reject decisions are kept; run "Process topics" after.'))return;
+    localStorage.removeItem(ICP_CACHE_KEY); localStorage.removeItem(TYPE_MAP_KEY); localStorage.removeItem(SERP_CACHE_KEY); ICP_CACHE={}; TYPE_MAP={}; SERP_CACHE={};
+    STATE.rows.forEach(r=>{ r.serp=[];r.serpTitles=[];r.serpDone=false; if(!r.manual && r.status==='rejected'){r.status='pending';r.reason='';r.autoReason='';} if(!r.profileEdited && !r.manual) r.profile='Unclassified'; });   // reset for reprocessing (keep/reject untouched)
+    STATE.processed={Service:false,Blog:false}; STATE.serpAuto=false; saveState(); adminPopulate();
+    const m=document.getElementById('icpMsg'); m.style.color='var(--green)'; m.textContent='All cache cleared (every project). Close this and click “Process topics” to re-classify.';
+    renderStats(); render();
   };
 }
 
