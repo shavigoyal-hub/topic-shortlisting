@@ -464,6 +464,9 @@ const US_STATES = ['alabama','alaska','arizona','arkansas','california','colorad
 const BIG_CITIES = ['seattle','portland','atlanta','dallas','austin','houston','chicago','boston','denver','miami','phoenix','orlando','tacoma','onalaska','delaware','maryland','india','france','mumbai','burma','asia','usa','united states','uk','london','canada','toronto','nyc','new york',
   // international cities & countries — off-geo for a US-served client
   'dubai','abu dhabi','singapore','sydney','melbourne','brisbane','perth','auckland','hong kong','shanghai','beijing','tokyo','kuala lumpur','jakarta','manila','bangkok','thailand','bali','goa','rishikesh','kerala','delhi','bangalore','bengaluru','chennai','pune','hyderabad','dublin','paris','berlin','munich','amsterdam','madrid','barcelona','rome','milan','zurich','geneva','vienna','stockholm','copenhagen','oslo','lisbon','athens','istanbul','tel aviv','riyadh','doha','qatar','kuwait','bahrain','cape town','johannesburg','nairobi','lagos','cairo','mexico','spain','italy','germany','australia','australian','new zealand','ireland','scotland','wales','europe','africa','middle east','vancouver','montreal','ottawa','calgary','costa rica','las vegas','san francisco','los angeles','san diego','vegas','nashville','aspen','sedona','tulum'];
+/* city/abbreviation → its served-region equivalent, so "nyc"/"manhattan" count as "New York", etc. */
+const LOC_ALIAS = {'nyc':'new york','new york city':'new york','manhattan':'new york','brooklyn':'new york','queens':'new york','bronx':'new york','staten island':'new york','la':'los angeles','sf':'san francisco','bay area':'san francisco','dc':'washington','washington dc':'washington','philly':'philadelphia','vegas':'las vegas','nj':'new jersey','ct':'connecticut'};
+const locAlias=s=>LOC_ALIAS[s]||s;
 /* modifier words — qualifiers/intent/format/audience that describe HOW/FOR-WHOM, not the offering itself */
 const MODIFIER_WORDS = new Set(['corporate','executive','executives','online','virtual','in-person','inperson','remote','hybrid','offsite','off-site',
   'best','top','free','cheap','affordable','low-cost','budget','luxury','premium','private','group','public','open',
@@ -881,10 +884,11 @@ function evalRow(r){
   if(R.nearme && /\bnear me\b/.test(t)) hit.push('"Near me" query');
   if(R.competitor){const b=c.competitors.find(x=>x&&t.includes(norm(x)));if(b)hit.push('Other brand: '+b);}
   if(R.location && c.geoMode==='restricted'){
-    const served=c.locations.map(norm);
+    const served=c.locations.map(norm).map(locAlias);
+    const isServed=loc=>{const a=locAlias(loc);return served.some(s=>s===a||s===loc||s.includes(a)||a.includes(s)||s.includes(loc)||loc.includes(s));};
     const found=[...US_STATES,...BIG_CITIES].filter(loc=>new RegExp('\\b'+loc.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b').test(t));
-    const unserved=found.filter(loc=>!served.some(s=>s.includes(loc)||loc.includes(s)));
-    if(unserved.length && !found.some(loc=>served.some(s=>s.includes(loc)||loc.includes(s))))
+    const unserved=found.filter(loc=>!isServed(loc));
+    if(unserved.length && !found.some(isServed))
       hit.push('Location not served: '+unserved[0]);
   }
   if(R.info){
