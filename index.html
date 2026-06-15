@@ -375,7 +375,7 @@
 
 <script>
 /* ============================ BUILD ============================ */
-const BUILD='2026-06-15.6';   // bump on every deploy — used to detect a stale browser tab
+const BUILD='2026-06-15.7';   // bump on every deploy — used to detect a stale browser tab
 /* ============================ STATE ============================ */
 const STATE = {
   step: 0,
@@ -552,10 +552,9 @@ function serpBrandHit(r){
   if(!domains.length) return null;
   const cnt={}; domains.forEach(h=>cnt[h]=(cnt[h]||0)+1);
   const dom=Object.entries(cnt).sort((a,b)=>b[1]-a[1])[0];
-  if(dom && dom[1]>=3) return dom[0];                               // one site owns the results → navigational/brand
-  const top3=domains.slice(0,5);                                   // a distinctive keyword word is in a top domain
-  const toks=(r.kw.toLowerCase().match(/[a-z][a-z'-]{3,}/g)||[]).filter(w=>!NONDISTINCT.has(w));
-  for(const t of toks){ const tt=t.replace(/[^a-z0-9]/g,''); if(tt.length<4)continue; const hit=top3.find(h=>h.replace(/[^a-z0-9]/g,'').includes(tt)); if(hit)return hit; }
+  if(dom && dom[1]>=4) return dom[0];                               // one site clearly owns the results → navigational/brand
+  // NOTE: removed the "keyword word appears in a top domain" heuristic — it flagged generic
+  // exact-match-domain competitors (e.g. "glass engraving" → glassengraving.com) as brands.
   return null;
 }
 /* read the ICP from WHAT RANKS for the keyword, in two layers:
@@ -892,7 +891,9 @@ function processRows(){
 /* ============================ REJECTION ENGINE ============================ */
 function blob(r){return norm(r.kw+' '+r.topic);}   /* secondary keywords intentionally ignored */
 function evalRow(r){
-  const c=STATE.config, R=STATE.rules, t=blob(r);
+  // word-based intent rules judge the SEARCH KEYWORD, never the editorial topic title
+  // (titles like "… — Free Templates" / "Ultimate Guide" / "Best …" must not trigger rejections)
+  const c=STATE.config, R=STATE.rules, t=norm(r.kw);
   const hit=[];
   if(R.zero && r.vol<=0) hit.push('Zero search volume');
   if(R.free && /\bfree\b/.test(t)) hit.push('Free keyword');
@@ -1503,7 +1504,7 @@ async function llmClassify(rows){
 function applySerpResult(r){
   if(!r.profileEdited) r.profile = classifyProfileFromSerp(r) || classifyProfile(r);
   const brand=serpBrandHit(r);
-  if(brand && !r.manual && r.status!=='rejected'){ r.status='rejected'; r.reason='Branded query'; r.autoReason='Branded query'; r.manual=true; }
+  if(brand && !r.manual && r.status!=='rejected'){ r.status='rejected'; r.reason='Branded query'; r.autoReason='Branded query'; }   // auto (not a manual user decision) so it can be re-evaluated later
 }
 /* restore cached rankings onto rows with no API call (called on upload/process) */
 function applySerpCache(){
@@ -1641,6 +1642,9 @@ function bootApp(){
   loadTypeMap();
   loadState();
   STATE.rows.forEach(r=>{ if(r.serpDone && !r.serp.length){ const c=SERP_CACHE[r.kw]; if(c){ r.serp=c.serp||[]; r.serpTitles=c.titles||[]; } } });   // re-hydrate stripped rankings from the keyword cache
+  // self-heal stale "Branded query" rejections (now that the over-eager domain-token heuristic is gone).
+  // 'Branded query' is only ever set automatically (manual user rejects use 'Not relevant'), so it's safe to re-check.
+  STATE.rows.forEach(r=>{ if(r.status==='rejected' && r.serpDone && /^Branded query/i.test(r.autoReason||r.reason||'') && !serpBrandHit(r)){ r.status='pending'; r.reason=''; r.autoReason=''; } });
   backfillCacheSite();   // stamp the loaded project's domain onto any legacy (untagged) cache entries so they group per-project
   const sk=localStorage.getItem(SERPKEY_LS); if(sk)STATE.config.serperKey=sk;   // browser-stored key wins over saved session
   STATE.serpRunning=false; STATE.serpCancel=false; STATE.serpAuto=false;   // reset transient rankings flags each load

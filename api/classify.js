@@ -50,6 +50,7 @@ Judge real intent, not surface words:
 - "custom bathroom remodeling experts" = homeowner hiring a contractor => Individual / Consumer, keep.
 - "mesh basket bulk supplier india" = business sourcing in bulk => B2B / Corporate, keep.
 - keep=false for: job/career seekers ("jobs", "salary", "career") => "Job-seeker intent"; pure researchers/students ("what is", "meaning", "statistics") => "Researcher/student intent"; searches for a specific company's brand (the client's OR a competitor's) => "Branded query"; an audience clearly outside the client's ICP => "Off-ICP audience".
+- "Branded query" means the searcher typed a SPECIFIC COMPANY/BRAND NAME (e.g. "vistaprint business cards", "headspace app"). It does NOT mean descriptive product words. "branded corporate gifts", "branded merchandise", "promotional / personalized / custom / engraved / monogrammed gifts" are GENERIC product categories (goods you customize with a logo) => keep, NOT a branded query.
 - When unsure, keep=true (do not over-reject).
 
 Return ONLY JSON: {"results":[{"id":<id>,"audience":"...","type":"...","keep":true|false,"reason":"..."}]} — one entry per input id.`;
