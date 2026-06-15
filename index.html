@@ -1374,7 +1374,9 @@ async function llmClassify(rows){
       const res=await fetch('/api/classify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items,client})});
       if(!res.ok) throw new Error('classify '+res.status);
       const j=await res.json();
-      (j.results||[]).forEach(o=>{ const r=STATE.rows.find(x=>x.id===o.id); if(r){ ICP_CACHE[r.kw]={audience:o.audience,type:o.type,keep:o.keep,reason:o.reason}; applyIcp(r); } });
+      const got=new Set();
+      (j.results||[]).forEach(o=>{ const r=STATE.rows.find(x=>x.id==o.id); if(r){ got.add(r.id); ICP_CACHE[r.kw]={audience:o.audience,type:o.type,keep:o.keep,reason:o.reason}; applyIcp(r); } });   // loose == : tolerate string/number ids
+      batch.forEach(r=>{ if(!got.has(r.id)) fallback(r); });   // any item the model didn't return → heuristic, so nothing is left unclassified
       saveIcpCache();
     }catch(e){ down=true; if(i===0)toast('Intent AI unavailable — using fallback'); batch.forEach(fallback); }
     const pe=document.getElementById('serpProg'); if(pe)pe.textContent='— reading intent '+Math.min(i+40,need.length)+'/'+need.length;
@@ -1426,7 +1428,10 @@ async function fetchSerpBulk(rows, auto){
   for(const r of toFetch){
     if(STATE.serpCancel)break;
     let hit=false;
-    try{ const o=await fetchSerp(r); hit=o&&o.cached; }catch(e){ err++; if(err===1)toast('SERP error: '+e.message); }
+    for(let a=0;a<2;a++){   // one retry on a transient failure (429 / network)
+      try{ const o=await fetchSerp(r); hit=o&&o.cached; break; }
+      catch(e){ if(a===0){ await sleep(800); } else { err++; if(err===1)toast('SERP error: '+e.message); } }
+    }
     done++;
     const pe=document.getElementById('serpProg'); if(pe)pe.textContent='— fetching rankings '+done+'/'+toFetch.length;
     if(done%10===0){renderStats();saveState();}
