@@ -375,7 +375,7 @@
 
 <script>
 /* ============================ BUILD ============================ */
-const BUILD='2026-06-15.14';   // bump on every deploy — used to detect a stale browser tab
+const BUILD='2026-06-15.15';   // bump on every deploy — used to detect a stale browser tab
 /* ============================ STATE ============================ */
 const STATE = {
   step: 0,
@@ -546,18 +546,16 @@ function isHomepage(u){ try{return new URL(u).pathname.replace(/\/+$/,'')==='';}
 /* generic words that don't indicate a brand (so they don't trigger brand-detection) */
 const NONDISTINCT=new Set([...STOP, ...MODIFIER_WORDS,
   'leadership','retreat','retreats','coaching','coach','training','trainings','workshop','workshops','speaker','speakers','speaking','keynote','keynotes','meditation','meditations','yoga','mindfulness','mindful','mindset','conference','conferences','summit','summits','development','program','programs','wellness','wellbeing','performance','session','sessions','services','service','event','events','class','classes','course','courses','team','teams','company','companies','2024','2025','2026','2023','best','top','near','online']);
-/* detect a BRANDED / navigational query from the SERP: one brand dominates the results,
-   or a distinctive keyword word matches a top ranking domain (e.g. "soulful" → soulfulleadership.com). */
+/* detect a BRANDED / navigational query from the SERP — STRICT: only when a top ranking domain
+   IS the whole keyword phrase (an exact-match domain). Domain-dominance is NOT used: one big
+   authority site (e.g. Investopedia) owning an informational SERP does not make it a brand. */
 function serpBrandHit(r){
   if(!r.serpDone || !(r.serp||[]).length) return null;
   const domains=(r.serp||[]).map(hostOf).filter(h=>h && !IGNORE_DOMAINS.test(h));
   if(!domains.length) return null;
-  const cnt={}; domains.forEach(h=>cnt[h]=(cnt[h]||0)+1);
-  const dom=Object.entries(cnt).sort((a,b)=>b[1]-a[1])[0];
-  if(dom && dom[1]>=4) return dom[0];                               // one site clearly owns the results → navigational/brand
-  // EXACT-match domain: a top result's domain name IS (or wraps) the WHOLE keyword phrase collapsed,
-  // e.g. "glass engraving" → glassengraving.com. Requires the full phrase (≥8 chars), so a long
-  // descriptive keyword ("graphic design services for schools…") can never match a real domain.
+  // EXACT-match domain: a top result's domain name IS (or tightly wraps) the WHOLE keyword phrase collapsed,
+  // e.g. "glass engraving" → glassengraving.com. Requires the full phrase (≥8 chars), so an informational
+  // or long descriptive keyword ("how to become a financial advisor") can never match a real domain.
   const kwc=r.kw.toLowerCase().replace(/[^a-z0-9]/g,'');
   if(kwc.length>=8){
     const top=domains.slice(0,5);
@@ -1794,7 +1792,10 @@ function bootApp(){
   STATE.rows.forEach(r=>{ if(r.serpDone && !r.serp.length){ const c=SERP_CACHE[r.kw]; if(c){ r.serp=c.serp||[]; r.serpTitles=c.titles||[]; } } });   // re-hydrate stripped rankings from the keyword cache
   // self-heal stale "Branded query" rejections (now that the over-eager domain-token heuristic is gone).
   // 'Branded query' is only ever set automatically (manual user rejects use 'Not relevant'), so it's safe to re-check.
-  STATE.rows.forEach(r=>{ if(r.status==='rejected' && r.serpDone && /^Branded query/i.test(r.autoReason||r.reason||'') && !serpBrandHit(r)){ r.status='pending'; r.reason=''; r.autoReason=''; } });
+  STATE.rows.forEach(r=>{ if(r.status==='rejected' && !r.manual && r.serpDone && /^Branded query/i.test(r.autoReason||r.reason||'') && !serpBrandHit(r)){
+    const hit=evalRow(r);                                   // it's not really branded — re-judge with the other rules (jobs/info/free/…)
+    if(hit.length){ r.autoReason=hit.join('; '); r.reason=r.autoReason; } else { r.status='pending'; r.reason=''; r.autoReason=''; }
+  } });
   backfillCacheSite();   // stamp the loaded project's domain onto any legacy (untagged) cache entries so they group per-project
   const sk=localStorage.getItem(SERPKEY_LS); if(sk)STATE.config.serperKey=sk;   // browser-stored key wins over saved session
   STATE.serpRunning=false; STATE.serpCancel=false; STATE.serpAuto=false;   // reset transient rankings flags each load
