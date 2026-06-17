@@ -52,22 +52,53 @@ function serpBrandHit(domains, kw){
 }
 
 /* ----------------------------- MENU ------------------------------- */
+// Tabs are auto-created on open, so the CSM's whole job is: paste into AKR → "Run everything".
 function onOpen(){
+  try{ ensureAllSheets(); }catch(e){}
   SpreadsheetApp.getUi().createMenu('🎯 Topic Tool')
-    .addItem('① Initialise sheets', 'initSheets')
-    .addItem('② Set API keys…', 'setApiKeys')
+    .addItem('▶ Run everything (paste into AKR first)', 'runEverything')
     .addSeparator()
-    .addItem('③ Import AKR → Topics', 'importAkr')
-    .addItem('④ Run rules (auto-reject)', 'runRules')
-    .addSeparator()
-    .addItem('⑤ Process next batch (SERP + AI)', 'processBatchMenu')
-    .addItem('⑤ Process ALL in background', 'startBackground')
+    .addItem('✔ Self-review my selected', 'selfReview')
+    .addItem('🔁 Re-apply rules (after editing Config)', 'runRules')
     .addItem('⏹ Stop background processing', 'stopBackground')
     .addSeparator()
-    .addItem('⑥ Self-review selected', 'selfReview')
-    .addItem('🎨 Apply formatting', 'applyFormatting')
-    .addItem('🧹 Clear enrichment cache', 'clearCache')
+    .addItem('⚙ Set API keys…', 'setApiKeys')
+    .addItem('🧹 Clear cache & start over', 'clearCache')
     .addToUi();
+}
+
+/* ----------------------- ONE-CLICK PIPELINE ----------------------- */
+// Everything a CSM needs in a single action: import → rules → live view tabs → background SERP+AI.
+function runEverything(){
+  var ui=SpreadsheetApp.getUi();
+  ensureAllSheets();
+  // make sure there's data to work with
+  var akr=sheet(SHEET.AKR);
+  if(akr.getLastRow()<2){ ui.alert('Paste your keyword report into the "AKR" tab first, then click "Run everything" again.'); return; }
+  // keys: ask once if missing (only needed for the SERP+AI enrichment)
+  var haveKeys = prop('OPENAI_API_KEY') && prop('SERPER_KEY');
+  if(!haveKeys){
+    ui.alert('First-time setup: paste your OpenAI and Serper API keys on the next two prompts. (You only do this once.)');
+    setApiKeys();
+    haveKeys = prop('OPENAI_API_KEY') && prop('SERPER_KEY');
+  }
+  // import + rules + presentation (all instant, no API)
+  var n = importAkrSilent();
+  runRules();
+  applyFormatting(true);
+  createViewTabs();
+  // count rule rejections
+  var t=sheet(SHEET.TOPICS), rej=0;
+  t.getRange(2,COL.STATUS,Math.max(t.getLastRow()-1,1),1).getValues().forEach(function(r){ if(r[0]==='Rejected') rej++; });
+  // kick off enrichment in the background (chunked, survives closing the sheet)
+  var msg = 'Imported '+n+' topics — '+rej+' auto-rejected by the rules.\n\n';
+  if(haveKeys){ startBackgroundSilent();
+    msg += 'Now reading Google rankings + buyer intent (AI) in the background — this fills Audience, Type & BOFU and may keep running for a few minutes; you can keep working.\n\n';
+  } else {
+    msg += 'API keys not set, so the AI/rankings step was skipped. Add keys (⚙ Set API keys) and Run again to enrich.\n\n';
+  }
+  msg += 'NEXT: in the "Topics" tab set Status = "Selected" on the keywords you want. The "✅ Selected", "❌ Rejected" and "🔎 To review" tabs update automatically. Then run "Self-review my selected".';
+  ui.alert(msg);
 }
 
 /* --------------------------- INIT / CONFIG ------------------------ */
@@ -75,7 +106,7 @@ function ss(){ return SpreadsheetApp.getActiveSpreadsheet(); }
 function sheet(name){ var s=ss().getSheetByName(name); return s; }
 function ensureSheet(name){ var s=sheet(name); if(!s) s=ss().insertSheet(name); return s; }
 
-function initSheets(){
+function ensureAllSheets(){
   // Config
   var cfg = ensureSheet(SHEET.CONFIG);
   if(cfg.getLastRow()===0){
@@ -109,7 +140,25 @@ function initSheets(){
   var c = ensureSheet(SHEET.CACHE);
   if(c.getLastRow()===0){ c.getRange(1,1,1,6).setValues([['Keyword','Domains','Audience','Type','Keep','Reason']]).setFontWeight('bold'); }
   c.hideSheet();
-  SpreadsheetApp.getUi().alert('Sheets ready.\n\n1. Paste your keyword report into the "AKR" tab.\n2. Fill the "Config" tab (services / competitors / locations).\n3. Set API keys, then Import AKR.');
+  // tidy default Sheet1 if it's empty and unused
+  var s1=sheet('Sheet1'); if(s1 && s1.getLastRow()===0 && ss().getSheets().length>1){ try{ ss().deleteSheet(s1); }catch(e){} }
+  // put AKR first so it's the obvious place to paste
+  try{ ss().setActiveSheet(sheet(SHEET.AKR)); ss().moveActiveSheet(1); }catch(e){}
+}
+
+/* Live, auto-updating view tabs (read-only QUERY of Topics) so the CSM never sorts by hand. */
+function createViewTabs(){
+  var views=[
+    {name:'✅ Selected',  q:"select A,B,C,E,G,H,I,N,O where J='Selected' order by E desc"},
+    {name:'🔎 To review', q:"select A,B,C,E,G,H,I where J='Pending' order by E desc"},
+    {name:'❌ Rejected',  q:"select A,B,C,E,K,L where J='Rejected' order by E desc"}
+  ];
+  views.forEach(function(v){
+    var sh=ensureSheet(v.name); sh.clear();
+    sh.getRange(1,1,1,1).setValue('Live view of the Topics tab — read-only, updates automatically. Pick by setting Status in "Topics".').setFontColor('#888').setFontSize(10);
+    sh.getRange(2,1).setFormula('=IFERROR(QUERY(Topics!A:O,"'+v.q+'",1),"(none yet)")');
+    sh.setFrozenRows(2);
+  });
 }
 
 function getConfig(){
@@ -140,10 +189,10 @@ function setApiKeys(){
 }
 
 /* ----------------------------- IMPORT ----------------------------- */
-function importAkr(){
+function importAkrSilent(){
   var src=sheet(SHEET.AKR), t=sheet(SHEET.TOPICS);
-  if(!src||!t) throw new Error('Run "Initialise sheets" first.');
-  var rows=src.getDataRange().getValues(); if(rows.length<2){ SpreadsheetApp.getUi().alert('AKR tab is empty.'); return; }
+  if(!src||!t){ ensureAllSheets(); src=sheet(SHEET.AKR); t=sheet(SHEET.TOPICS); }
+  var rows=src.getDataRange().getValues(); if(rows.length<2){ return 0; }
   var head=rows[0].map(function(h){return norm(h).trim();});
   var find=function(){ for(var a=0;a<arguments.length;a++){ for(var i=0;i<head.length;i++){ if(head[i].indexOf(arguments[a])>=0) return i; } } return -1; };
   var ci={ kw:find('primary keyword','keyword'), pt:find('page type','type'), topic:find('topic'),
@@ -162,8 +211,7 @@ function importAkr(){
   if(t.getLastRow()>1) t.getRange(2,1,t.getLastRow()-1,TOPIC_HEADERS.length).clearContent();
   if(out.length) t.getRange(2,1,out.length,TOPIC_HEADERS.length).setValues(out);
   addStatusValidation(t, out.length);
-  runRules();
-  SpreadsheetApp.getUi().alert('Imported '+out.length+' topics. Rules applied. Now "Process next batch" for SERP+AI, then pick by setting Status = Selected.');
+  return out.length;
 }
 
 function addStatusValidation(t, n){
@@ -336,11 +384,12 @@ function processBatchMenu(){
 }
 
 /* ----------------- BACKGROUND (chunked via trigger) --------------- */
-function startBackground(){
+function startBackgroundSilent(){
   stopBackground();
   ScriptApp.newTrigger('backgroundTick').timeBased().everyMinutes(1).create();
-  SpreadsheetApp.getUi().alert('Background processing started — a batch runs every minute until done. You can close the sheet; it keeps going. Use "Stop" to cancel.');
+  processBatch();   // also do one batch right now so progress is visible immediately
 }
+function startBackground(){ startBackgroundSilent(); SpreadsheetApp.getUi().alert('Background processing started — a batch runs every minute until done. You can close the sheet. Use "Stop" to cancel.'); }
 function stopBackground(){ ScriptApp.getProjectTriggers().forEach(function(tr){ if(tr.getHandlerFunction()==='backgroundTick') ScriptApp.deleteTrigger(tr); }); }
 function backgroundTick(){ var done=processBatch(); if(done===0) stopBackground(); }
 
@@ -379,7 +428,7 @@ function reviewBatch(items, cfg){
 }
 
 /* --------------------------- FORMATTING --------------------------- */
-function applyFormatting(){
+function applyFormatting(silent){
   var t=sheet(SHEET.TOPICS); if(!t) return; var n=Math.max(t.getLastRow()-1,1);
   t.setColumnWidth(COL.DOMAINS, 10); t.hideColumns(COL.DOMAINS);
   var body=t.getRange(2,1,n,TOPIC_HEADERS.length);
@@ -391,7 +440,15 @@ function applyFormatting(){
   // a filter so they can slice by Status / BOFU / Audience / Type natively
   if(t.getFilter()) t.getFilter().remove();
   t.getRange(1,1,Math.max(t.getLastRow(),1),TOPIC_HEADERS.length).createFilter();
-  SpreadsheetApp.getUi().alert('Formatting + filter applied. Use the column filter arrows to slice by Status, BOFU, Audience, Type, Page Type.');
+  if(!silent) SpreadsheetApp.getUi().alert('Formatting + filter applied. Use the column filter arrows to slice by Status, BOFU, Audience, Type, Page Type.');
 }
 
-function clearCache(){ var c=sheet(SHEET.CACHE); if(c && c.getLastRow()>1) c.getRange(2,1,c.getLastRow()-1,6).clearContent(); SpreadsheetApp.getUi().alert('Enrichment cache cleared. Re-run "Process next batch" to re-fetch.'); }
+function clearCache(){
+  var ui=SpreadsheetApp.getUi();
+  var r=ui.alert('Start over?', 'This clears the processed Topics + the AI/SERP cache (your AKR and Config are kept). Continue?', ui.ButtonSet.YES_NO);
+  if(r!==ui.Button.YES) return;
+  stopBackground();
+  var c=sheet(SHEET.CACHE); if(c && c.getLastRow()>1) c.getRange(2,1,c.getLastRow()-1,6).clearContent();
+  var t=sheet(SHEET.TOPICS); if(t && t.getLastRow()>1) t.getRange(2,1,t.getLastRow()-1,TOPIC_HEADERS.length).clearContent();
+  ui.alert('Cleared. Paste/refresh the AKR tab and click "Run everything".');
+}
