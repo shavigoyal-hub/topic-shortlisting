@@ -16,17 +16,21 @@ running inside a single Google Sheet via Apps Script. No hosting, no deploys, no
 1. **Paste the keyword report into the `AKR` tab** (Primary Keyword, Page Type, Topic, Secondary,
    Total Search Volume, Relevance Score — header names matched loosely).
 2. **🎯 Topic Tool ▸ ▶ Run everything.** That single action:
-   - imports the data into `Topics`,
-   - runs every rejection rule,
-   - builds the live **✅ Selected / 🔎 To review / ❌ Rejected** tabs (auto-updating),
-   - and processes Google rankings + buyer intent (AI) **in the background** to fill Audience, Type & BOFU.
-   - (First time only, it prompts once for the OpenAI + Serper API keys.)
-3. **Pick:** in the `Topics` tab, set **Status = `Selected`** on the keywords you want. The view tabs update live.
-4. **🎯 Topic Tool ▸ ✔ Self-review my selected** — two-layer QC (rules + AI) of your Selected rows;
-   flags appear in the **Review** columns, tagged `[Rule]` / `[AI]`.
+   - opens the **🏢 Client info** form the first time (website, services, industries, competitors,
+     locations) — fill it once so the rules + AI know the client,
+   - imports the data into the single **`Topics`** tab,
+   - runs every rejection rule and fills **Modifier** + **BOFU**,
+   - processes Google rankings + buyer intent (AI) to fill **Audience** & **Type** — as much as fits in
+     ~4.5 min up front, then the rest continues in the background (refresh after a couple of minutes),
+   - (prompts once for the OpenAI + Serper API keys the first time).
+3. **Everything is in one tab** (`Topics`). Use the column-filter arrows to slice by Status / BOFU /
+   Audience / Type / Page Type. Rejected rows are tinted red, picks green.
+4. **Pick:** set **Status = `Selected`** on the keywords you want (dropdown).
+5. **🎯 Topic Tool ▸ ✔ Self-review my selected** — two-layer QC (rules + AI); flags appear in the
+   **Review** columns, tagged `[Rule]` / `[AI]`.
 
-Optional: edit the **`Config`** tab (services / competitors / locations, rule toggles) and use
-**🔁 Re-apply rules**. **🧹 Clear cache & start over** wipes Topics + cache to begin a new client.
+Re-open **🏢 Client info** anytime to update the profile (it re-runs the rules). **🧹 Clear & start over**
+wipes Topics + cache for a new client. **⚙ Set API keys** changes the keys.
 
 ## Notes & limits
 
