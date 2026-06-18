@@ -32,6 +32,32 @@ running inside a single Google Sheet via Apps Script. No hosting, no deploys, no
 Re-open **🏢 Client info** anytime to update the profile (it re-runs the rules). **🧹 Clear & start over**
 wipes Topics + cache for a new client. **⚙ Set API keys** changes the keys.
 
+## Auto-update with `clasp` (no more copy-paste)
+
+One-time setup so every future change is a single `clasp push`:
+
+```bash
+npm install -g @google/clasp          # 1. install Google's Apps Script CLI
+clasp login                           # 2. log in (opens a browser; approve)
+cd "Topic Shortlisting Tool/gsheet"   # 3. into this folder
+cp .clasp.json.example .clasp.json    # 4. create the config
+# 5. open Apps Script ▸ Project Settings, copy the "Script ID",
+#    and paste it into .clasp.json (replace PASTE_YOUR_SCRIPT_ID_HERE)
+clasp push -f                         # 6. push Code.gs + appsscript.json to your script
+```
+
+After that, whenever `Code.gs` changes here, just run **`clasp push -f`** and reload the sheet —
+no pasting. (`.clasp.json` holds *your* script id and is git-ignored, so it stays local.)
+
+> First `clasp push` may complain the Apps Script API is off — open
+> <https://script.google.com/home/usersettings>, toggle **Apps Script API → On**, then retry.
+
+## Views (Service / Product vs Blog)
+
+Everything stays in one `Topics` tab; the **🎯 Topic Tool ▸ 👁 Views** submenu filters it instantly:
+**Service / Product**, **Blog**, **Selected**, **To review**, **Rejected**, **Show all**. These are the
+Sheets equivalent of the web app's phase tabs (they just set the column filter — your data isn't moved).
+
 ## Notes & limits
 
 - **6-minute execution limit:** that's why processing is chunked. ~100 rows/run; the background mode

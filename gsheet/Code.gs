@@ -66,8 +66,18 @@ function serpBrandHit(domains, kw){
 /* ----------------------------- MENU ------------------------------- */
 function onOpen(){
   try{ ensureAllSheets(); }catch(e){}
-  SpreadsheetApp.getUi().createMenu('🎯 Topic Tool')
+  var ui=SpreadsheetApp.getUi();
+  var views=ui.createMenu('👁 Views (Service / Blog / picks)')
+    .addItem('🛠 Service / Product', 'viewService')
+    .addItem('📝 Blog', 'viewBlog')
+    .addSeparator()
+    .addItem('✅ Selected', 'viewSelected')
+    .addItem('🔎 To review (Pending)', 'viewPending')
+    .addItem('❌ Rejected', 'viewRejected')
+    .addItem('↺ Show all', 'viewAll');
+  ui.createMenu('🎯 Topic Tool')
     .addItem('▶ Run everything (paste into AKR first)', 'runEverything')
+    .addSubMenu(views)
     .addSeparator()
     .addItem('🏢 Client info (services / competitors / domain…)', 'showSetup')
     .addItem('✔ Self-review my selected', 'selfReview')
@@ -78,6 +88,17 @@ function onOpen(){
     .addItem('🧹 Clear & start over', 'clearCache')
     .addToUi();
 }
+
+/* --------------------- VIEWS (filter the one tab) ----------------- */
+function topicsFilter(){ var t=sheet(SHEET.TOPICS); if(!t) return null; ss().setActiveSheet(t); var f=t.getFilter(); if(!f){ applyFormatting(true); f=t.getFilter(); } return f; }
+function clearViewCriteria(f){ [COL.PT, COL.STATUS].forEach(function(c){ try{ f.removeColumnFilterCriteria(c); }catch(e){} }); }
+function setView(col, value){ var f=topicsFilter(); if(!f) return; clearViewCriteria(f); if(col) f.setColumnFilterCriteria(col, SpreadsheetApp.newFilterCriteria().whenTextEqualTo(value).build()); }
+function viewService(){ setView(COL.PT, 'Service'); }
+function viewBlog(){ setView(COL.PT, 'Blog'); }
+function viewSelected(){ setView(COL.STATUS, 'Selected'); }
+function viewPending(){ setView(COL.STATUS, 'Pending'); }
+function viewRejected(){ setView(COL.STATUS, 'Rejected'); }
+function viewAll(){ setView(null); }
 
 /* --------------------------- SHEETS / CONFIG ---------------------- */
 function ss(){ return SpreadsheetApp.getActiveSpreadsheet(); }

@@ -5,3 +5,7 @@ node_modules/
 # never commit local data / sessions
 *.csv
 *.xlsx
+
+# clasp local project config (holds your script id)
+gsheet/.clasp.json
+.clasp.json
