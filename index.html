@@ -1480,6 +1480,11 @@ VIEWS.review=function(){
         : `<button class="btn" id="runReview" ${items.length?'':'disabled'}>🔍 Run self-review (${items.length})</button>`}
     </div>
     ${isUp?`<div style="padding:12px 14px;border-bottom:1px solid var(--line)">
+      <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:12px;max-width:480px">
+        <label style="font-size:12px;font-weight:700;color:var(--muted)">CLIENT WEBSITE <span style="font-weight:400;text-transform:none">— used for the brand &amp; intent checks</span></label>
+        <input type="url" id="revSite" value="${esc(STATE.config.website||'')}" placeholder="https://client-domain.com">
+      </div>
+      <label style="font-size:12px;font-weight:700;color:var(--muted);display:block;margin-bottom:5px">DATA SHEET <span style="font-weight:400;text-transform:none">— the already-shortlisted topics to QC</span></label>
       <div class="drop" id="revDrop" style="padding:22px">${R.uploaded&&R.uploaded.length?`<b>${R.uploaded.length}</b> topics loaded — drop another file to replace, or `:''}Click to choose or drop a <b>.csv / .xlsx</b> of selected topics (needs a <b>Keyword</b> column; Topic/Audience optional)<input type="file" id="revFile" accept=".csv,.xlsx,.xls" style="display:none"></div>
     </div>`:''}
     ${summary}
@@ -1494,6 +1499,7 @@ VIEWS.review=function(){
   if($('#srcUpload'))$('#srcUpload').onclick=()=>{STATE.review.source='upload';STATE.review.ran=false;STATE.review.results={};render();};
   if($('#runReview'))$('#runReview').onclick=runReview;
   if($('#revExport'))$('#revExport').onclick=exportReview;
+  if($('#revSite'))$('#revSite').onchange=e=>{ STATE.config.website=e.target.value.trim(); STATE.review.ran=false; STATE.review.results={}; saveState(); renderNav(); toast('Client website set'); };
   const rf=$('#revFile'), rd=$('#revDrop');
   if(rd){ rd.onclick=()=>rf.click(); ['dragover','dragenter'].forEach(ev=>rd.addEventListener(ev,e=>{e.preventDefault();rd.classList.add('over');})); ['dragleave','drop'].forEach(ev=>rd.addEventListener(ev,e=>{e.preventDefault();rd.classList.remove('over');})); rd.addEventListener('drop',e=>e.dataTransfer.files[0]&&loadReviewFile(e.dataTransfer.files[0])); }
   if(rf)rf.onchange=e=>e.target.files[0]&&loadReviewFile(e.target.files[0]);
