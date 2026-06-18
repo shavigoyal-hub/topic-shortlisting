@@ -29,8 +29,9 @@
   input:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
   .field{margin-bottom:16px}
-  .drop{border:2px dashed #cfd3e4;border-radius:11px;padding:26px;text-align:center;color:var(--muted);cursor:pointer;background:#fafbff;transition:.12s}
+  .drop{border:2px dashed #cfd3e4;border-radius:11px;padding:22px;text-align:center;color:var(--muted);cursor:pointer;background:#fafbff;transition:.12s}
   .drop:hover,.drop.over{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-d)}
+  .drop.done{border-style:solid;border-color:#cdeedd;background:var(--green-soft)}
   .btn{background:var(--accent);color:#fff;border:0;padding:11px 20px;border-radius:9px;font-weight:650;font-size:14px;cursor:pointer}
   .btn:hover{background:var(--accent-d)}
   .btn:disabled{opacity:.45;cursor:not-allowed}
@@ -39,6 +40,10 @@
   .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
   .ichip{display:inline-block;border-radius:6px;padding:1px 7px;font-size:11px;font-weight:600;white-space:nowrap}
   .ichip.aud{background:var(--blue-soft);color:var(--blue);font-style:italic}
+  .det{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .det .tag{background:var(--accent-soft);color:var(--accent-d);border-radius:7px;padding:3px 9px;font-size:12px;font-weight:600}
+  .det .tag.b{background:var(--blue-soft);color:var(--blue)}
+  .det .tag.r{background:var(--red-soft);color:var(--red)}
   .sumcards{display:flex;gap:12px;flex-wrap:wrap;margin:0 0 4px}
   .sumcard{flex:1;min-width:150px;border-radius:11px;padding:14px 16px}
   .sumcard .n{font-size:24px;font-weight:800}
@@ -63,6 +68,7 @@
   .foot{color:var(--muted);font-size:12px;margin-top:24px;text-align:center}
   .foot a{color:var(--accent)}
   .prog{font-size:13px;font-weight:600;color:var(--accent)}
+  .stepno{display:inline-flex;width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;font-size:12px;font-weight:700;align-items:center;justify-content:center;margin-right:7px;vertical-align:middle}
 </style>
 </head>
 <body>
@@ -71,43 +77,61 @@
     <div class="logo">✓</div>
     <div>
       <h1>Topic Self-Review</h1>
-      <div class="sub">QC an already-shortlisted sheet — catch wrongly-selected topics before they become pages.</div>
+      <div class="sub">QC an already-shortlisted topic sheet against the client's profile — catch wrongly-selected topics before they become pages.</div>
     </div>
   </header>
 
+  <!-- STEP 1: client -->
   <div class="card">
     <div class="card-pad">
-      <h2>1 · Client &amp; sheet</h2>
-      <div class="grid2">
-        <div class="field">
-          <label class="fld" for="site">Client website <span class="hint">— used for the brand &amp; intent checks</span></label>
-          <input type="url" id="site" placeholder="https://client-domain.com">
-        </div>
-        <div class="field">
-          <label class="fld" for="sells">What the client sells <span class="hint">— optional, sharpens the AI check</span></label>
-          <input type="text" id="sells" placeholder="e.g. corporate mindfulness training, keynotes, coaching">
-        </div>
+      <h2><span class="stepno">1</span>Client</h2>
+      <div class="field">
+        <label class="fld" for="site">Client website <span class="hint">— used for the brand &amp; intent checks</span></label>
+        <input type="url" id="site" placeholder="https://client-domain.com">
       </div>
       <div class="field">
-        <label class="fld" for="comp">Competitor brands <span class="hint">— optional, comma-separated; flagged as navigational</span></label>
-        <input type="text" id="comp" placeholder="e.g. Headspace, Calm, Mindvalley">
+        <label class="fld">Client info sheet <span class="hint">— the client's products / services / industries / competitors</span></label>
+        <div class="drop" id="dropClient">
+          <div id="clientMsg"><b>Click to choose</b> or drop the client info <b>.xlsx / .csv</b></div>
+          <div class="sub" style="margin-top:6px">Multi-tab workbook with <b>Services</b>, <b>Industry</b> and <b>Competitors</b> tabs (extra tabs ignored).</div>
+          <input type="file" id="clientFile" accept=".csv,.xlsx,.xls" style="display:none">
+        </div>
+        <div class="det" id="clientDet"></div>
       </div>
-      <div class="field" style="margin-bottom:0">
-        <label class="fld">Data sheet <span class="hint">— the already-shortlisted topics to QC</span></label>
-        <div class="drop" id="drop">
-          <div id="dropMsg"><b>Click to choose</b> or drop a <b>.csv / .xlsx</b> of shortlisted topics</div>
-          <div class="sub" style="margin-top:6px">Needs a <b>Keyword</b> column. Topic, Audience, Type, Search Volume are optional.</div>
-          <input type="file" id="file" accept=".csv,.xlsx,.xls" style="display:none">
+      <div class="grid2" style="margin-top:4px">
+        <div>
+          <label class="fld" for="sells">What the client sells <span class="hint">— auto-filled, editable</span></label>
+          <input type="text" id="sells" placeholder="e.g. corporate mindfulness training, keynotes, coaching">
+        </div>
+        <div>
+          <label class="fld" for="comp">Competitor brands <span class="hint">— comma-separated, flagged as navigational</span></label>
+          <input type="text" id="comp" placeholder="e.g. Headspace, Calm, Mindvalley">
         </div>
       </div>
     </div>
   </div>
 
+  <!-- STEP 2: shortlisted topics -->
+  <div class="card">
+    <div class="card-pad">
+      <h2><span class="stepno">2</span>Shortlisted topics</h2>
+      <div class="field" style="margin-bottom:0">
+        <label class="fld">Shortlisted topics sheet <span class="hint">— the topics to QC</span></label>
+        <div class="drop" id="dropTopics">
+          <div id="topicsMsg"><b>Click to choose</b> or drop a <b>.csv / .xlsx</b> of shortlisted topics</div>
+          <div class="sub" style="margin-top:6px">Needs a <b>Keyword</b> column. Topic, Audience, Type, Search Volume are optional.</div>
+          <input type="file" id="topicsFile" accept=".csv,.xlsx,.xls" style="display:none">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 3: run -->
   <div class="card">
     <div class="card-pad row" style="justify-content:space-between">
       <div>
-        <h2 style="margin:0">2 · Run the review</h2>
-        <div class="sub" id="loadInfo">No sheet loaded yet.</div>
+        <h2 style="margin:0"><span class="stepno">3</span>Run the review</h2>
+        <div class="sub" id="loadInfo" style="margin-left:27px">Upload the shortlisted topics to begin.</div>
       </div>
       <div class="row">
         <span id="prog" class="prog" style="display:none"></span>
@@ -119,8 +143,8 @@
   <div id="results"></div>
 
   <div class="foot">
-    Two-layer QC: <b>Layer 1</b> rule checks (zero-volume, free, near-me, competitor brand) run in your browser ·
-    <b>Layer 2</b> AI intent pass runs on the server. Nothing is stored — it all stays on this page.
+    Two-layer QC: <b>Layer 1</b> rule checks (zero-volume, free, near-me, job intent, competitor brand) run in your browser ·
+    <b>Layer 2</b> AI intent pass runs on the server, judged against the client profile. Nothing is stored — it all stays on this page.
     <br>Part of the <a href="/">Topic Shortlisting</a> toolkit.
   </div>
 </div>
@@ -128,16 +152,18 @@
 
 <script>
 const $ = s => document.querySelector(s);
-let ITEMS = [];          // parsed topics
+let ITEMS = [];          // parsed shortlisted topics
 let HAS_VOL = false;
-let RESULTS = {};        // id -> {ok,severity,reason,layer}
+let CLIENT = { services:[], industries:[], competitors:[] };   // parsed from client info sheet
+let RESULTS = {};
 let RAN = false;
 
-function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('on'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('on'),2200); }
+function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('on'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('on'),2400); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function norm(s){ return String(s==null?'':s).toLowerCase().replace(/\s+/g,' ').trim(); }
 const onServer = /^https?:$/.test(location.protocol) && !/^(localhost|127\.|0\.0\.0\.0|\[|$)/.test(location.hostname);
 
-/* ---------- file parsing ---------- */
+/* ---------- shared parsing ---------- */
 function csvToAoa(text){
   const rows=[];let row=[],cur='',q=false;
   for(let i=0;i<text.length;i++){const ch=text[i];
@@ -148,11 +174,71 @@ function csvToAoa(text){
   if(cur||row.length){row.push(cur);rows.push(row);}
   return rows;
 }
-function parseAoa(aoa){
+function colVals(aoa,ci,startRow=1){ const out=[]; for(let r=startRow;r<(aoa||[]).length;r++){ const v=(aoa[r]||[])[ci]; if(v!=null&&String(v).trim()) out.push(String(v).replace(/\s+/g,' ').trim()); } return out; }
+
+/* ---------- STEP 1: client info sheet ---------- */
+function parseClientWorkbook(wb){
+  const c={services:[],industries:[],competitors:[]};
+  const aoaOf=n=>XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,blankrows:false});
+  wb.SheetNames.forEach(name=>{
+    const ln=norm(name);
+    if(/service|product|offering/.test(ln) && !/competitor/.test(ln)){
+      const aoa=aoaOf(name); if(!aoa.length)return;
+      const head=(aoa[0]||[]).map(h=>norm(h));
+      const di=head.findIndex(h=>h.includes('detail')); const ti=head.findIndex(h=>h.includes('type'));
+      let vals = di>=0 ? colVals(aoa,di) : (ti>=0 ? colVals(aoa,ti) : colVals(aoa,0));
+      vals=[...new Set(vals)]; if(vals.length) c.services=vals;
+    } else if(/industr/.test(ln)){
+      c.industries=[...new Set(colVals(aoaOf(name),0))];
+    } else if(/competitor|brand/.test(ln)){
+      c.competitors=[...new Set(colVals(aoaOf(name),0))];
+    }
+  });
+  return c;
+}
+function parseClientCsv(aoa){
+  // single sheet: treat header to find a services-ish column, else first column
+  if(!aoa||!aoa.length) return {services:[],industries:[],competitors:[]};
+  const head=(aoa[0]||[]).map(h=>norm(h));
+  const si=head.findIndex(h=>/service|product|offering|detail/.test(h));
+  const ci=head.findIndex(h=>/competitor|brand/.test(h));
+  const ii=head.findIndex(h=>/industr/.test(h));
+  return {
+    services:[...new Set(colVals(aoa, si>=0?si:0))],
+    industries: ii>=0?[...new Set(colVals(aoa,ii))]:[],
+    competitors: ci>=0?[...new Set(colVals(aoa,ci))]:[],
+  };
+}
+function applyClient(c){
+  CLIENT=c;
+  if(c.services.length) $('#sells').value = c.services.slice(0,40).join(', ');
+  if(c.competitors.length) $('#comp').value = c.competitors.join(', ');
+  const det=$('#clientDet'); det.innerHTML='';
+  const add=(n,lbl,cls)=>{ if(n) det.innerHTML+=`<span class="tag ${cls||''}">${n} ${lbl}</span>`; };
+  add(c.services.length,'services'); add(c.industries.length,'industries','b'); add(c.competitors.length,'competitors','r');
+  if(!c.services.length && !c.competitors.length && !c.industries.length) det.innerHTML='<span class="tag r">No Services / Industry / Competitor tabs found — fill the fields below by hand.</span>';
+  $('#dropClient').classList.add('done');
+}
+function loadClientFile(file){
+  const ext=file.name.split('.').pop().toLowerCase();
+  const reader=new FileReader();
+  reader.onload=e=>{ try{
+    let c;
+    if(ext==='csv') c=parseClientCsv(csvToAoa(e.target.result));
+    else { const wb=XLSX.read(e.target.result,{type:'array'}); c=parseClientWorkbook(wb); }
+    applyClient(c);
+    $('#clientMsg').innerHTML='<b>'+file.name+'</b> loaded — click to replace';
+    toast('Client info loaded');
+  }catch(err){ alert('Could not parse client sheet: '+err.message); } };
+  if(ext==='csv')reader.readAsText(file); else reader.readAsArrayBuffer(file);
+}
+
+/* ---------- STEP 2: shortlisted topics sheet ---------- */
+function parseTopicsAoa(aoa){
   if(!aoa||!aoa.length) return {items:[],hasVol:false};
-  const head=(aoa[0]||[]).map(h=>String(h==null?'':h).toLowerCase().trim());
+  const head=(aoa[0]||[]).map(h=>norm(h));
   const find=(...ns)=>head.findIndex(h=>ns.some(n=>h.includes(n)));
-  const ci={kw:find('primary keyword','keyword','kw'),topic:find('topic'),vol:find('search volume','volume','msv'),aud:find('customer profile','audience','profile'),type:find('service/product type','product / service','type'),sec:find('secondary')};
+  const ci={kw:find('primary keyword','keyword','kw'),topic:find('topic'),vol:find('search volume','volume','msv'),aud:find('customer profile','audience','profile'),type:find('service/product type','product / service','type')};
   if(ci.kw<0)ci.kw=0;
   const items=[];
   for(let i=1;i<aoa.length;i++){ const a=aoa[i]||[]; const kw=(a[ci.kw]||'').toString().trim(); if(!kw)continue;
@@ -166,17 +252,18 @@ function parseAoa(aoa){
   }
   return {items, hasVol:ci.vol>=0};
 }
-function loadFile(file){
+function loadTopicsFile(file){
   const ext=file.name.split('.').pop().toLowerCase();
   const reader=new FileReader();
   reader.onload=e=>{ try{
     let aoa;
     if(ext==='csv') aoa=csvToAoa(e.target.result);
     else { const wb=XLSX.read(e.target.result,{type:'array'}); const ws=wb.Sheets[wb.SheetNames[0]]; aoa=XLSX.utils.sheet_to_json(ws,{header:1}); }
-    const {items,hasVol}=parseAoa(aoa);
+    const {items,hasVol}=parseTopicsAoa(aoa);
     if(!items.length){ alert('No keyword column found in that file.'); return; }
     ITEMS=items; HAS_VOL=hasVol; RESULTS={}; RAN=false;
-    $('#dropMsg').innerHTML='<b>'+items.length+'</b> topics loaded — click to replace';
+    $('#topicsMsg').innerHTML='<b>'+items.length+'</b> topics loaded — click to replace';
+    $('#dropTopics').classList.add('done');
     $('#loadInfo').textContent=items.length+' topics ready'+(hasVol?' · volume column found':' · no volume column');
     $('#run').disabled=false;
     renderResults();
@@ -194,24 +281,26 @@ function ruleHits(it){
   if(/\bfree\b/.test(t)) hits.push('Free keyword');
   if(/\bnear me\b/.test(t)) hits.push('“Near me” query');
   if(/\b(jobs?|salary|salaries|career|vacancy|hiring|internship)\b/.test(t)) hits.push('Job / career intent');
-  const comp=competitorList().find(b=>t.includes(b));
+  const comp=competitorList().find(b=>b.length>2 && t.includes(b));
   if(comp) hits.push('Other brand: '+comp);
   return hits;
 }
 
 /* ---------- run ---------- */
 async function run(){
-  if(!ITEMS.length){ toast('Load a sheet first'); return; }
+  if(!ITEMS.length){ toast('Load the shortlisted topics first'); return; }
   if(!$('#site').value.trim()){ if(!confirm('No client website entered — the AI check works better with it. Run anyway?')) return; }
   RESULTS={}; RAN=false;
   $('#run').disabled=true; const pe=$('#prog'); pe.style.display='inline'; pe.textContent='Checking rules…';
-  // Layer 1
   ITEMS.forEach(it=>{ const h=ruleHits(it); if(h.length) RESULTS[it.id]={ok:false,severity:'high',reason:h.join('; '),layer:'Rule'}; });
-  // Layer 2 (AI) — only items rules didn't flag
   const need=ITEMS.filter(it=>!RESULTS[it.id]);
   let aiFail=0;
   if(onServer && need.length){
-    const client={ site:$('#site').value.trim(), sells:$('#sells').value.trim() };
+    const client={
+      site:$('#site').value.trim(),
+      sells:$('#sells').value.trim(),
+      icp:(CLIENT.industries||[]).join(', '),
+    };
     for(let i=0;i<need.length;i+=30){
       const batch=need.slice(i,i+30);
       pe.textContent='AI intent check '+Math.min(i+30,need.length)+'/'+need.length+'…';
@@ -287,12 +376,16 @@ function exportCsv(){
 }
 
 /* ---------- wire up ---------- */
-const drop=$('#drop'), file=$('#file');
-drop.onclick=()=>file.click();
-['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('over');}));
-['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over');}));
-drop.addEventListener('drop',e=>e.dataTransfer.files[0]&&loadFile(e.dataTransfer.files[0]));
-file.onchange=e=>e.target.files[0]&&loadFile(e.target.files[0]);
+function wireDrop(dropId, inputId, handler){
+  const drop=$('#'+dropId), input=$('#'+inputId);
+  drop.onclick=()=>input.click();
+  ['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('over');}));
+  ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over');}));
+  drop.addEventListener('drop',e=>e.dataTransfer.files[0]&&handler(e.dataTransfer.files[0]));
+  input.onchange=e=>e.target.files[0]&&handler(e.target.files[0]);
+}
+wireDrop('dropClient','clientFile',loadClientFile);
+wireDrop('dropTopics','topicsFile',loadTopicsFile);
 $('#run').onclick=run;
 </script>
 </body>
