@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Topic Self-Review — QC an already-shortlisted sheet</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --ink:#0c0c30; --muted:#6b7280; --line:#e6e8ef; --bg:#f7f8fb;
+    --accent:#3b46f1; --accent-d:#2a33c4; --accent-soft:#ecedfe;
+    --red:#dc3a3a; --red-soft:#fdecec; --amber:#b9770e; --amber-soft:#fff4e0;
+    --green:#15a06f; --green-soft:#e6f6ef; --blue:#475569; --blue-soft:#eef1f6;
+    --navy:#0c0c30; --shadow:0 1px 3px rgba(17,24,39,.07),0 6px 18px rgba(17,24,39,.05);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:var(--bg);font-size:14px;line-height:1.45}
+  .wrap{max-width:1080px;margin:0 auto;padding:28px 22px 60px}
+  header.top{display:flex;align-items:center;gap:12px;margin-bottom:22px}
+  .logo{width:34px;height:34px;border-radius:9px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:17px}
+  h1{font-size:20px;margin:0;font-weight:750}
+  .sub{color:var(--muted);font-size:13px;margin-top:2px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);margin-bottom:18px}
+  .card-pad{padding:18px 20px}
+  .card h2{font-size:14px;margin:0 0 14px;font-weight:700}
+  label.fld{display:block;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px}
+  label.fld .hint{font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)}
+  input[type=url],input[type=text]{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:9px;font-size:14px;background:#fff;color:var(--ink)}
+  input:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .field{margin-bottom:16px}
+  .drop{border:2px dashed #cfd3e4;border-radius:11px;padding:26px;text-align:center;color:var(--muted);cursor:pointer;background:#fafbff;transition:.12s}
+  .drop:hover,.drop.over{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-d)}
+  .btn{background:var(--accent);color:#fff;border:0;padding:11px 20px;border-radius:9px;font-weight:650;font-size:14px;cursor:pointer}
+  .btn:hover{background:var(--accent-d)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .btn.sec{background:#fff;color:var(--accent);border:1px solid var(--line)}
+  .btn.sec:hover{background:var(--accent-soft)}
+  .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .ichip{display:inline-block;border-radius:6px;padding:1px 7px;font-size:11px;font-weight:600;white-space:nowrap}
+  .ichip.aud{background:var(--blue-soft);color:var(--blue);font-style:italic}
+  .sumcards{display:flex;gap:12px;flex-wrap:wrap;margin:0 0 4px}
+  .sumcard{flex:1;min-width:150px;border-radius:11px;padding:14px 16px}
+  .sumcard .n{font-size:24px;font-weight:800}
+  .sumcard.good{background:var(--green-soft);border:1px solid #cdeedd}
+  .sumcard.good .n{color:#0f7a4d}
+  .sumcard.bad{background:var(--red-soft);border:1px solid #f3c2c2}
+  .sumcard.bad .n{color:var(--red)}
+  table{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed}
+  th{text-align:left;padding:10px 12px;background:#f3f4f6;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top;overflow:hidden}
+  td .cellx{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .kw{font-weight:600}
+  .scrollx{overflow-x:auto}
+  .muted{color:var(--muted)}
+  .verdict-bad{color:var(--red);font-weight:700}
+  .verdict-good{color:var(--green);font-weight:600}
+  .lyr{display:inline-block;background:#eef0f4;color:#51607a;border-radius:6px;padding:1px 6px;font-size:10.5px;font-weight:600;margin-left:4px}
+  details{padding:10px 0}
+  summary{cursor:pointer;font-size:12.5px;color:var(--muted)}
+  #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 16px;border-radius:9px;font-size:13px;opacity:0;transition:.2s;pointer-events:none;z-index:50}
+  #toast.on{opacity:1}
+  .foot{color:var(--muted);font-size:12px;margin-top:24px;text-align:center}
+  .foot a{color:var(--accent)}
+  .prog{font-size:13px;font-weight:600;color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="logo">✓</div>
+    <div>
+      <h1>Topic Self-Review</h1>
+      <div class="sub">QC an already-shortlisted sheet — catch wrongly-selected topics before they become pages.</div>
+    </div>
+  </header>
+
+  <div class="card">
+    <div class="card-pad">
+      <h2>1 · Client &amp; sheet</h2>
+      <div class="grid2">
+        <div class="field">
+          <label class="fld" for="site">Client website <span class="hint">— used for the brand &amp; intent checks</span></label>
+          <input type="url" id="site" placeholder="https://client-domain.com">
+        </div>
+        <div class="field">
+          <label class="fld" for="sells">What the client sells <span class="hint">— optional, sharpens the AI check</span></label>
+          <input type="text" id="sells" placeholder="e.g. corporate mindfulness training, keynotes, coaching">
+        </div>
+      </div>
+      <div class="field">
+        <label class="fld" for="comp">Competitor brands <span class="hint">— optional, comma-separated; flagged as navigational</span></label>
+        <input type="text" id="comp" placeholder="e.g. Headspace, Calm, Mindvalley">
+      </div>
+      <div class="field" style="margin-bottom:0">
+        <label class="fld">Data sheet <span class="hint">— the already-shortlisted topics to QC</span></label>
+        <div class="drop" id="drop">
+          <div id="dropMsg"><b>Click to choose</b> or drop a <b>.csv / .xlsx</b> of shortlisted topics</div>
+          <div class="sub" style="margin-top:6px">Needs a <b>Keyword</b> column. Topic, Audience, Type, Search Volume are optional.</div>
+          <input type="file" id="file" accept=".csv,.xlsx,.xls" style="display:none">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-pad row" style="justify-content:space-between">
+      <div>
+        <h2 style="margin:0">2 · Run the review</h2>
+        <div class="sub" id="loadInfo">No sheet loaded yet.</div>
+      </div>
+      <div class="row">
+        <span id="prog" class="prog" style="display:none"></span>
+        <button class="btn" id="run" disabled>🔍 Run self-review</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="results"></div>
+
+  <div class="foot">
+    Two-layer QC: <b>Layer 1</b> rule checks (zero-volume, free, near-me, competitor brand) run in your browser ·
+    <b>Layer 2</b> AI intent pass runs on the server. Nothing is stored — it all stays on this page.
+    <br>Part of the <a href="/">Topic Shortlisting</a> toolkit.
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let ITEMS = [];          // parsed topics
+let HAS_VOL = false;
+let RESULTS = {};        // id -> {ok,severity,reason,layer}
+let RAN = false;
+
+function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('on'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('on'),2200); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+const onServer = /^https?:$/.test(location.protocol) && !/^(localhost|127\.|0\.0\.0\.0|\[|$)/.test(location.hostname);
+
+/* ---------- file parsing ---------- */
+function csvToAoa(text){
+  const rows=[];let row=[],cur='',q=false;
+  for(let i=0;i<text.length;i++){const ch=text[i];
+    if(q){ if(ch==='"'){ if(text[i+1]==='"'){cur+='"';i++;}else q=false;} else cur+=ch; }
+    else { if(ch==='"')q=true; else if(ch===','){row.push(cur);cur='';}
+           else if(ch==='\n'){row.push(cur);rows.push(row);row=[];cur='';}
+           else if(ch==='\r'){} else cur+=ch; } }
+  if(cur||row.length){row.push(cur);rows.push(row);}
+  return rows;
+}
+function parseAoa(aoa){
+  if(!aoa||!aoa.length) return {items:[],hasVol:false};
+  const head=(aoa[0]||[]).map(h=>String(h==null?'':h).toLowerCase().trim());
+  const find=(...ns)=>head.findIndex(h=>ns.some(n=>h.includes(n)));
+  const ci={kw:find('primary keyword','keyword','kw'),topic:find('topic'),vol:find('search volume','volume','msv'),aud:find('customer profile','audience','profile'),type:find('service/product type','product / service','type'),sec:find('secondary')};
+  if(ci.kw<0)ci.kw=0;
+  const items=[];
+  for(let i=1;i<aoa.length;i++){ const a=aoa[i]||[]; const kw=(a[ci.kw]||'').toString().trim(); if(!kw)continue;
+    items.push({
+      id:'u'+i, kw,
+      topic:ci.topic>=0?(a[ci.topic]||'').toString().trim():'',
+      vol:ci.vol>=0?(parseInt((a[ci.vol]||'').toString().replace(/[^0-9]/g,''))||0):'',
+      profile:ci.aud>=0?(a[ci.aud]||'').toString().trim():'',
+      family:ci.type>=0?(a[ci.type]||'').toString().trim():'',
+    });
+  }
+  return {items, hasVol:ci.vol>=0};
+}
+function loadFile(file){
+  const ext=file.name.split('.').pop().toLowerCase();
+  const reader=new FileReader();
+  reader.onload=e=>{ try{
+    let aoa;
+    if(ext==='csv') aoa=csvToAoa(e.target.result);
+    else { const wb=XLSX.read(e.target.result,{type:'array'}); const ws=wb.Sheets[wb.SheetNames[0]]; aoa=XLSX.utils.sheet_to_json(ws,{header:1}); }
+    const {items,hasVol}=parseAoa(aoa);
+    if(!items.length){ alert('No keyword column found in that file.'); return; }
+    ITEMS=items; HAS_VOL=hasVol; RESULTS={}; RAN=false;
+    $('#dropMsg').innerHTML='<b>'+items.length+'</b> topics loaded — click to replace';
+    $('#loadInfo').textContent=items.length+' topics ready'+(hasVol?' · volume column found':' · no volume column');
+    $('#run').disabled=false;
+    renderResults();
+    toast('Loaded '+items.length+' topics');
+  }catch(err){ alert('Could not parse file: '+err.message); } };
+  if(ext==='csv')reader.readAsText(file); else reader.readAsArrayBuffer(file);
+}
+
+/* ---------- Layer 1: browser rules ---------- */
+function competitorList(){ return $('#comp').value.split(',').map(s=>s.trim().toLowerCase()).filter(Boolean); }
+function ruleHits(it){
+  const t=(it.kw+' '+(it.topic||'')).toLowerCase();
+  const hits=[];
+  if(HAS_VOL && it.vol!=='' && Number(it.vol)<=0) hits.push('Zero search volume');
+  if(/\bfree\b/.test(t)) hits.push('Free keyword');
+  if(/\bnear me\b/.test(t)) hits.push('“Near me” query');
+  if(/\b(jobs?|salary|salaries|career|vacancy|hiring|internship)\b/.test(t)) hits.push('Job / career intent');
+  const comp=competitorList().find(b=>t.includes(b));
+  if(comp) hits.push('Other brand: '+comp);
+  return hits;
+}
+
+/* ---------- run ---------- */
+async function run(){
+  if(!ITEMS.length){ toast('Load a sheet first'); return; }
+  if(!$('#site').value.trim()){ if(!confirm('No client website entered — the AI check works better with it. Run anyway?')) return; }
+  RESULTS={}; RAN=false;
+  $('#run').disabled=true; const pe=$('#prog'); pe.style.display='inline'; pe.textContent='Checking rules…';
+  // Layer 1
+  ITEMS.forEach(it=>{ const h=ruleHits(it); if(h.length) RESULTS[it.id]={ok:false,severity:'high',reason:h.join('; '),layer:'Rule'}; });
+  // Layer 2 (AI) — only items rules didn't flag
+  const need=ITEMS.filter(it=>!RESULTS[it.id]);
+  let aiFail=0;
+  if(onServer && need.length){
+    const client={ site:$('#site').value.trim(), sells:$('#sells').value.trim() };
+    for(let i=0;i<need.length;i+=30){
+      const batch=need.slice(i,i+30);
+      pe.textContent='AI intent check '+Math.min(i+30,need.length)+'/'+need.length+'…';
+      const payload=batch.map(it=>({id:it.id,kw:it.kw,topic:it.topic,audience:it.profile,type:it.family}));
+      try{
+        const res=await fetch('/api/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:payload,client})});
+        if(!res.ok) throw new Error('HTTP '+res.status);
+        const j=await res.json();
+        (j.results||[]).forEach(o=>{ if(o.ok===false) RESULTS[o.id]={ok:false,severity:o.severity==='high'?'high':'low',reason:o.reason||'Off intent',layer:'AI'}; });
+      }catch(e){ aiFail+=batch.length; }
+    }
+    if(aiFail) toast('AI layer couldn’t check '+aiFail+' topic'+(aiFail===1?'':'s')+' — rule checks still applied');
+  } else if(!onServer && need.length){
+    toast('Rule checks ran. The AI layer only works on the deployed site.');
+  }
+  ITEMS.forEach(it=>{ if(!RESULTS[it.id]) RESULTS[it.id]={ok:true,severity:'low',reason:'',layer:''}; });
+  RAN=true; pe.style.display='none'; $('#run').disabled=false;
+  renderResults();
+}
+
+/* ---------- render ---------- */
+function verdictPill(v){ return v.severity==='high'?'<span class="ichip" style="background:var(--red-soft);color:var(--red)">Likely wrong</span>':'<span class="ichip" style="background:var(--amber-soft);color:var(--amber)">Check</span>'; }
+function rowHtml(it){
+  const v=RESULTS[it.id]||{};
+  const bad=v.ok===false;
+  return `<tr style="${bad?'background:var(--red-soft)':''}">
+    <td><span class="cellx kw" title="${esc(it.kw)}">${esc(it.kw)}</span></td>
+    <td>${it.topic?`<span class="cellx" title="${esc(it.topic)}">${esc(it.topic)}</span>`:'<span class="muted">—</span>'}</td>
+    <td>${it.profile?`<span class="ichip aud">${esc(it.profile)}</span>`:'<span class="muted">—</span>'}</td>
+    <td>${it.vol===''||it.vol==null?'<span class="muted">—</span>':Number(it.vol).toLocaleString()}</td>
+    ${bad
+      ? `<td>${verdictPill(v)}${v.layer?`<span class="lyr" title="Caught by ${v.layer==='Rule'?'the rule engine':'the AI intent layer'}">${esc(v.layer)}</span>`:''}</td><td><span class="verdict-bad">${esc(v.reason||'Looks off')}</span></td>`
+      : `<td colspan="2"><span class="verdict-good">✓ Looks good</span></td>`}
+  </tr>`;
+}
+const THEAD=`<thead><tr><th style="width:24%">Keyword</th><th>Topic</th><th style="width:130px">Audience</th><th style="width:70px">Vol</th><th style="width:110px">Verdict</th><th style="width:34%">Issue</th></tr></thead>`;
+function renderResults(){
+  const box=$('#results');
+  if(!ITEMS.length){ box.innerHTML=''; return; }
+  if(!RAN){
+    box.innerHTML=`<div class="card"><div class="card-pad"><div class="muted">${ITEMS.length} topics loaded. Click <b>Run self-review</b> above to QC them.</div></div></div>`;
+    return;
+  }
+  const reviewed=ITEMS.filter(it=>RESULTS[it.id]);
+  const flagged=reviewed.filter(it=>RESULTS[it.id].ok===false);
+  const clean=reviewed.filter(it=>RESULTS[it.id].ok!==false);
+  box.innerHTML=`
+  <div class="card"><div class="card-pad">
+    <div class="row" style="justify-content:space-between;margin-bottom:14px">
+      <h2 style="margin:0">Results</h2>
+      <button class="btn sec" id="exp">⤓ Export review</button>
+    </div>
+    <div class="sumcards">
+      <div class="sumcard good"><div class="n">${clean.length}</div><div class="muted">look good</div></div>
+      <div class="sumcard bad"><div class="n">${flagged.length}</div><div class="muted">flagged — review below</div></div>
+    </div>
+  </div>
+  ${flagged.length?`<div style="padding:6px 20px 0;font-weight:700;font-size:13px;color:var(--red)">⚠ ${flagged.length} flagged</div>
+    <div class="scrollx" style="padding:8px 8px 14px"><table>${THEAD}<tbody>${flagged.map(rowHtml).join('')}</tbody></table></div>`
+   :`<div style="padding:22px 20px;color:var(--green);font-weight:600">✓ All ${clean.length} topics look good — nothing flagged.</div>`}
+  ${clean.length?`<div style="padding:0 20px 16px"><details><summary>Show ${clean.length} that look good</summary>
+     <div class="scrollx" style="margin-top:8px"><table>${THEAD}<tbody>${clean.map(rowHtml).join('')}</tbody></table></div></details></div>`:''}
+  </div>`;
+  $('#exp').onclick=exportCsv;
+}
+function exportCsv(){
+  const reviewed=ITEMS.filter(it=>RESULTS[it.id]); if(!reviewed.length){ toast('Run the review first'); return; }
+  const cols=['Keyword','Topic','Audience','Type','Search Volume','Verdict','Caught by','Issue'];
+  const q=s=>'"'+String(s==null?'':s).replace(/"/g,'""')+'"';
+  const lines=[cols.join(',')];
+  reviewed.forEach(it=>{ const v=RESULTS[it.id]; lines.push([it.kw,it.topic,it.profile,it.family,it.vol,v.ok?'OK':'Flagged',v.ok?'':v.layer,v.ok?'':v.reason].map(q).join(',')); });
+  const b=new Blob([lines.join('\n')],{type:'text/csv'}); const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download='self-review.csv'; a.click();
+}
+
+/* ---------- wire up ---------- */
+const drop=$('#drop'), file=$('#file');
+drop.onclick=()=>file.click();
+['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('over');}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over');}));
+drop.addEventListener('drop',e=>e.dataTransfer.files[0]&&loadFile(e.dataTransfer.files[0]));
+file.onchange=e=>e.target.files[0]&&loadFile(e.target.files[0]);
+$('#run').onclick=run;
+</script>
+</body>
+</html>
