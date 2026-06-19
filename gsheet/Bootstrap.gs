@@ -31,12 +31,19 @@ function _call(fn, args){
 function forceUpdate(){ CacheService.getScriptCache().remove('tt_src'); SpreadsheetApp.getActive().toast('Updated to the latest version.'); }
 
 function onOpen(){
-  try{ _call('ensureAllSheets'); }catch(e){}
+  // Prefer the menu from the latest code (auto-updates). Uses the cached copy — no network in onOpen.
+  try{
+    var code = CacheService.getScriptCache().get('tt_src');
+    if(code && code.indexOf('function buildMenu') >= 0){ eval(code); buildMenu(SpreadsheetApp.getUi()); return; }
+  }catch(e){}
+  bootMenu();   // fallback (only if latest code isn't cached yet)
+}
+function bootMenu(){
   var ui = SpreadsheetApp.getUi();
   var views = ui.createMenu('👁 Views (Service / Blog / picks)')
     .addItem('🛠 Service / Product', 'viewService').addItem('📝 Blog', 'viewBlog').addSeparator()
-    .addItem('✅ Selected', 'viewSelected').addItem('🔎 To review (Pending)', 'viewPending')
-    .addItem('❌ Rejected', 'viewRejected').addItem('↺ Show all', 'viewAll');
+    .addItem('✅ Selected (1)', 'viewSelected').addItem('🔎 To review (blank)', 'viewPending')
+    .addItem('❌ Rejected (0)', 'viewRejected').addItem('↺ Show all', 'viewAll');
   ui.createMenu('🎯 Topic Tool')
     .addItem('▶ Run everything (paste into AKR first)', 'runEverything')
     .addSubMenu(views)
@@ -44,9 +51,8 @@ function onOpen(){
     .addItem('🏢 Client info + API keys', 'showSetup')
     .addItem('✔ Self-review my selected', 'selfReview')
     .addItem('🔁 Re-apply rules', 'runRules')
-    .addItem('⏹ Stop background processing', 'stopBackground')
     .addSeparator()
-    .addItem('⚙ Set API keys…', 'setApiKeys')
+    .addItem('⏹ Stop background processing', 'stopBackground')
     .addItem('🧹 Clear & start over', 'clearCache')
     .addItem('🔄 Update to latest version', 'forceUpdate')
     .addToUi();

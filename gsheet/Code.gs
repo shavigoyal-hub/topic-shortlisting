@@ -69,29 +69,33 @@ function statRej(v){ v=String(v==null?'':v).trim().toLowerCase(); return v==='0'
 function statNorm(v){ return statSel(v)?'1':(statRej(v)?'0':''); }   // canonical form
 
 /* ----------------------------- MENU ------------------------------- */
-function onOpen(){
-  try{ ensureAllSheets(); }catch(e){}
-  var ui=SpreadsheetApp.getUi();
+// The bootstrap delegates to this, so the menu auto-updates with the code (no re-paste for menu changes).
+function buildMenu(ui){
+  ui = ui || SpreadsheetApp.getUi();
   var views=ui.createMenu('👁 Views (Service / Blog / picks)')
     .addItem('🛠 Service / Product', 'viewService')
     .addItem('📝 Blog', 'viewBlog')
     .addSeparator()
-    .addItem('✅ Selected', 'viewSelected')
-    .addItem('🔎 To review (Pending)', 'viewPending')
-    .addItem('❌ Rejected', 'viewRejected')
+    .addItem('✅ Selected (1)', 'viewSelected')
+    .addItem('🔎 To review (blank)', 'viewPending')
+    .addItem('❌ Rejected (0)', 'viewRejected')
     .addItem('↺ Show all', 'viewAll');
-  ui.createMenu('🎯 Topic Tool')
+  var menu=ui.createMenu('🎯 Topic Tool')
     .addItem('▶ Run everything (paste into AKR first)', 'runEverything')
     .addSubMenu(views)
     .addSeparator()
     .addItem('🏢 Client info + API keys', 'showSetup')
     .addItem('✔ Self-review my selected', 'selfReview')
     .addItem('🔁 Re-apply rules', 'runRules')
-    .addItem('⏹ Stop background processing', 'stopBackground')
     .addSeparator()
-    .addItem('⚙ Set API keys…', 'setApiKeys')
-    .addItem('🧹 Clear & start over', 'clearCache')
-    .addToUi();
+    .addItem('⏹ Stop background processing', 'stopBackground')
+    .addItem('🧹 Clear & start over', 'clearCache');
+  if(typeof forceUpdate==='function') menu.addItem('🔄 Update to latest version', 'forceUpdate');
+  menu.addToUi();
+}
+function onOpen(){
+  try{ ensureAllSheets(); }catch(e){}
+  buildMenu();
 }
 
 /* --------------------- VIEWS (filter the one tab) ----------------- */
