@@ -79,7 +79,7 @@ function onOpen(){
     .addItem('▶ Run everything (paste into AKR first)', 'runEverything')
     .addSubMenu(views)
     .addSeparator()
-    .addItem('🏢 Client info (services / competitors / domain…)', 'showSetup')
+    .addItem('🏢 Client info + API keys', 'showSetup')
     .addItem('✔ Self-review my selected', 'selfReview')
     .addItem('🔁 Re-apply rules', 'runRules')
     .addItem('⏹ Stop background processing', 'stopBackground')
@@ -162,15 +162,22 @@ function showSetup(){
     +'<label>Competitors / brands to reject <small>(comma-separated)</small></label><textarea id="competitors" rows="2" placeholder="vistaprint, moo, minted">'+v(c.competitors.join(', '))+'</textarea>'
     +'<label>Served locations <small>(comma-separated; leave blank if national)</small></label><input id="locations" value="'+v(c.locations.join(', '))+'" placeholder="new york, los angeles">'
     +'<label>Geo mode</label><select id="geoMode"><option value="all" '+(c.geoMode!=='restricted'?'selected':'')+'>Serve anywhere (don\'t reject by location)</option><option value="restricted" '+(c.geoMode==='restricted'?'selected':'')+'>Only the locations above</option></select>'
-    +'<button onclick="save()">Save client info</button>'
-    +'<script>function save(){var d={website:website.value,offering:offering.value,services:services.value,industries:industries.value,competitors:competitors.value,locations:locations.value,geoMode:geoMode.value};google.script.run.withSuccessHandler(function(){google.script.host.close();}).saveClientInfo(d);}</script>';
-  SpreadsheetApp.getUi().showModalDialog(HtmlService.createHtmlOutput(html).setWidth(420).setHeight(560), '🏢 Client info');
+    +'<hr style="margin:16px 0;border:none;border-top:1px solid #eee">'
+    +'<div style="font-weight:700;font-size:13px;margin-bottom:2px">🔑 API keys <small>(stored privately in the script, never in the sheet)</small></div>'
+    +'<label>OpenAI API key '+(prop('OPENAI_API_KEY')?'<small style="color:#0a0">✓ already set</small>':'<small style="color:#c00">not set</small>')+'</label><input id="openaiKey" type="password" placeholder="sk-…  (leave blank to keep current)">'
+    +'<label>Serper API key '+(prop('SERPER_KEY')?'<small style="color:#0a0">✓ already set</small>':'<small style="color:#c00">not set</small>')+'</label><input id="serperKey" type="password" placeholder="leave blank to keep current">'
+    +'<button onclick="save()">Save</button>'
+    +'<script>function save(){var d={website:website.value,offering:offering.value,services:services.value,industries:industries.value,competitors:competitors.value,locations:locations.value,geoMode:geoMode.value,openaiKey:openaiKey.value,serperKey:serperKey.value};google.script.run.withSuccessHandler(function(){google.script.host.close();}).saveClientInfo(d);}</script>';
+  SpreadsheetApp.getUi().showModalDialog(HtmlService.createHtmlOutput(html).setWidth(430).setHeight(640), '🏢 Client info & API keys');
 }
 function saveClientInfo(d){
   setConfigVal('website', d.website||''); setConfigVal('offering', d.offering||'Both');
   setConfigVal('services', d.services||''); setConfigVal('industries', d.industries||'');
   setConfigVal('competitors', d.competitors||''); setConfigVal('locations', d.locations||'');
   setConfigVal('geoMode', d.geoMode||'all');
+  var props=PropertiesService.getScriptProperties();
+  if(d.openaiKey && d.openaiKey.trim()) props.setProperty('OPENAI_API_KEY', d.openaiKey.trim());
+  if(d.serperKey && d.serperKey.trim()) props.setProperty('SERPER_KEY', d.serperKey.trim());
   runRules();   // re-evaluate competitor/location rules with the new info
   return true;
 }

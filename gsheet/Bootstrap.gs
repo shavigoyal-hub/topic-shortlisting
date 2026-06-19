@@ -41,7 +41,7 @@ function onOpen(){
     .addItem('▶ Run everything (paste into AKR first)', 'runEverything')
     .addSubMenu(views)
     .addSeparator()
-    .addItem('🏢 Client info (services / competitors / domain…)', 'showSetup')
+    .addItem('🏢 Client info + API keys', 'showSetup')
     .addItem('✔ Self-review my selected', 'selfReview')
     .addItem('🔁 Re-apply rules', 'runRules')
     .addItem('⏹ Stop background processing', 'stopBackground')
