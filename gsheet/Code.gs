@@ -72,25 +72,14 @@ function statNorm(v){ return statSel(v)?'1':(statRej(v)?'0':''); }   // canonica
 // The bootstrap delegates to this, so the menu auto-updates with the code (no re-paste for menu changes).
 function buildMenu(ui){
   ui = ui || SpreadsheetApp.getUi();
-  var views=ui.createMenu('👁 Views (Service / Blog / picks)')
-    .addItem('🛠 Service / Product', 'viewService')
-    .addItem('📝 Blog', 'viewBlog')
+  var menu=ui.createMenu('Topic Tool')
+    .addItem('Run everything', 'runEverything')
+    .addItem('Self-review my selected', 'selfReview')
+    .addItem('Re-apply rules', 'runRules')
     .addSeparator()
-    .addItem('✅ Selected (1)', 'viewSelected')
-    .addItem('🔎 To review (blank)', 'viewPending')
-    .addItem('❌ Rejected (0)', 'viewRejected')
-    .addItem('↺ Show all', 'viewAll');
-  var menu=ui.createMenu('🎯 Topic Tool')
-    .addItem('▶ Run everything (paste into AKR first)', 'runEverything')
-    .addSubMenu(views)
-    .addSeparator()
-    .addItem('🏢 Client info + API keys', 'showSetup')
-    .addItem('✔ Self-review my selected', 'selfReview')
-    .addItem('🔁 Re-apply rules', 'runRules')
-    .addSeparator()
-    .addItem('⏹ Stop background processing', 'stopBackground')
-    .addItem('🧹 Clear & start over', 'clearCache');
-  if(typeof forceUpdate==='function') menu.addItem('🔄 Update to latest version', 'forceUpdate');
+    .addItem('Stop background processing', 'stopBackground')
+    .addItem('Clear & start over', 'clearCache');
+  if(typeof forceUpdate==='function') menu.addItem('Update to latest version', 'forceUpdate');
   menu.addToUi();
 }
 function onOpen(){
