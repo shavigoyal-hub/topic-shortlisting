@@ -124,6 +124,9 @@ function ensureAllSheets(){
   var c = ensureSheet(SHEET.CACHE);
   if(c.getLastRow()===0) c.getRange(1,1,1,7).setValues([['Keyword','Domains','Audience','Type','Keep','Reason','Titles']]).setFontWeight('bold');
   c.hideSheet();
+  // your own negative list — keep adding words/phrases here; topics containing them get auto-rejected
+  var neg = ensureSheet('Negatives');
+  if(neg.getLastRow()===0){ neg.getRange(1,1).setValue('Negative keyword / phrase  (one per row — any topic whose keyword contains this is auto-rejected when you Run / Re-apply rules)').setFontWeight('bold').setBackground('#fde7e7'); neg.setColumnWidth(1,560); neg.setFrozenRows(1); }
   // one-tab edition: remove the old separate view tabs if present
   VIEW_TABS.forEach(function(nm){ var s=sheet(nm); if(s){ try{ ss().deleteSheet(s); }catch(e){} } });
   var s1=sheet('Sheet1'); if(s1 && s1.getLastRow()===0 && ss().getSheets().length>1){ try{ ss().deleteSheet(s1); }catch(e){} }
@@ -134,13 +137,20 @@ function getConfig(){
   var s=sheet(SHEET.CONFIG); if(!s){ ensureAllSheets(); s=sheet(SHEET.CONFIG); }
   var vals=s.getDataRange().getValues(), o={};
   for(var i=1;i<vals.length;i++){ if(vals[i][0]!=='') o[String(vals[i][0]).trim()]=vals[i][1]; }
-  var list=function(k){ return String(o[k]||'').split(',').map(function(x){return x.trim();}).filter(String); };
+  var list=function(k){ return String(o[k]||'').split(/[,\n;]+/).map(function(x){return x.trim();}).filter(String); };   // commas, new lines, or semicolons all work
   var bool=function(k){ return String(o[k]).toUpperCase()==='TRUE'; };
   return { offering:o.offering||'Both', website:o.website||'', services:list('services'), industries:list('industries'), products:list('products'),
-    competitors:list('competitors'), locations:list('locations'), geoMode:o.geoMode||'all', serpGl:o.serpGl||'us',
+    competitors:list('competitors'), locations:list('locations'), negatives:getNegatives(), geoMode:o.geoMode||'all', serpGl:o.serpGl||'us',
     rules:{ zero:bool('rule_zero'), free:bool('rule_free'), nearme:bool('rule_nearme'), competitor:bool('rule_competitor'),
       location:bool('rule_location'), info:bool('rule_info'), jobs:bool('rule_jobs'), format:bool('rule_format'), org:bool('rule_org'), lowrel:bool('rule_lowrel') },
     lowRel:Number(o.lowrel_threshold||1) };
+}
+// your own blocklist: any keyword containing one of these is auto-rejected. Add freely to the "Negatives" tab.
+function getNegatives(){
+  var s=sheet('Negatives'); if(!s||s.getLastRow()<2) return [];
+  var v=s.getRange(2,1,s.getLastRow()-1,1).getValues(), out=[];
+  v.forEach(function(r){ var c=String(r[0]==null?'':r[0]).trim(); if(c) out.push(c); });
+  return out;
 }
 function setConfigVal(key, val){
   var s=sheet(SHEET.CONFIG), vals=s.getDataRange().getValues();
@@ -187,7 +197,7 @@ function clientConfigured(){ var c=getConfig(); return !!(c.website || c.service
 /* Auto-fill client info from the client datasheet's tabs (Services / Industry / Competitors / Geographies).
    Drop the client's xlsx in via File ▸ Import ▸ "Insert new sheet(s)", then this reads those tabs. */
 function autofillClientFromTabs(){
-  var reserved={AKR:1,Config:1,Topics:1,'_Cache':1};
+  var reserved={AKR:1,Config:1,Topics:1,'_Cache':1,'Negatives':1};
   var found={services:[],industries:[],competitors:[],locations:[]}, hits=[];
   ss().getSheets().forEach(function(sh){
     var name=sh.getName(); if(reserved[name]) return;
@@ -276,6 +286,7 @@ function importAkrSilent(){
 /* --------------------------- RULE ENGINE -------------------------- */
 function evalRules(row, cfg){
   var R=cfg.rules, t=norm(row.kw), hits=[];
+  if(cfg.negatives && cfg.negatives.length){ for(var ni=0;ni<cfg.negatives.length;ni++){ var neg=norm(cfg.negatives[ni]); if(neg && t.indexOf(neg)>=0){ hits.push('Negative keyword: '+cfg.negatives[ni]); break; } } }
   if(R.zero && Number(row.vol)<=0) hits.push('Zero search volume');
   if(R.free && /\bfree\b/.test(t)) hits.push('Free keyword');
   if(R.nearme && /\bnear me\b/.test(t)) hits.push('"Near me" query');
