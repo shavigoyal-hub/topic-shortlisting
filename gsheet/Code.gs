@@ -150,11 +150,12 @@ function setConfigVal(key, val){
 
 /* ---- client-info form (one dialog instead of editing the Config tab) ---- */
 function showSetup(){
-  ensureAllSheets(); var c=getConfig();
+  ensureAllSheets(); autofillClientFromTabs(); var c=getConfig();   // pre-fill from any client-datasheet tabs present
   var v=function(x){ return String(x==null?'':x).replace(/"/g,'&quot;'); };
   var html='<style>body{font-family:Arial;font-size:13px;margin:0;padding:14px;color:#222}label{display:block;font-weight:600;margin:10px 0 3px}'
     +'input,select,textarea{width:100%;box-sizing:border-box;padding:7px;border:1px solid #ccc;border-radius:6px;font-size:13px}'
     +'small{color:#888;font-weight:400}button{margin-top:14px;background:#3b5bdb;color:#fff;border:0;border-radius:7px;padding:9px 16px;font-weight:700;cursor:pointer}</style>'
+    +'<div style="background:#eef4ff;border:1px solid #cdd9f8;border-radius:7px;padding:8px 10px;font-size:12px;color:#33518f;margin-bottom:6px">💡 Have the client datasheet? Use <b>File ▸ Import ▸ Upload</b> → <b>Insert new sheet(s)</b>, then re-open this (or Run everything) — the Services / Industry / Competitors / Geographies tabs auto-fill below.</div>'
     +'<label>Client website / domain</label><input id="website" value="'+v(c.website)+'" placeholder="https://client.com">'
     +'<label>Offering</label><select id="offering"><option '+(c.offering==='Product'?'selected':'')+'>Product</option><option '+(c.offering==='Services'?'selected':'')+'>Services</option><option '+(c.offering!=='Product'&&c.offering!=='Services'?'selected':'')+'>Both</option></select>'
     +'<label>Services / Products <small>(comma-separated)</small></label><textarea id="services" rows="2" placeholder="business cards, foil stamping, engraving">'+v(c.services.join(', '))+'</textarea>'
@@ -183,6 +184,37 @@ function saveClientInfo(d){
 }
 function clientConfigured(){ var c=getConfig(); return !!(c.website || c.services.length); }
 
+/* Auto-fill client info from the client datasheet's tabs (Services / Industry / Competitors / Geographies).
+   Drop the client's xlsx in via File ▸ Import ▸ "Insert new sheet(s)", then this reads those tabs. */
+function autofillClientFromTabs(){
+  var reserved={AKR:1,Config:1,Topics:1,'_Cache':1};
+  var found={services:[],industries:[],competitors:[],locations:[]}, hits=[];
+  ss().getSheets().forEach(function(sh){
+    var name=sh.getName(); if(reserved[name]) return;
+    var n=name.toLowerCase(), role = /service|product|offering/.test(n)?'services'
+      : (/industr|vertical|segment|icp|audience/.test(n)?'industries'
+      : (/competitor|brand|rival/.test(n)?'competitors'
+      : (/geograph|location|geo|region|market|cities|countr/.test(n)?'locations':null)));
+    if(!role) return;
+    if(sh.getLastRow()<1) return;
+    hits.push(name+' → '+role);
+    var vals=sh.getDataRange().getValues();
+    for(var i=0;i<vals.length;i++){ var c=String(vals[i][0]==null?'':vals[i][0]).trim();
+      if(!c) continue;
+      if(i===0 && /\b(name|service|product|industr|competitor|brand|location|geo|region|market|keyword|website)\b/i.test(c)) continue;  // skip a header row
+      found[role].push(c);
+    }
+  });
+  if(!hits.length) return {hits:[], filled:0};
+  var uniq=function(a){ var s={},o=[]; a.forEach(function(x){ var k=x.toLowerCase(); if(!s[k]){ s[k]=1; o.push(x); } }); return o; };
+  var filled=0;
+  if(found.services.length){ setConfigVal('services', uniq(found.services).join(', ')); filled++; }
+  if(found.industries.length){ setConfigVal('industries', uniq(found.industries).join(', ')); filled++; }
+  if(found.competitors.length){ setConfigVal('competitors', uniq(found.competitors).join(', ')); filled++; }
+  if(found.locations.length){ setConfigVal('locations', uniq(found.locations).join(', ')); setConfigVal('geoMode','restricted'); filled++; }
+  return {hits:hits, filled:filled, counts:{services:found.services.length,industries:found.industries.length,competitors:found.competitors.length,locations:found.locations.length}};
+}
+
 function setApiKeys(){
   var ui=SpreadsheetApp.getUi(), props=PropertiesService.getScriptProperties();
   var a=ui.prompt('OpenAI API key', 'Paste OPENAI_API_KEY (blank = keep current):', ui.ButtonSet.OK_CANCEL);
@@ -197,7 +229,11 @@ function runEverything(){
   var ui=SpreadsheetApp.getUi();
   ensureAllSheets();
   if(sheet(SHEET.AKR).getLastRow()<2){ ui.alert('Paste your keyword report into the "AKR" tab first, then click "Run everything" again.'); return; }
-  if(!clientConfigured()){ ui.alert('First, tell me about the client (services, competitors, domain). The form opens next.'); showSetup(); return; }
+  var auto=autofillClientFromTabs();   // read Services/Industry/Competitors/Geo tabs from the client datasheet if present
+  if(!clientConfigured()){
+    var hint = auto.hits.length ? ('Auto-filled from: '+auto.hits.join(', ')+'. Review/add anything (incl. API keys), then Run again.') : 'Tell me about the client (services, competitors, domain) — or import the client datasheet (File ▸ Import ▸ Insert new sheets) and Run again to auto-fill.';
+    ui.alert(hint); showSetup(); return;
+  }
   if(!prop('OPENAI_API_KEY') || !prop('SERPER_KEY')){ ui.alert('First-time setup: paste your OpenAI + Serper API keys (you only do this once).'); setApiKeys(); }
   var haveKeys = prop('OPENAI_API_KEY') && prop('SERPER_KEY');
 
