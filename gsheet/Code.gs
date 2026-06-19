@@ -348,6 +348,7 @@ function runRules(){
     if(hit){ v[COL.STATUS-1]='0'; v[COL.REASON-1]=hit.reason; v[COL.LAYER-1]=hit.layer; }
     else if(String(v[COL.LAYER-1])==='Rule'){ v[COL.STATUS-1]=''; v[COL.REASON-1]=''; v[COL.LAYER-1]=''; }   // was rule-rejected, no longer
   }
+  t.getRange(2,COL.STATUS,n,1).setNumberFormat('@');   // keep 0/1 as text so the dropdown doesn't flag them red
   rng.setValues(vals);
 }
 
@@ -428,6 +429,7 @@ function processBatch(){
       else if(String(v[COL.LAYER-1])==='Rule'||String(v[COL.LAYER-1])==='AI'){ v[COL.STATUS-1]=''; v[COL.REASON-1]=''; v[COL.LAYER-1]=''; }
     }
   });
+  t.getRange(2,COL.STATUS,n,1).setNumberFormat('@');   // keep 0/1 as text
   rng.setValues(vals); saveCache(cache);
   return todo.length;
 }
