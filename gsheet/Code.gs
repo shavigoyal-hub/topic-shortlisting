@@ -63,6 +63,11 @@ function serpBrandHit(domains, kw){
   return null;
 }
 
+/* Status column uses 1 = keep/selected, 0 = rejected, blank = pending (words also accepted). */
+function statSel(v){ v=String(v==null?'':v).trim().toLowerCase(); return v==='1'||v==='selected'||v==='yes'||v==='y'||v==='keep'; }
+function statRej(v){ v=String(v==null?'':v).trim().toLowerCase(); return v==='0'||v==='rejected'||v==='no'||v==='n'||v==='reject'; }
+function statNorm(v){ return statSel(v)?'1':(statRej(v)?'0':''); }   // canonical form
+
 /* ----------------------------- MENU ------------------------------- */
 function onOpen(){
   try{ ensureAllSheets(); }catch(e){}
@@ -92,13 +97,14 @@ function onOpen(){
 /* --------------------- VIEWS (filter the one tab) ----------------- */
 function topicsFilter(){ var t=sheet(SHEET.TOPICS); if(!t) return null; ss().setActiveSheet(t); var f=t.getFilter(); if(!f){ applyFormatting(true); f=t.getFilter(); } return f; }
 function clearViewCriteria(f){ [COL.PT, COL.STATUS].forEach(function(c){ try{ f.removeColumnFilterCriteria(c); }catch(e){} }); }
-function setView(col, value){ var f=topicsFilter(); if(!f) return; clearViewCriteria(f); if(col) f.setColumnFilterCriteria(col, SpreadsheetApp.newFilterCriteria().whenTextEqualTo(value).build()); }
+function setView(col, value){ var f=topicsFilter(); if(!f) return; clearViewCriteria(f);
+  if(col){ var crit = value===null ? SpreadsheetApp.newFilterCriteria().whenCellEmpty().build() : SpreadsheetApp.newFilterCriteria().whenTextEqualTo(value).build(); f.setColumnFilterCriteria(col, crit); } }
 function viewService(){ setView(COL.PT, 'Service'); }
 function viewBlog(){ setView(COL.PT, 'Blog'); }
-function viewSelected(){ setView(COL.STATUS, 'Selected'); }
-function viewPending(){ setView(COL.STATUS, 'Pending'); }
-function viewRejected(){ setView(COL.STATUS, 'Rejected'); }
-function viewAll(){ setView(null); }
+function viewSelected(){ setView(COL.STATUS, '1'); }
+function viewPending(){ setView(COL.STATUS, null); }   // blank = pending
+function viewRejected(){ setView(COL.STATUS, '0'); }
+function viewAll(){ setView(0); }   // 0 (falsy col) = clear all view criteria
 
 /* --------------------------- SHEETS / CONFIG ---------------------- */
 function ss(){ return SpreadsheetApp.getActiveSpreadsheet(); }
@@ -127,8 +133,9 @@ function ensureAllSheets(){
     var last=t.getLastRow();
     if(last>1){   // heal stale data-validation left on the old Status column; re-apply at the correct one
       t.getRange(2,1,last-1,NCOL).clearDataValidations();
-      var rule=SpreadsheetApp.newDataValidation().requireValueInList(['Pending','Selected','Rejected'],true).build();
-      t.getRange(2,COL.STATUS,last-1,1).setDataValidation(rule);
+      var rule=SpreadsheetApp.newDataValidation().requireValueInList(['1','0'],true).setHelpText('1 = keep, 0 = reject, blank = pending').build();
+      var sr=t.getRange(2,COL.STATUS,last-1,1); sr.setNumberFormat('@'); sr.setDataValidation(rule);
+      var sv=sr.getValues(); for(var si=0;si<sv.length;si++){ sv[si][0]=statNorm(sv[si][0]); } sr.setValues(sv);   // migrate old Selected/Rejected/Pending → 1/0/blank
     }
     try{ applyFormatting(true); }catch(e){}   // re-point conditional formatting/colours at the new columns
   }
@@ -261,13 +268,13 @@ function runEverything(){
   var n=importAkrSilent(); runRules(); applyFormatting(true);
   var did=0; if(haveKeys) did=enrichForeground();
   var t=sheet(SHEET.TOPICS), rej=0, remaining=0;
-  t.getRange(2,1,Math.max(t.getLastRow()-1,1),NCOL).getValues().forEach(function(r){ if(r[COL.STATUS-1]==='Rejected') rej++; if(r[COL.KW-1] && !r[COL.AUD-1]) remaining++; });
+  t.getRange(2,1,Math.max(t.getLastRow()-1,1),NCOL).getValues().forEach(function(r){ if(statRej(r[COL.STATUS-1])) rej++; if(r[COL.KW-1] && !r[COL.AUD-1]) remaining++; });
 
   var msg='Imported '+n+' topics — '+rej+' auto-rejected by rules.\n\n';
   if(!haveKeys){ msg+='API keys not set, so Audience/Type/intent were skipped. Add keys (⚙ Set API keys) and Run again.'; }
   else if(remaining>0){ startBackgroundSilent(); msg+='Enriched '+did+' so far; '+remaining+' still processing in the background (a batch runs every minute — you can keep working). Refresh in a few minutes.'; }
   else { stopBackground(); msg+='All topics enriched (Audience, Type, Modifier, BOFU filled).'; }
-  msg+='\n\nNEXT: in "Topics" set Status = "Selected" on the keywords you want, then run "Self-review my selected". Use the column filters to slice.';
+  msg+='\n\nNEXT: in "Topics", in the Status column mark 1 = keep, 0 = reject (blank = undecided). Service/Product rows are listed first, then Blog. Then run "Self-review my selected".';
   ui.alert(msg);
 }
 
@@ -286,18 +293,28 @@ function importAkrSilent(){
     var key=(kw+'|'+topic).toLowerCase(); if(seen[key]) continue; seen[key]=1;
     var pt=/serv|product/i.test(ci.pt>=0?String(a[ci.pt]||''):'')?'Service':'Blog';
     var vol=ci.vol>=0?(parseInt(String(a[ci.vol]||'').replace(/[^0-9]/g,''),10)||0):0;
-    out.push([kw, pt, topic, ci.sec>=0?String(a[ci.sec]||'').trim():'', vol, ci.rel>=0?a[ci.rel]:'', '','','','','Pending','','','','','']);
+    out.push([kw, pt, topic, ci.sec>=0?String(a[ci.sec]||'').trim():'', vol, ci.rel>=0?a[ci.rel]:'', '','','','','','','','','','']);   // status blank = pending
   }
+  out.sort(function(a,b){ return (a[COL.PT-1]==='Service'?0:1)-(b[COL.PT-1]==='Service'?0:1); });   // Service/Product first, then Blog
   if(t.getLastRow()>1) t.getRange(2,1,t.getLastRow()-1,NCOL).clearContent();
-  if(out.length) t.getRange(2,1,out.length,NCOL).setValues(out);
-  if(out.length){ var rule=SpreadsheetApp.newDataValidation().requireValueInList(['Pending','Selected','Rejected'],true).build(); t.getRange(2,COL.STATUS,out.length,1).setDataValidation(rule); }
+  if(out.length){
+    t.getRange(2,1,out.length,NCOL).setValues(out);
+    t.getRange(2,COL.STATUS,out.length,1).setNumberFormat('@');   // keep 0/1 as text so they don't become numbers
+    var rule=SpreadsheetApp.newDataValidation().requireValueInList(['1','0'],true).setHelpText('1 = keep, 0 = reject, blank = pending').build();
+    t.getRange(2,COL.STATUS,out.length,1).setDataValidation(rule);
+  }
   return out.length;
 }
 
 /* --------------------------- RULE ENGINE -------------------------- */
 function evalRules(row, cfg){
   var R=cfg.rules, t=norm(row.kw), hits=[];
-  if(cfg.negatives && cfg.negatives.length){ for(var ni=0;ni<cfg.negatives.length;ni++){ var neg=norm(cfg.negatives[ni]); if(neg && t.indexOf(neg)>=0){ hits.push('Negative keyword: '+cfg.negatives[ni]); break; } } }
+  // Negatives = your blocklist identifiers: match as a whole word across keyword + topic + secondary
+  if(cfg.negatives && cfg.negatives.length){
+    var negblob=norm(row.kw+' '+(row.topic||'')+' '+(row.sec||''));
+    for(var ni=0;ni<cfg.negatives.length;ni++){ var neg=norm(cfg.negatives[ni]); if(!neg) continue;
+      if(new RegExp('\\b'+neg.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b').test(negblob)){ hits.push('Negative keyword: '+cfg.negatives[ni]); break; } }
+  }
   if(R.zero && Number(row.vol)<=0) hits.push('Zero search volume');
   if(R.free && /\bfree\b/.test(t)) hits.push('Free keyword');
   if(R.nearme && /\bnear me\b/.test(t)) hits.push('"Near me" query');
@@ -324,11 +341,12 @@ function runRules(){
   for(var i=0;i<vals.length;i++){
     var v=vals[i]; if(!v[COL.KW-1]) continue;
     v[COL.MOD-1]=modifiersOf(v[COL.KW-1], cfg); v[COL.BOFU-1]=isBofu(v[COL.KW-1])?'Yes':'No';
-    if(String(v[COL.STATUS-1])==='Selected') continue;
+    v[COL.STATUS-1]=statNorm(v[COL.STATUS-1]);                 // migrate Selected/Rejected/Pending → 1/0/blank
+    if(v[COL.STATUS-1]==='1') continue;                        // human keep — protected
     var domains=String(v[COL.DOMAINS-1]||'').split(',').filter(String);
-    var hit=evalRules({kw:v[COL.KW-1],topic:v[COL.TOPIC-1],vol:v[COL.VOL-1],rel:v[COL.REL-1],pageType:v[COL.PT-1],domains:domains}, cfg);
-    if(hit){ v[COL.STATUS-1]='Rejected'; v[COL.REASON-1]=hit.reason; v[COL.LAYER-1]=hit.layer; }
-    else if(String(v[COL.STATUS-1])==='Rejected' && String(v[COL.LAYER-1])==='Rule'){ v[COL.STATUS-1]='Pending'; v[COL.REASON-1]=''; v[COL.LAYER-1]=''; }
+    var hit=evalRules({kw:v[COL.KW-1],topic:v[COL.TOPIC-1],sec:v[COL.SEC-1],vol:v[COL.VOL-1],rel:v[COL.REL-1],pageType:v[COL.PT-1],domains:domains}, cfg);
+    if(hit){ v[COL.STATUS-1]='0'; v[COL.REASON-1]=hit.reason; v[COL.LAYER-1]=hit.layer; }
+    else if(String(v[COL.LAYER-1])==='Rule'){ v[COL.STATUS-1]=''; v[COL.REASON-1]=''; v[COL.LAYER-1]=''; }   // was rule-rejected, no longer
   }
   rng.setValues(vals);
 }
@@ -402,11 +420,12 @@ function processBatch(){
   todo.forEach(function(i){ var v=vals[i], kw=String(v[COL.KW-1]).toLowerCase(), c=cache[kw];
     v[COL.AUD-1]=c.audience||'General'; v[COL.TYPE-1]=c.type||''; v[COL.DOMAINS-1]=(c.domains||[]).join(',');
     v[COL.MOD-1]=modifiersOf(v[COL.KW-1], cfg); v[COL.BOFU-1]=isBofu(v[COL.KW-1])?'Yes':'No';
-    if(String(v[COL.STATUS-1])!=='Selected'){
-      var hit=evalRules({kw:v[COL.KW-1],topic:v[COL.TOPIC-1],vol:v[COL.VOL-1],rel:v[COL.REL-1],pageType:v[COL.PT-1],domains:(c.domains||[])}, cfg);
-      if(hit){ v[COL.STATUS-1]='Rejected'; v[COL.REASON-1]=hit.reason; v[COL.LAYER-1]='Rule'; }
-      else if(c.keep===false){ v[COL.STATUS-1]='Rejected'; v[COL.REASON-1]=c.reason||'Off intent'; v[COL.LAYER-1]='AI'; }
-      else if(String(v[COL.STATUS-1])==='Rejected'){ v[COL.STATUS-1]='Pending'; v[COL.REASON-1]=''; v[COL.LAYER-1]=''; }
+    v[COL.STATUS-1]=statNorm(v[COL.STATUS-1]);
+    if(v[COL.STATUS-1]!=='1'){   // not a human keep
+      var hit=evalRules({kw:v[COL.KW-1],topic:v[COL.TOPIC-1],sec:v[COL.SEC-1],vol:v[COL.VOL-1],rel:v[COL.REL-1],pageType:v[COL.PT-1],domains:(c.domains||[])}, cfg);
+      if(hit){ v[COL.STATUS-1]='0'; v[COL.REASON-1]=hit.reason; v[COL.LAYER-1]='Rule'; }
+      else if(c.keep===false){ v[COL.STATUS-1]='0'; v[COL.REASON-1]=c.reason||'Off intent'; v[COL.LAYER-1]='AI'; }
+      else if(String(v[COL.LAYER-1])==='Rule'||String(v[COL.LAYER-1])==='AI'){ v[COL.STATUS-1]=''; v[COL.REASON-1]=''; v[COL.LAYER-1]=''; }
     }
   });
   rng.setValues(vals); saveCache(cache);
@@ -423,11 +442,11 @@ function backgroundTick(){ var done=processBatch(); if(done===0){ stopBackground
 function selfReview(){
   var t=sheet(SHEET.TOPICS); if(!t||t.getLastRow()<2) return;
   var cfg=getConfig(), cache=loadCache(), n=t.getLastRow()-1, rng=t.getRange(2,1,n,NCOL), vals=rng.getValues(), idxs=[];
-  for(var i=0;i<vals.length;i++){ if(String(vals[i][COL.STATUS-1])==='Selected'){ idxs.push(i); vals[i][COL.RVERDICT-1]=''; vals[i][COL.RREASON-1]=''; } }
-  if(!idxs.length){ SpreadsheetApp.getUi().alert('No rows with Status = Selected. Pick some first.'); return; }
+  for(var i=0;i<vals.length;i++){ if(statSel(vals[i][COL.STATUS-1])){ idxs.push(i); vals[i][COL.RVERDICT-1]=''; vals[i][COL.RREASON-1]=''; } }
+  if(!idxs.length){ SpreadsheetApp.getUi().alert('No rows marked Status = 1 (keep). Mark some first (1 = keep, 0 = reject).'); return; }
   var need=[];
   idxs.forEach(function(i){ var v=vals[i], domains=String(v[COL.DOMAINS-1]||'').split(',').filter(String);
-    var hit=evalRules({kw:v[COL.KW-1],topic:v[COL.TOPIC-1],vol:v[COL.VOL-1],rel:v[COL.REL-1],pageType:v[COL.PT-1],domains:domains}, cfg);
+    var hit=evalRules({kw:v[COL.KW-1],topic:v[COL.TOPIC-1],sec:v[COL.SEC-1],vol:v[COL.VOL-1],rel:v[COL.REL-1],pageType:v[COL.PT-1],domains:domains}, cfg);
     if(hit){ v[COL.RVERDICT-1]='FLAG'; v[COL.RREASON-1]='[Rule] '+hit.reason; } else need.push(i); });
   for(var b=0;b<need.length;b+=AI_BATCH){
     var slice=need.slice(b,b+AI_BATCH);
@@ -451,10 +470,10 @@ function reviewBatch(items, cfg){
 /* --------------------------- FORMATTING --------------------------- */
 function applyFormatting(silent){
   var t=sheet(SHEET.TOPICS); if(!t) return; var n=Math.max(t.getLastRow()-1,1);
-  try{ t.showColumns(1,NCOL); t.hideColumns(COL.DOMAINS); }catch(e){}
+  try{ t.showColumns(1,NCOL); t.hideColumns(COL.DOMAINS); t.getRange(2,COL.STATUS,n,1).setNumberFormat('@'); }catch(e){}
   var body=t.getRange(2,1,n,NCOL), rules=[];
-  rules.push(SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=$K2="Rejected"').setBackground('#fde7e7').setRanges([body]).build());
-  rules.push(SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=$K2="Selected"').setBackground('#e7f6ec').setRanges([body]).build());
+  rules.push(SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=$K2="0"').setBackground('#fde7e7').setRanges([body]).build());
+  rules.push(SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=$K2="1"').setBackground('#e7f6ec').setRanges([body]).build());
   rules.push(SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=$O2="FLAG"').setBackground('#fde7e7').setFontColor('#b00020').setRanges([body]).build());
   t.setConditionalFormatRules(rules);
   if(t.getFilter()) t.getFilter().remove();
