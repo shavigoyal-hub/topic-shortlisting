@@ -32,7 +32,21 @@ running inside a single Google Sheet via Apps Script. No hosting, no deploys, no
 Re-open **🏢 Client info** anytime to update the profile (it re-runs the rules). **🧹 Clear & start over**
 wipes Topics + cache for a new client. **⚙ Set API keys** changes the keys.
 
-## Auto-update with `clasp` (no more copy-paste)
+## Easiest auto-update: the bootstrap (paste once, never again)
+
+Instead of `Code.gs`, paste **`Bootstrap.gs`** into Apps Script (just once). It fetches the latest
+`Code.gs` from this repo and runs it, so **every update I push goes live automatically** — no clasp,
+no npm, no re-pasting.
+
+1. In your Sheet → **Extensions ▸ Apps Script**, delete whatever's there, paste **`Bootstrap.gs`**, **Save**.
+2. Reload the Sheet, approve the one-time authorization. Done — forever.
+3. When you want the very latest immediately, use **🎯 Topic Tool ▸ 🔄 Update to latest version**
+   (otherwise it refreshes itself every ~5 minutes).
+
+Trade-off: the sheet runs code fetched from the repo URL in `Bootstrap.gs`. That's fine because it's
+your own tool's repo — just don't point it at a repo you don't control.
+
+## Power-user auto-update: `clasp`
 
 One-time setup so every future change is a single `clasp push`:
 
