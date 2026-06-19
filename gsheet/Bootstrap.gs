@@ -39,27 +39,23 @@ function onOpen(){
   bootMenu();   // fallback (only if latest code isn't cached yet)
 }
 function bootMenu(){
-  var ui = SpreadsheetApp.getUi();
-  var views = ui.createMenu('👁 Views (Service / Blog / picks)')
-    .addItem('🛠 Service / Product', 'viewService').addItem('📝 Blog', 'viewBlog').addSeparator()
-    .addItem('✅ Selected (1)', 'viewSelected').addItem('🔎 To review (blank)', 'viewPending')
-    .addItem('❌ Rejected (0)', 'viewRejected').addItem('↺ Show all', 'viewAll');
-  ui.createMenu('🎯 Topic Tool')
-    .addItem('▶ Run everything (paste into AKR first)', 'runEverything')
-    .addSubMenu(views)
+  SpreadsheetApp.getUi().createMenu('Topic Tool')
+    .addItem('1. Set / edit client info', 'showSetup')
+    .addItem('2. Run Service / Product', 'runEverything')
+    .addItem('3. Run Blog', 'runBlog')
     .addSeparator()
-    .addItem('🏢 Client info + API keys', 'showSetup')
-    .addItem('✔ Self-review my selected', 'selfReview')
-    .addItem('🔁 Re-apply rules', 'runRules')
+    .addItem('Self-review my selected', 'selfReview')
+    .addItem('Re-apply rules', 'runRules')
     .addSeparator()
-    .addItem('⏹ Stop background processing', 'stopBackground')
-    .addItem('🧹 Clear & start over', 'clearCache')
-    .addItem('🔄 Update to latest version', 'forceUpdate')
+    .addItem('Stop background processing', 'stopBackground')
+    .addItem('Clear & start over', 'clearCache')
+    .addItem('Update to latest version', 'forceUpdate')
     .addToUi();
 }
 
 /* thin wrappers — each just runs the matching function from the latest code */
 function runEverything(){ return _call('runEverything'); }
+function runBlog(){ return _call('runBlog'); }
 function showSetup(){ return _call('showSetup'); }
 function saveClientInfo(d){ return _call('saveClientInfo', [d]); }
 function selfReview(){ return _call('selfReview'); }
@@ -74,3 +70,10 @@ function viewSelected(){ return _call('viewSelected'); }
 function viewPending(){ return _call('viewPending'); }
 function viewRejected(){ return _call('viewRejected'); }
 function viewAll(){ return _call('viewAll'); }
+/* future-proof spare slots so new menu items never need another bootstrap paste */
+function act1(){ return _call('act1'); }
+function act2(){ return _call('act2'); }
+function act3(){ return _call('act3'); }
+function act4(){ return _call('act4'); }
+function act5(){ return _call('act5'); }
+function act6(){ return _call('act6'); }

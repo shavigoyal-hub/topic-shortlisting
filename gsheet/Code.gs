@@ -59,7 +59,7 @@ function serpBrandHit(domains, kw){
   var kwc = norm(kw).replace(/[^a-z0-9]/g,'');
   if(kwc.length < 8) return null;
   var top = domains.slice(0,5);
-  for(var i=0;i<top.length;i++){ var name = top[i].replace(/\.[a-z.]+$/,'').replace(/[^a-z0-9]/g,''); if(name && (name===kwc || name.indexOf(kwc)>=0)) return top[i]; }
+  for(var i=0;i<top.length;i++){ var name = top[i].replace(/\.[a-z.]+$/,'').replace(/[^a-z0-9]/g,''); if(name && name===kwc) return top[i]; }   // EXACT match only (domain name IS the keyword)
   return null;
 }
 
@@ -73,7 +73,10 @@ function statNorm(v){ return statSel(v)?'1':(statRej(v)?'0':''); }   // canonica
 function buildMenu(ui){
   ui = ui || SpreadsheetApp.getUi();
   var menu=ui.createMenu('Topic Tool')
-    .addItem('Run everything', 'runEverything')
+    .addItem('1. Set / edit client info', 'showSetup')
+    .addItem('2. Run Service / Product', 'runEverything')
+    .addItem('3. Run Blog', 'runBlog')
+    .addSeparator()
     .addItem('Self-review my selected', 'selfReview')
     .addItem('Re-apply rules', 'runRules')
     .addSeparator()
@@ -125,9 +128,8 @@ function ensureAllSheets(){
     t.getRange(1,1,1,NCOL).setValues([TOPIC_HEADERS]).setFontWeight('bold'); t.setFrozenRows(1);
     var last=t.getLastRow();
     if(last>1){   // heal stale data-validation left on the old Status column; re-apply at the correct one
-      t.getRange(2,1,last-1,NCOL).clearDataValidations();
-      var rule=SpreadsheetApp.newDataValidation().requireValueInList(['1','0'],true).setHelpText('1 = keep, 0 = reject, blank = pending').build();
-      var sr=t.getRange(2,COL.STATUS,last-1,1); sr.setNumberFormat('@'); sr.setDataValidation(rule);
+      t.getRange(2,1,last-1,NCOL).clearDataValidations();   // remove any old dropdown
+      var sr=t.getRange(2,COL.STATUS,last-1,1); sr.setNumberFormat('@');
       var sv=sr.getValues(); for(var si=0;si<sv.length;si++){ sv[si][0]=statNorm(sv[si][0]); } sr.setValues(sv);   // migrate old Selected/Rejected/Pending → 1/0/blank
     }
     try{ applyFormatting(true); }catch(e){}   // re-point conditional formatting/colours at the new columns
@@ -245,29 +247,32 @@ function setApiKeys(){
 }
 function prop(k){ return PropertiesService.getScriptProperties().getProperty(k); }
 
-/* --------------------------- ONE-CLICK ---------------------------- */
-function runEverything(){
+/* ------------------------- RUN BY PHASE --------------------------- */
+function runEverything(){ return runPhase('Service'); }   // "Run Service / Product"
+function runBlog(){ return runPhase('Blog'); }
+function runPhase(phase){
   var ui=SpreadsheetApp.getUi();
   ensureAllSheets();
-  if(sheet(SHEET.AKR).getLastRow()<2){ ui.alert('Paste your keyword report into the "AKR" tab first, then click "Run everything" again.'); return; }
-  var auto=autofillClientFromTabs();   // read Services/Industry/Competitors/Geo tabs from the client datasheet if present
-  if(!clientConfigured()){
-    var hint = auto.hits.length ? ('Auto-filled from: '+auto.hits.join(', ')+'. Review/add anything (incl. API keys), then Run again.') : 'Tell me about the client (services, competitors, domain) — or import the client datasheet (File ▸ Import ▸ Insert new sheets) and Run again to auto-fill.';
-    ui.alert(hint); showSetup(); return;
-  }
-  if(!prop('OPENAI_API_KEY') || !prop('SERPER_KEY')){ ui.alert('First-time setup: paste your OpenAI + Serper API keys (you only do this once).'); setApiKeys(); }
-  var haveKeys = prop('OPENAI_API_KEY') && prop('SERPER_KEY');
+  if(sheet(SHEET.AKR).getLastRow()<2){ ui.alert('Paste your keyword report into the "AKR" tab first.'); return; }
+  autofillClientFromTabs();
+  // always confirm client info before running
+  var c=getConfig();
+  var summary='Services: '+(c.services.join(', ')||'(none)')+'\nIndustries: '+(c.industries.join(', ')||'(none)')+'\nCompetitors: '+(c.competitors.join(', ')||'(none)')+'\nDomain: '+(c.website||'(none)');
+  var resp=ui.alert('Check client info before running '+phase, summary+'\n\nYes = run.   No = edit it first.', ui.ButtonSet.YES_NO);
+  if(resp!==ui.Button.YES){ showSetup(); return; }
+  if(!clientConfigured()){ ui.alert('Set the client info first (services / competitors / domain).'); showSetup(); return; }
+  if(!prop('OPENAI_API_KEY') || !prop('SERPER_KEY')){ ui.alert('Set your OpenAI + Serper API keys first (in "Set / edit client info").'); showSetup(); return; }
 
-  var n=importAkrSilent(); runRules(); applyFormatting(true);
-  var did=0; if(haveKeys) did=enrichForeground();
-  var t=sheet(SHEET.TOPICS), rej=0, remaining=0;
-  t.getRange(2,1,Math.max(t.getLastRow()-1,1),NCOL).getValues().forEach(function(r){ if(statRej(r[COL.STATUS-1])) rej++; if(r[COL.KW-1] && !r[COL.AUD-1]) remaining++; });
+  var t=sheet(SHEET.TOPICS);
+  if(t.getLastRow()<2) importAkrSilent();   // import all rows once; keeps picks across phase runs
+  runRules(); applyFormatting(true);
+  var did=enrichForeground(phase);
+  var remaining=0; t.getRange(2,1,Math.max(t.getLastRow()-1,1),NCOL).getValues().forEach(function(r){ if(r[COL.KW-1] && r[COL.PT-1]===phase && !r[COL.AUD-1]) remaining++; });
 
-  var msg='Imported '+n+' topics — '+rej+' auto-rejected by rules.\n\n';
-  if(!haveKeys){ msg+='API keys not set, so Audience/Type/intent were skipped. Add keys (⚙ Set API keys) and Run again.'; }
-  else if(remaining>0){ startBackgroundSilent(); msg+='Enriched '+did+' so far; '+remaining+' still processing in the background (a batch runs every minute — you can keep working). Refresh in a few minutes.'; }
-  else { stopBackground(); msg+='All topics enriched (Audience, Type, Modifier, BOFU filled).'; }
-  msg+='\n\nNEXT: in "Topics", in the Status column mark 1 = keep, 0 = reject (blank = undecided). Service/Product rows are listed first, then Blog. Then run "Self-review my selected".';
+  var msg='Processed '+did+' '+phase+' topics.';
+  if(remaining>0){ startBackgroundSilent(phase); msg+=' '+remaining+' more enriching in the background (refresh in a few minutes).'; }
+  else { stopBackground(); msg+=' All '+phase+' topics done.'; }
+  msg+='\n\nIn the Status column: 1 = keep, 0 = reject (blank = undecided). Then "Run Blog" / "Self-review my selected".';
   ui.alert(msg);
 }
 
@@ -292,9 +297,7 @@ function importAkrSilent(){
   if(t.getLastRow()>1) t.getRange(2,1,t.getLastRow()-1,NCOL).clearContent();
   if(out.length){
     t.getRange(2,1,out.length,NCOL).setValues(out);
-    t.getRange(2,COL.STATUS,out.length,1).setNumberFormat('@');   // keep 0/1 as text so they don't become numbers
-    var rule=SpreadsheetApp.newDataValidation().requireValueInList(['1','0'],true).setHelpText('1 = keep, 0 = reject, blank = pending').build();
-    t.getRange(2,COL.STATUS,out.length,1).setDataValidation(rule);
+    t.getRange(2,COL.STATUS,out.length,1).setNumberFormat('@');   // keep 0/1 as text
   }
   return out.length;
 }
@@ -391,12 +394,12 @@ function classifyBatch(items, cfg){
   (j.results||[]).forEach(function(o){ byId[String(o.id)]={ audience:AUDIENCES.indexOf(o.audience)>=0?o.audience:'General', type:(o.type||'').toString().slice(0,40), keep:o.keep!==false, reason:o.keep!==false?'':(REJECT_REASONS.indexOf(o.reason)>=0?o.reason:'No commercial intent') }; });
   return byId;
 }
-// process the next BATCH of un-enriched Topics rows; returns count processed
-function processBatch(){
+// process the next BATCH of un-enriched Topics rows (optionally only one phase); returns count processed
+function processBatch(phase){
   var t=sheet(SHEET.TOPICS); if(!t||t.getLastRow()<2) return 0;
   var cfg=getConfig(), cache=loadCache();
   var n=t.getLastRow()-1, rng=t.getRange(2,1,n,NCOL), vals=rng.getValues(), todo=[];
-  for(var i=0;i<vals.length && todo.length<BATCH;i++){ var v=vals[i]; if(!v[COL.KW-1]) continue; if(v[COL.AUD-1]) continue; todo.push(i); }
+  for(var i=0;i<vals.length && todo.length<BATCH;i++){ var v=vals[i]; if(!v[COL.KW-1]) continue; if(phase && v[COL.PT-1]!==phase) continue; if(v[COL.AUD-1]) continue; todo.push(i); }
   if(!todo.length) return 0;
   var needSerp=todo.filter(function(i){ return !cache[String(vals[i][COL.KW-1]).toLowerCase()]; });
   if(needSerp.length){
@@ -426,12 +429,12 @@ function processBatch(){
   rng.setValues(vals); saveCache(cache);
   return todo.length;
 }
-function enrichForeground(){ var start=Date.now(), did=0; while(Date.now()-start<FG_BUDGET_MS){ var n=processBatch(); if(n===0) break; did+=n; } return did; }
+function enrichForeground(phase){ var start=Date.now(), did=0; while(Date.now()-start<FG_BUDGET_MS){ var n=processBatch(phase); if(n===0) break; did+=n; } return did; }
 
 /* ----------------- BACKGROUND (chunked via trigger) --------------- */
-function startBackgroundSilent(){ stopBackground(); ScriptApp.newTrigger('backgroundTick').timeBased().everyMinutes(1).create(); }
+function startBackgroundSilent(phase){ stopBackground(); PropertiesService.getScriptProperties().setProperty('bg_phase', phase||''); ScriptApp.newTrigger('backgroundTick').timeBased().everyMinutes(1).create(); }
 function stopBackground(){ ScriptApp.getProjectTriggers().forEach(function(tr){ if(tr.getHandlerFunction()==='backgroundTick') ScriptApp.deleteTrigger(tr); }); }
-function backgroundTick(){ var done=processBatch(); if(done===0){ stopBackground(); runRules(); } }
+function backgroundTick(){ var done=processBatch(prop('bg_phase')||null); if(done===0){ stopBackground(); runRules(); } }
 
 /* --------------------------- SELF-REVIEW -------------------------- */
 function selfReview(){
@@ -465,14 +468,10 @@ function reviewBatch(items, cfg){
 /* --------------------------- FORMATTING --------------------------- */
 function applyFormatting(silent){
   var t=sheet(SHEET.TOPICS); if(!t) return; var n=Math.max(t.getLastRow()-1,1);
-  try{ t.showColumns(1,NCOL); t.hideColumns(COL.DOMAINS); t.getRange(2,COL.STATUS,n,1).setNumberFormat('@'); }catch(e){}
-  var body=t.getRange(2,1,n,NCOL), rules=[];
-  rules.push(SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=$K2="0"').setBackground('#fde7e7').setRanges([body]).build());
-  rules.push(SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=$K2="1"').setBackground('#e7f6ec').setRanges([body]).build());
-  rules.push(SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=$O2="FLAG"').setBackground('#fde7e7').setFontColor('#b00020').setRanges([body]).build());
-  t.setConditionalFormatRules(rules);
+  try{ t.showColumns(1,NCOL); t.hideColumns(COL.LAYER); t.hideColumns(COL.DOMAINS); t.getRange(2,COL.STATUS,n,1).setNumberFormat('@'); }catch(e){}
+  try{ t.clearConditionalFormatRules(); }catch(e){}   // no row colouring
   if(t.getFilter()) t.getFilter().remove();
-  t.getRange(1,1,Math.max(t.getLastRow(),1),NCOL).createFilter();
+  t.getRange(1,1,Math.max(t.getLastRow(),1),NCOL).createFilter();   // keep native column filters (use them for Service/Blog/picks)
   if(!silent) SpreadsheetApp.getUi().alert('Formatting + filter applied.');
 }
 function clearCache(){
