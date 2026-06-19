@@ -120,7 +120,18 @@ function ensureAllSheets(){
   var akr = ensureSheet(SHEET.AKR);
   if(akr.getLastRow()===0) akr.getRange(1,1,1,7).setValues([['Primary Keyword','Page Type','Topic','Secondary Keywords','Total Search Volume','Relevance Score','Shortlisting']]).setFontWeight('bold');
   var t = ensureSheet(SHEET.TOPICS);
-  if(t.getRange(1,1).getValue()!=='Keyword'){ t.getRange(1,1,1,NCOL).setValues([TOPIC_HEADERS]).setFontWeight('bold'); t.setFrozenRows(1); }
+  var hdr = t.getRange(1,1,1,NCOL).getValues()[0], mismatch=false;
+  for(var hi=0;hi<NCOL;hi++){ if(String(hdr[hi]==null?'':hdr[hi])!==TOPIC_HEADERS[hi]){ mismatch=true; break; } }
+  if(mismatch){
+    t.getRange(1,1,1,NCOL).setValues([TOPIC_HEADERS]).setFontWeight('bold'); t.setFrozenRows(1);
+    var last=t.getLastRow();
+    if(last>1){   // heal stale data-validation left on the old Status column; re-apply at the correct one
+      t.getRange(2,1,last-1,NCOL).clearDataValidations();
+      var rule=SpreadsheetApp.newDataValidation().requireValueInList(['Pending','Selected','Rejected'],true).build();
+      t.getRange(2,COL.STATUS,last-1,1).setDataValidation(rule);
+    }
+    try{ applyFormatting(true); }catch(e){}   // re-point conditional formatting/colours at the new columns
+  }
   var c = ensureSheet(SHEET.CACHE);
   if(c.getLastRow()===0) c.getRange(1,1,1,7).setValues([['Keyword','Domains','Audience','Type','Keep','Reason','Titles']]).setFontWeight('bold');
   c.hideSheet();
@@ -307,6 +318,7 @@ function evalRules(row, cfg){
   return hits.length ? {reason:hits.join('; '), layer:'Rule'} : null;
 }
 function runRules(){
+  ensureAllSheets();   // self-heal the header/columns if the layout changed
   var t=sheet(SHEET.TOPICS); if(!t||t.getLastRow()<2) return;
   var cfg=getConfig(), n=t.getLastRow()-1, rng=t.getRange(2,1,n,NCOL), vals=rng.getValues();
   for(var i=0;i<vals.length;i++){
