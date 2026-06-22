@@ -80,7 +80,6 @@ function buildMenu(ui){
     .addItem('Self-review my selected', 'selfReview')
     .addItem('Re-apply rules', 'runRules')
     .addSeparator()
-    .addItem('Stop background processing', 'stopBackground')
     .addItem('Clear & start over', 'clearCache');
   if(typeof forceUpdate==='function') menu.addItem('Update to latest version', 'forceUpdate');
   menu.addToUi();
@@ -270,8 +269,8 @@ function runPhase(phase){
   var remaining=0; t.getRange(2,1,Math.max(t.getLastRow()-1,1),NCOL).getValues().forEach(function(r){ if(r[COL.KW-1] && r[COL.PT-1]===phase && !r[COL.AUD-1]) remaining++; });
 
   var msg='Processed '+did+' '+phase+' topics.';
-  if(remaining>0){ startBackgroundSilent(phase); msg+=' '+remaining+' more enriching in the background (refresh in a few minutes).'; }
-  else { stopBackground(); msg+=' All '+phase+' topics done.'; }
+  if(remaining>0){ msg+=' '+remaining+' more to go — click "Run '+(phase==='Service'?'Service / Product':'Blog')+'" again to continue.'; }
+  else { msg+=' All '+phase+' topics done.'; }
   msg+='\n\nIn the Status column: 1 = keep, 0 = reject (blank = undecided). Then "Run Blog" / "Self-review my selected".';
   ui.alert(msg);
 }
@@ -432,10 +431,12 @@ function processBatch(phase){
 }
 function enrichForeground(phase){ var start=Date.now(), did=0; while(Date.now()-start<FG_BUDGET_MS){ var n=processBatch(phase); if(n===0) break; did+=n; } return did; }
 
-/* ----------------- BACKGROUND (chunked via trigger) --------------- */
-function startBackgroundSilent(phase){ stopBackground(); PropertiesService.getScriptProperties().setProperty('bg_phase', phase||''); ScriptApp.newTrigger('backgroundTick').timeBased().everyMinutes(1).create(); }
-function stopBackground(){ ScriptApp.getProjectTriggers().forEach(function(tr){ if(tr.getHandlerFunction()==='backgroundTick') ScriptApp.deleteTrigger(tr); }); }
-function backgroundTick(){ var done=processBatch(prop('bg_phase')||null); if(done===0){ stopBackground(); runRules(); } }
+/* Background triggers removed (they need a permission Google can't auto-detect through the bootstrap).
+   Processing is foreground-only now; click "Run …" again to continue a large set. These are safe no-ops
+   so any leftover trigger / menu wrapper can't error. */
+function startBackgroundSilent(phase){}
+function stopBackground(){ try{ ScriptApp.getProjectTriggers().forEach(function(tr){ if(tr.getHandlerFunction()==='backgroundTick') ScriptApp.deleteTrigger(tr); }); }catch(e){} }
+function backgroundTick(){ try{ processBatch(prop('bg_phase')||null); }catch(e){} }
 
 /* --------------------------- SELF-REVIEW -------------------------- */
 function selfReview(){
