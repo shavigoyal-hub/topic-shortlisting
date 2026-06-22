@@ -102,7 +102,7 @@ function applyNegativesNow(){
     var kw = String(v[i][0]||''); if(!kw) continue;
     var status = String(v[i][10]||''), reason = String(v[i][11]||'');
     if(status === '1') continue;   // human keep — never touch
-    var blob = (kw+' '+(v[i][2]||'')+' '+(v[i][3]||'')).toLowerCase(), hit = null;
+    var blob = (kw+' '+(v[i][2]||'')).toLowerCase(), hit = null;   // keyword + topic only (not the secondary variant cluster)
     for(var j=0;j<negs.length;j++){ if(new RegExp('\\b'+esc(negs[j])+'\\b').test(blob)){ hit = negs[j]; break; } }
     if(hit){
       if(status === ''){ v[i][10]='0'; v[i][11]='Negative keyword: '+hit; v[i][12]='Rule'; }   // reject pending rows

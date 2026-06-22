@@ -310,7 +310,7 @@ function evalRules(row, cfg){
   var R=cfg.rules, t=norm(row.kw), hits=[];
   // Negatives = your blocklist identifiers: match as a whole word across keyword + topic + secondary
   if(cfg.negatives && cfg.negatives.length){
-    var negblob=norm(row.kw+' '+(row.topic||'')+' '+(row.sec||''));
+    var negblob=norm(row.kw+' '+(row.topic||''));   // primary keyword + topic only — NOT the secondary variant cluster (it contains every phrasing, incl. "near me")
     for(var ni=0;ni<cfg.negatives.length;ni++){ var neg=norm(cfg.negatives[ni]); if(!neg) continue;
       if(new RegExp('\\b'+neg.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b').test(negblob)){ hits.push('Negative keyword: '+cfg.negatives[ni]); break; } }
   }
