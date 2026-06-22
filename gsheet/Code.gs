@@ -344,7 +344,8 @@ function runRules(){
     if(hit){ v[COL.STATUS-1]='0'; v[COL.REASON-1]=hit.reason; v[COL.LAYER-1]=hit.layer; }
     else if(String(v[COL.LAYER-1])==='Rule'){ v[COL.STATUS-1]=''; v[COL.REASON-1]=''; v[COL.LAYER-1]=''; }   // was rule-rejected, no longer
   }
-  t.getRange(2,COL.STATUS,n,1).setNumberFormat('@');   // keep 0/1 as text so the dropdown doesn't flag them red
+  var sc=t.getRange(2,COL.STATUS,n,1); try{ sc.clearDataValidations(); }catch(e){}   // remove any old dropdown
+  sc.setNumberFormat('@');   // keep 0/1 as text
   rng.setValues(vals);
 }
 
@@ -468,7 +469,7 @@ function reviewBatch(items, cfg){
 /* --------------------------- FORMATTING --------------------------- */
 function applyFormatting(silent){
   var t=sheet(SHEET.TOPICS); if(!t) return; var n=Math.max(t.getLastRow()-1,1);
-  try{ t.showColumns(1,NCOL); t.hideColumns(COL.LAYER); t.hideColumns(COL.DOMAINS); t.getRange(2,COL.STATUS,n,1).setNumberFormat('@'); }catch(e){}
+  try{ t.showColumns(1,NCOL); t.hideColumns(COL.LAYER); t.hideColumns(COL.DOMAINS); var sc=t.getRange(2,COL.STATUS,n,1); sc.clearDataValidations(); sc.setNumberFormat('@'); }catch(e){}
   try{ t.clearConditionalFormatRules(); }catch(e){}   // no row colouring
   if(t.getFilter()) t.getFilter().remove();
   t.getRange(1,1,Math.max(t.getLastRow(),1),NCOL).createFilter();   // keep native column filters (use them for Service/Blog/picks)
