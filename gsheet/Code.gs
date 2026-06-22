@@ -186,13 +186,9 @@ function showSetup(){
     +'<label>Competitors / brands to reject <small>(one per line)</small></label><textarea id="competitors" rows="3" placeholder="vistaprint&#10;moo&#10;minted">'+v(c.competitors.join('\n'))+'</textarea>'
     +'<label>Served locations <small>(one per line; leave blank if national)</small></label><textarea id="locations" rows="2" placeholder="new york&#10;los angeles">'+v(c.locations.join('\n'))+'</textarea>'
     +'<label>Geo mode</label><select id="geoMode"><option value="all" '+(c.geoMode!=='restricted'?'selected':'')+'>Serve anywhere (don\'t reject by location)</option><option value="restricted" '+(c.geoMode==='restricted'?'selected':'')+'>Only the locations above</option></select>'
-    +'<hr style="margin:16px 0;border:none;border-top:1px solid #eee">'
-    +'<div style="font-weight:700;font-size:13px;margin-bottom:2px">🔑 API keys <small>(stored privately in the script, never in the sheet)</small></div>'
-    +'<label>OpenAI API key '+(prop('OPENAI_API_KEY')?'<small style="color:#0a0">✓ already set</small>':'<small style="color:#c00">not set</small>')+'</label><input id="openaiKey" type="password" placeholder="sk-…  (leave blank to keep current)">'
-    +'<label>Serper API key '+(prop('SERPER_KEY')?'<small style="color:#0a0">✓ already set</small>':'<small style="color:#c00">not set</small>')+'</label><input id="serperKey" type="password" placeholder="leave blank to keep current">'
     +'<button onclick="save()">Save</button>'
-    +'<script>function save(){var d={website:website.value,offering:offering.value,services:services.value,industries:industries.value,competitors:competitors.value,locations:locations.value,geoMode:geoMode.value,openaiKey:openaiKey.value,serperKey:serperKey.value};google.script.run.withSuccessHandler(function(){google.script.host.close();}).saveClientInfo(d);}</script>';
-  SpreadsheetApp.getUi().showModalDialog(HtmlService.createHtmlOutput(html).setWidth(430).setHeight(640), '🏢 Client info & API keys');
+    +'<script>function save(){var d={website:website.value,offering:offering.value,services:services.value,industries:industries.value,competitors:competitors.value,locations:locations.value,geoMode:geoMode.value};google.script.run.withSuccessHandler(function(){google.script.host.close();}).saveClientInfo(d);}</script>';
+  SpreadsheetApp.getUi().showModalDialog(HtmlService.createHtmlOutput(html).setWidth(430).setHeight(560), 'Client info');
 }
 function saveClientInfo(d){
   setConfigVal('website', d.website||''); setConfigVal('offering', d.offering||'Both');
