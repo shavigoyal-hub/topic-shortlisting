@@ -43,6 +43,7 @@ var BIG_BRANDS_RX = /\b(nvidia|google|apple|microsoft|amazon|meta|tesla|samsung|
 var IGNORE_DOMAINS = /(wikipedia|wikihow|britannica|fandom|youtube|youtu\.be|vimeo|reddit|quora|stackexchange|stackoverflow|medium\.com|tumblr|facebook|instagram|tiktok|twitter|x\.com|pinterest|linkedin\.com|snapchat|threads\.net|discord|news\.ycombinator)/;
 
 function isBofu(kw){ var t=norm(kw); if(INFO_RX.test(t)||JOBS_RX.test(t)) return false; return BOFU_RX.test(t); }
+function isServicePage(pt){ return /serv|product/i.test(String(pt||'')); }   // Service/Product run vs everything else (Blog, Category, …)
 function hostOf(u){ try{ return String(u).replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0].toLowerCase(); }catch(e){ return ''; } }
 // modifier words present in the keyword (qualifiers, geos, the client's industries)
 function modifiersOf(kw, cfg){
@@ -263,7 +264,7 @@ function runPhase(phase){
   importAkrSilent();   // re-sync Topics to the current AKR (carries over picks + enrichment for keywords that remain)
   runRules(); applyFormatting(true);
   var did=enrichForeground(phase);
-  var remaining=0; t.getRange(2,1,Math.max(t.getLastRow()-1,1),NCOL).getValues().forEach(function(r){ if(r[COL.KW-1] && r[COL.PT-1]===phase && !r[COL.AUD-1]) remaining++; });
+  var remaining=0; t.getRange(2,1,Math.max(t.getLastRow()-1,1),NCOL).getValues().forEach(function(r){ if(r[COL.KW-1] && (phase==='Service')===isServicePage(r[COL.PT-1]) && !r[COL.AUD-1]) remaining++; });
 
   var msg='Processed '+did+' '+phase+' topics.';
   if(remaining>0){ msg+=' '+remaining+' more to go — click "Run '+(phase==='Service'?'Service / Product':'Blog')+'" again to continue.'; }
@@ -289,14 +290,14 @@ function importAkrSilent(){
     var a=rows[i], kw=String(a[ci.kw]||'').trim(); if(!kw) continue;
     var topic=ci.topic>=0?String(a[ci.topic]||'').trim():'';
     var key=(kw+'|'+topic).toLowerCase(); if(seen[key]) continue; seen[key]=1;
-    var pt=/serv|product/i.test(ci.pt>=0?String(a[ci.pt]||''):'')?'Service':'Blog';
+    var pt=(ci.pt>=0?String(a[ci.pt]||'').trim():'')||'Blog';   // keep the original Page Type (Category stays Category)
     var vol=ci.vol>=0?(parseInt(String(a[ci.vol]||'').replace(/[^0-9]/g,''),10)||0):0;
     var row=[kw, pt, topic, ci.sec>=0?String(a[ci.sec]||'').trim():'', vol, ci.rel>=0?a[ci.rel]:'', '','','','','','','','','',''];
     var p=prev[kw.toLowerCase()];
     if(p){ keep.forEach(function(c){ row[c-1]=p[c-1]; }); }   // carry over enrichment + pick for a keyword that still exists
     out.push(row);
   }
-  out.sort(function(a,b){ return (a[COL.PT-1]==='Service'?0:1)-(b[COL.PT-1]==='Service'?0:1); });   // Service/Product first, then Blog
+  out.sort(function(a,b){ return (isServicePage(a[COL.PT-1])?0:1)-(isServicePage(b[COL.PT-1])?0:1); });   // Service/Product first, then the rest
   if(t.getLastRow()>1) t.getRange(2,1,t.getLastRow()-1,NCOL).clearContent();
   if(out.length){
     t.getRange(2,1,out.length,NCOL).setValues(out);
@@ -325,7 +326,7 @@ function evalRules(row, cfg){
     var unserved=found.filter(function(loc){ return !isServed(loc); });
     if(unserved.length && !found.some(isServed)) hits.push('Location not served: '+unserved[0]);
   }
-  if(R.info && row.pageType!=='Blog' && INFO_RX.test(t)) hits.push('Informational/DIY intent');
+  if(R.info && !/blog/i.test(String(row.pageType||'')) && INFO_RX.test(t)) hits.push('Informational/DIY intent');   // skip blogs; Category/Service get the info rule
   if(R.jobs && JOBS_RX.test(t)) hits.push('Job / education-seeker intent');
   if(R.format && FORMAT_RX.test(t)) hits.push('Wrong-format / login/app intent');
   if(R.org && (ORG_RX.test(t)||BIG_BRANDS_RX.test(t))) hits.push('Other company / brand');
@@ -403,7 +404,7 @@ function processBatch(phase){
   var t=sheet(SHEET.TOPICS); if(!t||t.getLastRow()<2) return 0;
   var cfg=getConfig(), cache=loadCache();
   var n=t.getLastRow()-1, rng=t.getRange(2,1,n,NCOL), vals=rng.getValues(), todo=[];
-  for(var i=0;i<vals.length && todo.length<BATCH;i++){ var v=vals[i]; if(!v[COL.KW-1]) continue; if(phase && v[COL.PT-1]!==phase) continue; if(v[COL.AUD-1]) continue; todo.push(i); }
+  for(var i=0;i<vals.length && todo.length<BATCH;i++){ var v=vals[i]; if(!v[COL.KW-1]) continue; if(phase && (phase==='Service')!==isServicePage(v[COL.PT-1])) continue; if(v[COL.AUD-1]) continue; todo.push(i); }
   if(!todo.length) return 0;
   var needSerp=todo.filter(function(i){ return !cache[String(vals[i][COL.KW-1]).toLowerCase()]; });
   if(needSerp.length){
