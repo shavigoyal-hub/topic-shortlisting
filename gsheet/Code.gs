@@ -149,7 +149,8 @@ function getConfig(){
   var s=sheet(SHEET.CONFIG); if(!s){ ensureAllSheets(); s=sheet(SHEET.CONFIG); }
   var vals=s.getDataRange().getValues(), o={};
   for(var i=1;i<vals.length;i++){ if(vals[i][0]!=='') o[String(vals[i][0]).trim()]=vals[i][1]; }
-  var list=function(k){ return String(o[k]||'').split(/[,\n;]+/).map(function(x){return x.trim();}).filter(String); };   // commas, new lines, or semicolons all work
+  // one-per-line when you use line breaks (so commas inside a name are kept); else comma/semicolon separated
+  var list=function(k){ var s=String(o[k]||''); var parts=/\n/.test(s)?s.split(/\n+/):s.split(/[,;]+/); return parts.map(function(x){return x.trim();}).filter(String); };
   var bool=function(k){ return String(o[k]).toUpperCase()==='TRUE'; };
   return { offering:o.offering||'Both', website:o.website||'', services:list('services'), industries:list('industries'), products:list('products'),
     competitors:list('competitors'), locations:list('locations'), negatives:getNegatives(), geoMode:o.geoMode||'all', serpGl:o.serpGl||'us',
@@ -180,10 +181,10 @@ function showSetup(){
     +'<div style="background:#eef4ff;border:1px solid #cdd9f8;border-radius:7px;padding:8px 10px;font-size:12px;color:#33518f;margin-bottom:6px">💡 Have the client datasheet? Use <b>File ▸ Import ▸ Upload</b> → <b>Insert new sheet(s)</b>, then re-open this (or Run everything) — the Services / Industry / Competitors / Geographies tabs auto-fill below.</div>'
     +'<label>Client website / domain</label><input id="website" value="'+v(c.website)+'" placeholder="https://client.com">'
     +'<label>Offering</label><select id="offering"><option '+(c.offering==='Product'?'selected':'')+'>Product</option><option '+(c.offering==='Services'?'selected':'')+'>Services</option><option '+(c.offering!=='Product'&&c.offering!=='Services'?'selected':'')+'>Both</option></select>'
-    +'<label>Services / Products <small>(comma-separated)</small></label><textarea id="services" rows="2" placeholder="business cards, foil stamping, engraving">'+v(c.services.join(', '))+'</textarea>'
-    +'<label>Industries / ICP <small>(comma-separated)</small></label><textarea id="industries" rows="2" placeholder="restaurants, real estate, weddings">'+v(c.industries.join(', '))+'</textarea>'
-    +'<label>Competitors / brands to reject <small>(comma-separated)</small></label><textarea id="competitors" rows="2" placeholder="vistaprint, moo, minted">'+v(c.competitors.join(', '))+'</textarea>'
-    +'<label>Served locations <small>(comma-separated; leave blank if national)</small></label><input id="locations" value="'+v(c.locations.join(', '))+'" placeholder="new york, los angeles">'
+    +'<label>Services / Products <small>(one per line)</small></label><textarea id="services" rows="4" placeholder="One service per line&#10;Charts, Tables &amp; Graphs&#10;White-label customization">'+v(c.services.join('\n'))+'</textarea>'
+    +'<label>Industries / ICP <small>(one per line)</small></label><textarea id="industries" rows="3" placeholder="Wealth Managers&#10;Financial Advisors (RIAs)">'+v(c.industries.join('\n'))+'</textarea>'
+    +'<label>Competitors / brands to reject <small>(one per line)</small></label><textarea id="competitors" rows="3" placeholder="vistaprint&#10;moo&#10;minted">'+v(c.competitors.join('\n'))+'</textarea>'
+    +'<label>Served locations <small>(one per line; leave blank if national)</small></label><textarea id="locations" rows="2" placeholder="new york&#10;los angeles">'+v(c.locations.join('\n'))+'</textarea>'
     +'<label>Geo mode</label><select id="geoMode"><option value="all" '+(c.geoMode!=='restricted'?'selected':'')+'>Serve anywhere (don\'t reject by location)</option><option value="restricted" '+(c.geoMode==='restricted'?'selected':'')+'>Only the locations above</option></select>'
     +'<hr style="margin:16px 0;border:none;border-top:1px solid #eee">'
     +'<div style="font-weight:700;font-size:13px;margin-bottom:2px">🔑 API keys <small>(stored privately in the script, never in the sheet)</small></div>'
@@ -230,10 +231,10 @@ function autofillClientFromTabs(){
   if(!hits.length) return {hits:[], filled:0};
   var uniq=function(a){ var s={},o=[]; a.forEach(function(x){ var k=x.toLowerCase(); if(!s[k]){ s[k]=1; o.push(x); } }); return o; };
   var filled=0;
-  if(found.services.length){ setConfigVal('services', uniq(found.services).join(', ')); filled++; }
-  if(found.industries.length){ setConfigVal('industries', uniq(found.industries).join(', ')); filled++; }
-  if(found.competitors.length){ setConfigVal('competitors', uniq(found.competitors).join(', ')); filled++; }
-  if(found.locations.length){ setConfigVal('locations', uniq(found.locations).join(', ')); setConfigVal('geoMode','restricted'); filled++; }
+  if(found.services.length){ setConfigVal('services', uniq(found.services).join('\n')); filled++; }
+  if(found.industries.length){ setConfigVal('industries', uniq(found.industries).join('\n')); filled++; }
+  if(found.competitors.length){ setConfigVal('competitors', uniq(found.competitors).join('\n')); filled++; }
+  if(found.locations.length){ setConfigVal('locations', uniq(found.locations).join('\n')); setConfigVal('geoMode','restricted'); filled++; }
   return {hits:hits, filled:filled, counts:{services:found.services.length,industries:found.industries.length,competitors:found.competitors.length,locations:found.locations.length}};
 }
 
