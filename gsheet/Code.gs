@@ -263,7 +263,7 @@ function runPhase(phase){
   if(!prop('OPENAI_API_KEY') || !prop('SERPER_KEY')){ ui.alert('Set your OpenAI + Serper API keys first (in "Set / edit client info").'); showSetup(); return; }
 
   var t=sheet(SHEET.TOPICS);
-  if(t.getLastRow()<2) importAkrSilent();   // import all rows once; keeps picks across phase runs
+  importAkrSilent();   // re-sync Topics to the current AKR (carries over picks + enrichment for keywords that remain)
   runRules(); applyFormatting(true);
   var did=enrichForeground(phase);
   var remaining=0; t.getRange(2,1,Math.max(t.getLastRow()-1,1),NCOL).getValues().forEach(function(r){ if(r[COL.KW-1] && r[COL.PT-1]===phase && !r[COL.AUD-1]) remaining++; });
@@ -283,6 +283,10 @@ function importAkrSilent(){
   var find=function(){ for(var a=0;a<arguments.length;a++){ for(var i=0;i<head.length;i++){ if(head[i].indexOf(arguments[a])>=0) return i; } } return -1; };
   var ci={ kw:find('primary keyword','keyword'), pt:find('page type','type'), topic:find('topic'), sec:find('secondary'), vol:find('search volume','volume','msv'), rel:find('relevance','score') };
   if(ci.kw<0) ci.kw=0;
+  // snapshot existing rows by keyword so carried-over keywords keep their picks + enrichment
+  var prev={};
+  if(t.getLastRow()>1){ t.getRange(2,1,t.getLastRow()-1,NCOL).getValues().forEach(function(r){ var k=String(r[COL.KW-1]||'').toLowerCase(); if(k) prev[k]=r; }); }
+  var keep=[COL.AUD,COL.TYPE,COL.MOD,COL.BOFU,COL.STATUS,COL.REASON,COL.LAYER,COL.DOMAINS,COL.RVERDICT,COL.RREASON];
   var seen={}, out=[];
   for(var i=1;i<rows.length;i++){
     var a=rows[i], kw=String(a[ci.kw]||'').trim(); if(!kw) continue;
@@ -290,7 +294,10 @@ function importAkrSilent(){
     var key=(kw+'|'+topic).toLowerCase(); if(seen[key]) continue; seen[key]=1;
     var pt=/serv|product/i.test(ci.pt>=0?String(a[ci.pt]||''):'')?'Service':'Blog';
     var vol=ci.vol>=0?(parseInt(String(a[ci.vol]||'').replace(/[^0-9]/g,''),10)||0):0;
-    out.push([kw, pt, topic, ci.sec>=0?String(a[ci.sec]||'').trim():'', vol, ci.rel>=0?a[ci.rel]:'', '','','','','','','','','','']);   // status blank = pending
+    var row=[kw, pt, topic, ci.sec>=0?String(a[ci.sec]||'').trim():'', vol, ci.rel>=0?a[ci.rel]:'', '','','','','','','','','',''];
+    var p=prev[kw.toLowerCase()];
+    if(p){ keep.forEach(function(c){ row[c-1]=p[c-1]; }); }   // carry over enrichment + pick for a keyword that still exists
+    out.push(row);
   }
   out.sort(function(a,b){ return (a[COL.PT-1]==='Service'?0:1)-(b[COL.PT-1]==='Service'?0:1); });   // Service/Product first, then Blog
   if(t.getLastRow()>1) t.getRange(2,1,t.getLastRow()-1,NCOL).clearContent();
