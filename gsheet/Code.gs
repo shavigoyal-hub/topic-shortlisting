@@ -11,8 +11,8 @@
 var SHEET = { AKR:'AKR', CONFIG:'Config', TOPICS:'Topics', CACHE:'_Cache' };
 var VIEW_TABS = ['✅ Selected','🔎 To review','❌ Rejected'];   // legacy tabs to remove (now one tab)
 // Topics columns (1-indexed)
-var COL = { KW:1, PT:2, TOPIC:3, SEC:4, VOL:5, REL:6, AUD:7, TYPE:8, MOD:9, BOFU:10, STATUS:11, REASON:12, LAYER:13, DOMAINS:14, RVERDICT:15, RREASON:16 };
-var TOPIC_HEADERS = ['Keyword','Page Type','Topic','Secondary','Volume','Relevance','Audience','Type','Modifier','BOFU','Status','Reason','Layer','_domains','Review','Review Reason'];
+var COL = { KW:1, PT:2, TOPIC:3, SEC:4, VOL:5, REL:6, AUD:7, TYPE:8, MOD:9, BOFU:10, STATUS:11, REASON:12, LAYER:13, DOMAINS:14, RVERDICT:15, RREASON:16, CONF:17 };
+var TOPIC_HEADERS = ['Keyword','Page Type','Topic','Secondary','Volume','Relevance','Audience','Type','Modifier','BOFU','Status','Reason','Layer','_domains','Review','Review Reason','Confidence'];
 var NCOL = TOPIC_HEADERS.length;
 var BATCH = 100;     // Topics rows enriched per processBatch call
 var AI_BATCH = 30;   // keywords per OpenAI call
@@ -135,7 +135,7 @@ function ensureAllSheets(){
     try{ applyFormatting(true); }catch(e){}   // re-point conditional formatting/colours at the new columns
   }
   var c = ensureSheet(SHEET.CACHE);
-  if(c.getLastRow()===0) c.getRange(1,1,1,7).setValues([['Keyword','Domains','Audience','Type','Keep','Reason','Titles']]).setFontWeight('bold');
+  if(c.getLastRow()===0) c.getRange(1,1,1,8).setValues([['Keyword','Domains','Audience','Type','Keep','Reason','Titles','Confidence']]).setFontWeight('bold');
   c.hideSheet();
   // your own negative list — keep adding words/phrases here; topics containing them get auto-rejected
   var neg = ensureSheet('Negatives');
@@ -269,7 +269,7 @@ function runPhase(phase){
   var msg='Processed '+did+' '+phase+' topics.';
   if(remaining>0){ msg+=' '+remaining+' more to go — click "Run '+(phase==='Service'?'Service / Product':'Blog')+'" again to continue.'; }
   else { msg+=' All '+phase+' topics done.'; }
-  msg+='\n\nIn the Status column: 1 = keep, 0 = reject (blank = undecided). Then "Run Blog" / "Self-review my selected".';
+  msg+='\n\nThe AI auto-decided the confident ones (Status 1 = keep, 0 = reject) and left the borderline ones BLANK for you. Filter the Confidence column to "low" to review just those. 1 = keep, 0 = reject.';
   ui.alert(msg);
 }
 
@@ -284,7 +284,7 @@ function importAkrSilent(){
   // snapshot existing rows by keyword so carried-over keywords keep their picks + enrichment
   var prev={};
   if(t.getLastRow()>1){ t.getRange(2,1,t.getLastRow()-1,NCOL).getValues().forEach(function(r){ var k=String(r[COL.KW-1]||'').toLowerCase(); if(k) prev[k]=r; }); }
-  var keep=[COL.AUD,COL.TYPE,COL.MOD,COL.BOFU,COL.STATUS,COL.REASON,COL.LAYER,COL.DOMAINS,COL.RVERDICT,COL.RREASON];
+  var keep=[COL.AUD,COL.TYPE,COL.MOD,COL.BOFU,COL.STATUS,COL.REASON,COL.LAYER,COL.DOMAINS,COL.RVERDICT,COL.RREASON,COL.CONF];
   var seen={}, out=[];
   for(var i=1;i<rows.length;i++){
     var a=rows[i], kw=String(a[ci.kw]||'').trim(); if(!kw) continue;
@@ -292,7 +292,7 @@ function importAkrSilent(){
     var key=(kw+'|'+topic).toLowerCase(); if(seen[key]) continue; seen[key]=1;
     var pt=(ci.pt>=0?String(a[ci.pt]||'').trim():'')||'Blog';   // keep the original Page Type (Category stays Category)
     var vol=ci.vol>=0?(parseInt(String(a[ci.vol]||'').replace(/[^0-9]/g,''),10)||0):0;
-    var row=[kw, pt, topic, ci.sec>=0?String(a[ci.sec]||'').trim():'', vol, ci.rel>=0?a[ci.rel]:'', '','','','','','','','','',''];
+    var row=[kw, pt, topic, ci.sec>=0?String(a[ci.sec]||'').trim():'', vol, ci.rel>=0?a[ci.rel]:'', '','','','','','','','','','',''];   // 17 cols (…Confidence)
     var p=prev[kw.toLowerCase()];
     if(p){ keep.forEach(function(c){ row[c-1]=p[c-1]; }); }   // carry over enrichment + pick for a keyword that still exists
     out.push(row);
@@ -356,15 +356,15 @@ function runRules(){
 /* --------------------------- ENRICHMENT --------------------------- */
 function loadCache(){
   var c=sheet(SHEET.CACHE), map={}; if(!c||c.getLastRow()<2) return map;
-  var v=c.getRange(2,1,c.getLastRow()-1,7).getValues();
-  for(var i=0;i<v.length;i++){ if(v[i][0]) map[String(v[i][0]).toLowerCase()]={domains:String(v[i][1]||'').split(',').filter(String),audience:v[i][2],type:v[i][3],keep:!(v[i][4]===false||v[i][4]==='FALSE'),reason:v[i][5],titles:String(v[i][6]||'').split(' ||| ').filter(String)}; }
+  var v=c.getRange(2,1,c.getLastRow()-1,8).getValues();
+  for(var i=0;i<v.length;i++){ if(v[i][0]) map[String(v[i][0]).toLowerCase()]={domains:String(v[i][1]||'').split(',').filter(String),audience:v[i][2],type:v[i][3],keep:!(v[i][4]===false||v[i][4]==='FALSE'),reason:v[i][5],titles:String(v[i][6]||'').split(' ||| ').filter(String),conf:v[i][7]||''}; }
   return map;
 }
 function saveCache(cache){
   var cs=sheet(SHEET.CACHE), rows=[];
-  Object.keys(cache).forEach(function(kw){ var c=cache[kw]; rows.push([kw,(c.domains||[]).join(','),c.audience||'',c.type||'',c.keep!==false,c.reason||'',(c.titles||[]).join(' ||| ')]); });
-  if(cs.getLastRow()>1) cs.getRange(2,1,cs.getLastRow()-1,7).clearContent();
-  if(rows.length) cs.getRange(2,1,rows.length,7).setValues(rows);
+  Object.keys(cache).forEach(function(kw){ var c=cache[kw]; rows.push([kw,(c.domains||[]).join(','),c.audience||'',c.type||'',c.keep!==false,c.reason||'',(c.titles||[]).join(' ||| '),c.conf||'']); });
+  if(cs.getLastRow()>1) cs.getRange(2,1,cs.getLastRow()-1,8).clearContent();
+  if(rows.length) cs.getRange(2,1,rows.length,8).setValues(rows);
 }
 function serperFetchAll(keywords, gl){
   var key=prop('SERPER_KEY'); if(!key) throw new Error('Set SERPER_KEY (⚙ Set API keys).');
@@ -393,10 +393,10 @@ function clientDesc(cfg){
     cfg.industries.length?('Ideal customers (ICP): '+cfg.industries.join(', ')+'.'):'', cfg.website?('Site: '+cfg.website+'.'):''].filter(String).join(' ') || '(client profile not provided)';
 }
 function classifyBatch(items, cfg){
-  var sys='You are an SEO analyst classifying keywords for a SPECIALIST client by INTENT, using the keyword and the titles of pages currently ranking.\n\nCLIENT: '+clientDesc(cfg)+'\n\nThe client is a SPECIALIST in the offering above — judge fit STRICTLY against THAT specific offering, not "anyone who buys supplements/services".\n\nFor each keyword return:\n- "audience": exactly one of: '+AUDIENCES.join(' | ')+'\n- "type": a BROAD product/service category (Title Case, 1-2 words). Reuse a small consistent vocabulary.\n- "keep": true only if the topic is squarely within the client\'s specific offering; false when it is off-topic for THIS client.\n- "reason": when keep=false, exactly one of: '+REJECT_REASONS.join(' | ')+'. When keep=true, "".\n\nSet keep=false (reason "Off-ICP audience") when the topic is a DIFFERENT product, condition, or category than the client treats — e.g. a gut/candida client should REJECT general potassium/magnesium/multivitamin/heart/metabolic topics; a printing client should reject unrelated products. Being a plausible "supplement buyer" or "consumer" is NOT enough — it must match the client\'s actual niche.\n\nSet keep=false (reason "Branded query") for a SPECIFIC company OR product brand name — including ones you do not recognise: a proper-noun product name (e.g. "Culturelle IBS Support", "Matol KM", "Candida X", "Brand X supplement") is a branded query. Do NOT reject the client\'s own generic category words.\n\nAlso keep=false for: job/career seekers ("Job-seeker intent"); pure "what is / definition / statistics / toxicity" research with no buying path ("Researcher/student intent").\n\nJudge real intent from the ranking titles. When the topic is clearly OUTSIDE the client\'s niche, prefer keep=false. Only keep=true when it genuinely fits.\nReturn ONLY JSON: {"results":[{"id":<id>,"audience":"...","type":"...","keep":true|false,"reason":"..."}]}.';
+  var sys='You are an SEO analyst classifying keywords for a SPECIALIST client by INTENT, using the keyword and the titles of pages currently ranking.\n\nCLIENT: '+clientDesc(cfg)+'\n\nThe client is a SPECIALIST in the offering above — judge fit STRICTLY against THAT specific offering, not "anyone who buys supplements/services".\n\nFor each keyword return:\n- "audience": exactly one of: '+AUDIENCES.join(' | ')+'\n- "type": a BROAD product/service category (Title Case, 1-2 words). Reuse a small consistent vocabulary.\n- "keep": true only if the topic is squarely within the client\'s specific offering; false when it is off-topic for THIS client.\n- "reason": when keep=false, exactly one of: '+REJECT_REASONS.join(' | ')+'. When keep=true, "".\n\nSet keep=false (reason "Off-ICP audience") when the topic is a DIFFERENT product, condition, or category than the client treats — e.g. a gut/candida client should REJECT general potassium/magnesium/multivitamin/heart/metabolic topics; a printing client should reject unrelated products. Being a plausible "supplement buyer" or "consumer" is NOT enough — it must match the client\'s actual niche.\n\nSet keep=false (reason "Branded query") for a SPECIFIC company OR product brand name — including ones you do not recognise: a proper-noun product name (e.g. "Culturelle IBS Support", "Matol KM", "Candida X", "Brand X supplement") is a branded query. Do NOT reject the client\'s own generic category words.\n\nAlso keep=false for: job/career seekers ("Job-seeker intent"); pure "what is / definition / statistics / toxicity" research with no buying path ("Researcher/student intent").\n\nJudge real intent from the ranking titles. When the topic is clearly OUTSIDE the client\'s niche, prefer keep=false. Only keep=true when it genuinely fits.\n\nAlso return "confidence": "high" when the keep/reject call is obvious, or "low" when it is borderline / you are unsure (a human will review the low ones). Be honest — use "low" whenever it is a judgement call.\nReturn ONLY JSON: {"results":[{"id":<id>,"audience":"...","type":"...","keep":true|false,"reason":"...","confidence":"high|low"}]}.';
   var lines=items.map(function(it){ return JSON.stringify({id:it.id, keyword:it.kw, ranking_titles:(it.titles||[]).slice(0,6).join(' | ')}); }).join('\n');
   var j=openai([{role:'system',content:sys},{role:'user',content:'Classify these:\n'+lines}]); var byId={};
-  (j.results||[]).forEach(function(o){ byId[String(o.id)]={ audience:AUDIENCES.indexOf(o.audience)>=0?o.audience:'General', type:(o.type||'').toString().slice(0,40), keep:o.keep!==false, reason:o.keep!==false?'':(REJECT_REASONS.indexOf(o.reason)>=0?o.reason:'No commercial intent') }; });
+  (j.results||[]).forEach(function(o){ byId[String(o.id)]={ audience:AUDIENCES.indexOf(o.audience)>=0?o.audience:'General', type:(o.type||'').toString().slice(0,40), keep:o.keep!==false, reason:o.keep!==false?'':(REJECT_REASONS.indexOf(o.reason)>=0?o.reason:'No commercial intent'), conf:(String(o.confidence||'').toLowerCase()==='high'?'high':'low') }; });
   return byId;
 }
 // process the next BATCH of un-enriched Topics rows (optionally only one phase); returns count processed
@@ -410,24 +410,26 @@ function processBatch(phase){
   if(needSerp.length){
     var kws=needSerp.map(function(i){ return vals[i][COL.KW-1]; });
     var serp=serperFetchAll(kws, cfg.serpGl);
-    needSerp.forEach(function(i,idx){ cache[String(vals[i][COL.KW-1]).toLowerCase()]={domains:serp[idx].domains,titles:serp[idx].titles,audience:'',type:'',keep:true,reason:''}; });
+    needSerp.forEach(function(i,idx){ cache[String(vals[i][COL.KW-1]).toLowerCase()]={domains:serp[idx].domains,titles:serp[idx].titles,audience:'',type:'',keep:true,reason:'',conf:''}; });
   }
   var toAI=todo.filter(function(i){ var c=cache[String(vals[i][COL.KW-1]).toLowerCase()]; return !c.audience; });
   for(var b=0;b<toAI.length;b+=AI_BATCH){
     var slice=toAI.slice(b,b+AI_BATCH);
     var items=slice.map(function(i){ var kw=String(vals[i][COL.KW-1]).toLowerCase(); return {id:String(i), kw:vals[i][COL.KW-1], titles:(cache[kw].titles||[])}; });
     var res; try{ res=classifyBatch(items, cfg); }catch(e){ res={}; }
-    slice.forEach(function(i){ var kw=String(vals[i][COL.KW-1]).toLowerCase(), o=res[String(i)]; if(o){ cache[kw].audience=o.audience; cache[kw].type=o.type; cache[kw].keep=o.keep; cache[kw].reason=o.reason; } else { cache[kw].audience='General'; } });
+    slice.forEach(function(i){ var kw=String(vals[i][COL.KW-1]).toLowerCase(), o=res[String(i)]; if(o){ cache[kw].audience=o.audience; cache[kw].type=o.type; cache[kw].keep=o.keep; cache[kw].reason=o.reason; cache[kw].conf=o.conf; } else { cache[kw].audience='General'; cache[kw].conf='low'; } });
   }
   todo.forEach(function(i){ var v=vals[i], kw=String(v[COL.KW-1]).toLowerCase(), c=cache[kw];
     v[COL.AUD-1]=c.audience||'General'; v[COL.TYPE-1]=c.type||''; v[COL.DOMAINS-1]=(c.domains||[]).join(',');
-    v[COL.MOD-1]=modifiersOf(v[COL.KW-1], cfg); v[COL.BOFU-1]=isBofu(v[COL.KW-1])?'Yes':'No';
+    v[COL.MOD-1]=modifiersOf(v[COL.KW-1], cfg); v[COL.BOFU-1]=isBofu(v[COL.KW-1])?'Yes':'No'; v[COL.CONF-1]=c.conf||'';
     v[COL.STATUS-1]=statNorm(v[COL.STATUS-1]);
-    if(v[COL.STATUS-1]!=='1'){   // not a human keep
+    if(v[COL.STATUS-1]!=='1'){   // keeps (human or AI) are protected; review/override them manually
       var hit=evalRules({kw:v[COL.KW-1],topic:v[COL.TOPIC-1],sec:v[COL.SEC-1],vol:v[COL.VOL-1],rel:v[COL.REL-1],pageType:v[COL.PT-1],domains:(c.domains||[])}, cfg);
-      if(hit){ v[COL.STATUS-1]='0'; v[COL.REASON-1]=hit.reason; v[COL.LAYER-1]='Rule'; }
-      else if(c.keep===false){ v[COL.STATUS-1]='0'; v[COL.REASON-1]=c.reason||'Off intent'; v[COL.LAYER-1]='AI'; }
-      else if(String(v[COL.LAYER-1])==='Rule'||String(v[COL.LAYER-1])==='AI'){ v[COL.STATUS-1]=''; v[COL.REASON-1]=''; v[COL.LAYER-1]=''; }
+      var conf=String(c.conf||'').toLowerCase();
+      if(hit){ v[COL.STATUS-1]='0'; v[COL.REASON-1]=hit.reason; v[COL.LAYER-1]='Rule'; }                                  // rules are definitive
+      else if(c.keep===false && conf!=='low'){ v[COL.STATUS-1]='0'; v[COL.REASON-1]=c.reason||'Off intent'; v[COL.LAYER-1]='AI'; }   // confident reject
+      else if(c.keep!==false && conf==='high'){ v[COL.STATUS-1]='1'; v[COL.REASON-1]='AI keep'; v[COL.LAYER-1]='AI'; }   // confident keep → auto-select
+      else { if(String(v[COL.LAYER-1])==='Rule'||String(v[COL.LAYER-1])==='AI'){ v[COL.STATUS-1]=''; v[COL.REASON-1]=''; v[COL.LAYER-1]=''; } }   // low confidence → leave blank for you to review
     }
   });
   t.getRange(2,COL.STATUS,n,1).setNumberFormat('@');   // keep 0/1 as text
