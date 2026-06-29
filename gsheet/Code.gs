@@ -112,7 +112,7 @@ function ensureAllSheets(){
   if(cfg.getLastRow()===0){
     cfg.getRange(1,1,1,2).setValues([['Key','Value']]).setFontWeight('bold');
     var defaults = [['offering','Both'],['website',''],['services',''],['industries',''],['products',''],
-      ['competitors',''],['locations',''],['geoMode','all'],['serpGl','us'],
+      ['target_professions',''],['competitors',''],['locations',''],['geoMode','all'],['serpGl','us'],
       ['rule_zero','TRUE'],['rule_free','TRUE'],['rule_nearme','FALSE'],['rule_competitor','TRUE'],
       ['rule_location','TRUE'],['rule_info','TRUE'],['rule_jobs','TRUE'],['rule_format','TRUE'],
       ['rule_org','TRUE'],['rule_lowrel','FALSE'],['lowrel_threshold','1']];
@@ -154,6 +154,7 @@ function getConfig(){
   var list=function(k){ var s=String(o[k]||''); var parts=/\n/.test(s)?s.split(/\n+/):s.split(/[,;]+/); return parts.map(function(x){return x.trim();}).filter(String); };
   var bool=function(k){ return String(o[k]).toUpperCase()==='TRUE'; };
   return { offering:o.offering||'Both', website:o.website||'', services:list('services'), industries:list('industries'), products:list('products'),
+    targetProfessions:list('target_professions'),
     competitors:list('competitors'), locations:list('locations'), negatives:getNegatives(), geoMode:o.geoMode||'all', serpGl:o.serpGl||'us',
     rules:{ zero:bool('rule_zero'), free:bool('rule_free'), nearme:bool('rule_nearme'), competitor:bool('rule_competitor'),
       location:bool('rule_location'), info:bool('rule_info'), jobs:bool('rule_jobs'), format:bool('rule_format'), org:bool('rule_org'), lowrel:bool('rule_lowrel') },
@@ -222,6 +223,7 @@ function saveClientInfo(d){
   var props=PropertiesService.getScriptProperties();
   if(d.openaiKey && d.openaiKey.trim()) props.setProperty('OPENAI_API_KEY', d.openaiKey.trim());
   if(d.serperKey && d.serperKey.trim()) props.setProperty('SERPER_KEY', d.serperKey.trim());
+  try{ var profs=deriveTargetProfessions(getConfig()); if(profs.length) setConfigVal('target_professions', profs.join('\n')); }catch(e){}   // refresh target buyer roles from the new info
   runRules();   // re-evaluate competitor/location rules with the new info
   return true;
 }
@@ -280,11 +282,12 @@ function runPhase(phase){
   autofillClientFromTabs();
   // always confirm client info before running
   var c=getConfig();
-  var summary='Services: '+(c.services.join(', ')||'(none)')+'\nIndustries: '+(c.industries.join(', ')||'(none)')+'\nCompetitors: '+(c.competitors.join(', ')||'(none)')+'\nDomain: '+(c.website||'(none)');
+  var summary='Services: '+(c.services.join(', ')||'(none)')+'\nIndustries: '+(c.industries.join(', ')||'(none)')+'\nTarget roles: '+(c.targetProfessions.join(', ')||'(auto-derived on run)')+'\nCompetitors: '+(c.competitors.join(', ')||'(none)')+'\nDomain: '+(c.website||'(none)');
   var resp=ui.alert('Check client info before running '+phase, summary+'\n\nYes = run.   No = edit it first.', ui.ButtonSet.YES_NO);
   if(resp!==ui.Button.YES){ showSetup(); return; }
   if(!clientConfigured()){ ui.alert('Set the client info first (services / competitors / domain).'); showSetup(); return; }
   if(!prop('OPENAI_API_KEY') || !prop('SERPER_KEY')){ ui.alert('Set your OpenAI + Serper API keys first (in "Set / edit client info").'); showSetup(); return; }
+  if(!c.targetProfessions.length){ var profs=deriveTargetProfessions(c); if(profs.length){ setConfigVal('target_professions', profs.join('\n')); c=getConfig(); } }   // derive target buyer roles from the config once
 
   var t=sheet(SHEET.TOPICS);
   importAkrSilent();   // re-sync Topics to the current AKR (carries over picks + enrichment for keywords that remain)
@@ -417,7 +420,23 @@ function openai(messages){
 }
 function clientDesc(cfg){
   return [cfg.offering?('Offering: '+cfg.offering+'.'):'', cfg.services.length?('Sells: '+cfg.services.join(', ')+'.'):'',
-    cfg.industries.length?('Ideal customers (ICP): '+cfg.industries.join(', ')+'.'):'', cfg.website?('Site: '+cfg.website+'.'):''].filter(String).join(' ') || '(client profile not provided)';
+    cfg.industries.length?('Ideal customers (ICP): '+cfg.industries.join(', ')+'.'):'',
+    (cfg.targetProfessions&&cfg.targetProfessions.length)?('TARGET BUYER ROLES: '+cfg.targetProfessions.join(', ')+'.'):'',
+    cfg.website?('Site: '+cfg.website+'.'):''].filter(String).join(' ') || '(client profile not provided)';
+}
+// derive the client's target buyer professions/roles from the whole config (one cheap AI call)
+function deriveTargetProfessions(cfg){
+  if(!prop('OPENAI_API_KEY')) return [];
+  var base=[cfg.offering?('Offering: '+cfg.offering+'.'):'', cfg.services.length?('Sells: '+cfg.services.join(', ')+'.'):'',
+    cfg.industries.length?('Industries/ICP: '+cfg.industries.join(', ')+'.'):'', cfg.website?('Site: '+cfg.website+'.'):''].filter(String).join(' ');
+  if(!base) return [];
+  try{
+    var j=openai([
+      {role:'system',content:'You are an ICP analyst. From the client profile, list the specific BUYER PROFESSIONS / JOB ROLES this client sells to — the people who decide to buy or use the offering (e.g. "Wealth Manager", "Credit Analyst", "Marketing Manager", "Homeowner"). 4-10 concise role titles, most important first. Return ONLY JSON: {"professions":["...","..."]}.'},
+      {role:'user',content:base}
+    ]);
+    return (j.professions||[]).map(function(x){return String(x).trim();}).filter(String).slice(0,12);
+  }catch(e){ return []; }
 }
 function classifyBatch(items, cfg){
   var sys='You are an SEO analyst classifying keywords for a SPECIALIST client by INTENT, using the keyword and the titles of pages currently ranking.\n\nCLIENT: '+clientDesc(cfg)+'\n\nThe client is a SPECIALIST in the offering above — judge fit STRICTLY against THAT specific offering, not "anyone who buys supplements/services".\n\nFor each keyword return:\n- "audience": exactly one of: '+AUDIENCES.join(' | ')+'\n- "type": a BROAD product/service category (Title Case, 1-2 words). Reuse a small consistent vocabulary.\n- "keep": true only if the topic is squarely within the client\'s specific offering; false when it is off-topic for THIS client.\n- "reason": when keep=false, exactly one of: '+REJECT_REASONS.join(' | ')+'. When keep=true, "".\n\nSet keep=false (reason "Off-ICP audience") when the topic is a DIFFERENT product, condition, or category than the client treats — e.g. a gut/candida client should REJECT general potassium/magnesium/multivitamin/heart/metabolic topics; a printing client should reject unrelated products. Being a plausible "supplement buyer" or "consumer" is NOT enough — it must match the client\'s actual niche.\n\nSet keep=false (reason "Branded query") for a SPECIFIC company OR product brand name — including ones you do not recognise: a proper-noun product name (e.g. "Culturelle IBS Support", "Matol KM", "Candida X", "Brand X supplement") is a branded query. Do NOT reject the client\'s own generic category words.\n\nAlso keep=false for: job/career seekers ("Job-seeker intent"); pure "what is / definition / statistics / toxicity" research with no buying path ("Researcher/student intent").\n\nJudge real intent from the ranking titles. When the topic is clearly OUTSIDE the client\'s niche, prefer keep=false. Only keep=true when it genuinely fits.\n\nAlso return "confidence": "high" when the keep/reject call is obvious, or "low" when it is borderline / you are unsure (a human will review the low ones). Be honest — use "low" whenever it is a judgement call.\nAlso return "explain": a SHORT, SPECIFIC plain-English reason (max ~14 words) grounded in what the keyword really means + the ranking titles — e.g. "“CRA” = Canada Revenue Agency tax, not the client’s field", "Academic credit-risk content", "Brand/product name (Culturelle)", "Good fit: on-niche buyer". Not a generic restatement.\nAlso return "profession": the likely SEARCHER\'S role/profession in 1-3 words — prefer one of the client\'s ICP roles above when it fits (e.g. "Wealth Manager", "Financial Advisor", "Credit Analyst"); otherwise a general role like "Consumer", "Business owner", "Job seeker", "Student/Researcher", "Clinician". Use "General" only if truly unclear.\nThe PROFESSION is a primary fit test: if the profession is clearly NOT someone the client sells to (a job seeker, student/academic, or a role outside the ICP roles above), set keep=false, reason "Off-ICP audience", confidence "high", and put the role mismatch in "explain" (e.g. "Searcher is a job seeker, not the client’s buyer"). Keep=true only when the profession is a plausible TARGET buyer for THIS client.\nReturn ONLY JSON: {"results":[{"id":<id>,"audience":"...","type":"...","keep":true|false,"reason":"...","confidence":"high|low","explain":"...","profession":"..."}]}.';
