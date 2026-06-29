@@ -84,33 +84,7 @@ function act6(){ return _call('act6'); }
 function onEdit(e){
   try{
     if(!e || !e.range || e.range.getSheet().getName() !== 'Negatives') return;
-    applyNegativesNow();
+    var code = CacheService.getScriptCache().get('tt_src');   // delegate to the auto-updating code (uses current column layout)
+    if(code && code.indexOf('function applyNegativesNow') >= 0){ eval(code); applyNegativesNow(); }
   }catch(err){}
-}
-function applyNegativesNow(){
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var neg = ss.getSheetByName('Negatives'), top = ss.getSheetByName('Topics');
-  if(!neg || !top || top.getLastRow() < 2) return;
-  var negs = [];
-  if(neg.getLastRow() > 1){
-    neg.getRange(2,1,neg.getLastRow()-1,1).getValues().forEach(function(r){ var c=String(r[0]||'').trim(); if(c) negs.push(c.toLowerCase()); });
-  }
-  var n = top.getLastRow()-1, rng = top.getRange(2,1,n,16), v = rng.getValues();
-  var esc = function(s){ return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); };
-  // Topics 0-based cols: 0 keyword, 2 topic, 3 secondary, 10 status, 11 reason, 12 layer
-  for(var i=0;i<v.length;i++){
-    var kw = String(v[i][0]||''); if(!kw) continue;
-    var status = String(v[i][10]||''), reason = String(v[i][11]||'');
-    if(status === '1') continue;   // human keep — never touch
-    var blob = (kw+' '+(v[i][2]||'')).toLowerCase(), hit = null;   // keyword + topic only (not the secondary variant cluster)
-    for(var j=0;j<negs.length;j++){ if(new RegExp('\\b'+esc(negs[j])+'\\b').test(blob)){ hit = negs[j]; break; } }
-    if(hit){
-      if(status === ''){ v[i][10]='0'; v[i][11]='Negative keyword: '+hit; v[i][12]='Rule'; }   // reject pending rows
-      else if(/^Negative keyword:[^;]*$/.test(reason)){ v[i][11]='Negative keyword: '+hit; }      // update which negative
-    } else if(status === '0' && /^Negative keyword:[^;]*$/.test(reason)){
-      v[i][10]=''; v[i][11]=''; v[i][12]='';   // was rejected ONLY by a negative that's now gone → un-reject
-    }
-  }
-  var sc = top.getRange(2,11,n,1); try{ sc.clearDataValidations(); }catch(e){} sc.setNumberFormat('@');
-  rng.setValues(v);
 }
