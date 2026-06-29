@@ -11,8 +11,8 @@
 var SHEET = { AKR:'AKR', CONFIG:'Config', TOPICS:'Topics', CACHE:'_Cache' };
 var VIEW_TABS = ['✅ Selected','🔎 To review','❌ Rejected'];   // legacy tabs to remove (now one tab)
 // Topics columns (1-indexed)
-var COL = { KW:1, PT:2, TOPIC:3, SEC:4, VOL:5, REL:6, AUD:7, TYPE:8, MOD:9, BOFU:10, STATUS:11, REASON:12, REXP:13, LAYER:14, DOMAINS:15, RVERDICT:16, RREASON:17, CONF:18 };
-var TOPIC_HEADERS = ['Keyword','Page Type','Topic','Secondary','Volume','Relevance','Audience','Type','Modifier','BOFU','Status','Reason','Reason Explained','Layer','_domains','Review','Review Reason','Confidence'];
+var COL = { KW:1, PT:2, TOPIC:3, SEC:4, VOL:5, REL:6, AUD:7, TYPE:8, MOD:9, BOFU:10, STATUS:11, REASON:12, REXP:13, LAYER:14, DOMAINS:15, RVERDICT:16, RREASON:17, CONF:18, PROF:19 };
+var TOPIC_HEADERS = ['Keyword','Page Type','Topic','Secondary','Volume','Relevance','Audience','Type','Modifier','BOFU','Status','Reason','Reason Explained','Layer','_domains','Review','Review Reason','Confidence','Profession'];
 var NCOL = TOPIC_HEADERS.length;
 var BATCH = 100;     // Topics rows enriched per processBatch call
 var AI_BATCH = 30;   // keywords per OpenAI call
@@ -135,7 +135,7 @@ function ensureAllSheets(){
     try{ applyFormatting(true); }catch(e){}   // re-point conditional formatting/colours at the new columns
   }
   var c = ensureSheet(SHEET.CACHE);
-  if(c.getLastRow()===0) c.getRange(1,1,1,8).setValues([['Keyword','Domains','Audience','Type','Keep','Reason','Titles','Confidence']]).setFontWeight('bold');
+  if(c.getLastRow()===0) c.getRange(1,1,1,10).setValues([['Keyword','Domains','Audience','Type','Keep','Reason','Titles','Confidence','Explain','Profession']]).setFontWeight('bold');
   c.hideSheet();
   // your own negative list — keep adding words/phrases here; topics containing them get auto-rejected
   var neg = ensureSheet('Negatives');
@@ -307,7 +307,7 @@ function importAkrSilent(){
   // snapshot existing rows by keyword so carried-over keywords keep their picks + enrichment
   var prev={};
   if(t.getLastRow()>1){ t.getRange(2,1,t.getLastRow()-1,NCOL).getValues().forEach(function(r){ var k=String(r[COL.KW-1]||'').toLowerCase(); if(k) prev[k]=r; }); }
-  var keep=[COL.AUD,COL.TYPE,COL.MOD,COL.BOFU,COL.STATUS,COL.REASON,COL.REXP,COL.LAYER,COL.DOMAINS,COL.RVERDICT,COL.RREASON,COL.CONF];
+  var keep=[COL.AUD,COL.TYPE,COL.MOD,COL.BOFU,COL.STATUS,COL.REASON,COL.REXP,COL.LAYER,COL.DOMAINS,COL.RVERDICT,COL.RREASON,COL.CONF,COL.PROF];
   var seen={}, out=[];
   for(var i=1;i<rows.length;i++){
     var a=rows[i], kw=String(a[ci.kw]||'').trim(); if(!kw) continue;
@@ -315,7 +315,7 @@ function importAkrSilent(){
     var key=(kw+'|'+topic).toLowerCase(); if(seen[key]) continue; seen[key]=1;
     var pt=(ci.pt>=0?String(a[ci.pt]||'').trim():'')||'Blog';   // keep the original Page Type (Category stays Category)
     var vol=ci.vol>=0?(parseInt(String(a[ci.vol]||'').replace(/[^0-9]/g,''),10)||0):0;
-    var row=[kw, pt, topic, ci.sec>=0?String(a[ci.sec]||'').trim():'', vol, ci.rel>=0?a[ci.rel]:'', '','','','','','','','','','','',''];   // 18 cols (…Reason Explained…Confidence)
+    var row=[kw, pt, topic, ci.sec>=0?String(a[ci.sec]||'').trim():'', vol, ci.rel>=0?a[ci.rel]:'', '','','','','','','','','','','','',''];   // 19 cols (…Confidence, Profession)
     var p=prev[kw.toLowerCase()];
     if(p){ keep.forEach(function(c){ row[c-1]=p[c-1]; }); }   // carry over enrichment + pick for a keyword that still exists
     out.push(row);
@@ -379,15 +379,15 @@ function runRules(){
 /* --------------------------- ENRICHMENT --------------------------- */
 function loadCache(){
   var c=sheet(SHEET.CACHE), map={}; if(!c||c.getLastRow()<2) return map;
-  var v=c.getRange(2,1,c.getLastRow()-1,8).getValues();
-  for(var i=0;i<v.length;i++){ if(v[i][0]) map[String(v[i][0]).toLowerCase()]={domains:String(v[i][1]||'').split(',').filter(String),audience:v[i][2],type:v[i][3],keep:!(v[i][4]===false||v[i][4]==='FALSE'),reason:v[i][5],titles:String(v[i][6]||'').split(' ||| ').filter(String),conf:v[i][7]||''}; }
+  var v=c.getRange(2,1,c.getLastRow()-1,10).getValues();
+  for(var i=0;i<v.length;i++){ if(v[i][0]) map[String(v[i][0]).toLowerCase()]={domains:String(v[i][1]||'').split(',').filter(String),audience:v[i][2],type:v[i][3],keep:!(v[i][4]===false||v[i][4]==='FALSE'),reason:v[i][5],titles:String(v[i][6]||'').split(' ||| ').filter(String),conf:v[i][7]||'',explain:v[i][8]||'',profession:v[i][9]||''}; }
   return map;
 }
 function saveCache(cache){
   var cs=sheet(SHEET.CACHE), rows=[];
-  Object.keys(cache).forEach(function(kw){ var c=cache[kw]; rows.push([kw,(c.domains||[]).join(','),c.audience||'',c.type||'',c.keep!==false,c.reason||'',(c.titles||[]).join(' ||| '),c.conf||'']); });
-  if(cs.getLastRow()>1) cs.getRange(2,1,cs.getLastRow()-1,8).clearContent();
-  if(rows.length) cs.getRange(2,1,rows.length,8).setValues(rows);
+  Object.keys(cache).forEach(function(kw){ var c=cache[kw]; rows.push([kw,(c.domains||[]).join(','),c.audience||'',c.type||'',c.keep!==false,c.reason||'',(c.titles||[]).join(' ||| '),c.conf||'',c.explain||'',c.profession||'']); });
+  if(cs.getLastRow()>1) cs.getRange(2,1,cs.getLastRow()-1,10).clearContent();
+  if(rows.length) cs.getRange(2,1,rows.length,10).setValues(rows);
 }
 function serperFetchAll(keywords, gl){
   var key=prop('SERPER_KEY'); if(!key) throw new Error('Set SERPER_KEY (⚙ Set API keys).');
@@ -416,10 +416,10 @@ function clientDesc(cfg){
     cfg.industries.length?('Ideal customers (ICP): '+cfg.industries.join(', ')+'.'):'', cfg.website?('Site: '+cfg.website+'.'):''].filter(String).join(' ') || '(client profile not provided)';
 }
 function classifyBatch(items, cfg){
-  var sys='You are an SEO analyst classifying keywords for a SPECIALIST client by INTENT, using the keyword and the titles of pages currently ranking.\n\nCLIENT: '+clientDesc(cfg)+'\n\nThe client is a SPECIALIST in the offering above — judge fit STRICTLY against THAT specific offering, not "anyone who buys supplements/services".\n\nFor each keyword return:\n- "audience": exactly one of: '+AUDIENCES.join(' | ')+'\n- "type": a BROAD product/service category (Title Case, 1-2 words). Reuse a small consistent vocabulary.\n- "keep": true only if the topic is squarely within the client\'s specific offering; false when it is off-topic for THIS client.\n- "reason": when keep=false, exactly one of: '+REJECT_REASONS.join(' | ')+'. When keep=true, "".\n\nSet keep=false (reason "Off-ICP audience") when the topic is a DIFFERENT product, condition, or category than the client treats — e.g. a gut/candida client should REJECT general potassium/magnesium/multivitamin/heart/metabolic topics; a printing client should reject unrelated products. Being a plausible "supplement buyer" or "consumer" is NOT enough — it must match the client\'s actual niche.\n\nSet keep=false (reason "Branded query") for a SPECIFIC company OR product brand name — including ones you do not recognise: a proper-noun product name (e.g. "Culturelle IBS Support", "Matol KM", "Candida X", "Brand X supplement") is a branded query. Do NOT reject the client\'s own generic category words.\n\nAlso keep=false for: job/career seekers ("Job-seeker intent"); pure "what is / definition / statistics / toxicity" research with no buying path ("Researcher/student intent").\n\nJudge real intent from the ranking titles. When the topic is clearly OUTSIDE the client\'s niche, prefer keep=false. Only keep=true when it genuinely fits.\n\nAlso return "confidence": "high" when the keep/reject call is obvious, or "low" when it is borderline / you are unsure (a human will review the low ones). Be honest — use "low" whenever it is a judgement call.\nAlso return "explain": a SHORT, SPECIFIC plain-English reason (max ~14 words) grounded in what the keyword really means + the ranking titles — e.g. "“CRA” = Canada Revenue Agency tax, not the client’s field", "Academic credit-risk content", "Brand/product name (Culturelle)", "Good fit: on-niche buyer". Not a generic restatement.\nReturn ONLY JSON: {"results":[{"id":<id>,"audience":"...","type":"...","keep":true|false,"reason":"...","confidence":"high|low","explain":"..."}]}.';
+  var sys='You are an SEO analyst classifying keywords for a SPECIALIST client by INTENT, using the keyword and the titles of pages currently ranking.\n\nCLIENT: '+clientDesc(cfg)+'\n\nThe client is a SPECIALIST in the offering above — judge fit STRICTLY against THAT specific offering, not "anyone who buys supplements/services".\n\nFor each keyword return:\n- "audience": exactly one of: '+AUDIENCES.join(' | ')+'\n- "type": a BROAD product/service category (Title Case, 1-2 words). Reuse a small consistent vocabulary.\n- "keep": true only if the topic is squarely within the client\'s specific offering; false when it is off-topic for THIS client.\n- "reason": when keep=false, exactly one of: '+REJECT_REASONS.join(' | ')+'. When keep=true, "".\n\nSet keep=false (reason "Off-ICP audience") when the topic is a DIFFERENT product, condition, or category than the client treats — e.g. a gut/candida client should REJECT general potassium/magnesium/multivitamin/heart/metabolic topics; a printing client should reject unrelated products. Being a plausible "supplement buyer" or "consumer" is NOT enough — it must match the client\'s actual niche.\n\nSet keep=false (reason "Branded query") for a SPECIFIC company OR product brand name — including ones you do not recognise: a proper-noun product name (e.g. "Culturelle IBS Support", "Matol KM", "Candida X", "Brand X supplement") is a branded query. Do NOT reject the client\'s own generic category words.\n\nAlso keep=false for: job/career seekers ("Job-seeker intent"); pure "what is / definition / statistics / toxicity" research with no buying path ("Researcher/student intent").\n\nJudge real intent from the ranking titles. When the topic is clearly OUTSIDE the client\'s niche, prefer keep=false. Only keep=true when it genuinely fits.\n\nAlso return "confidence": "high" when the keep/reject call is obvious, or "low" when it is borderline / you are unsure (a human will review the low ones). Be honest — use "low" whenever it is a judgement call.\nAlso return "explain": a SHORT, SPECIFIC plain-English reason (max ~14 words) grounded in what the keyword really means + the ranking titles — e.g. "“CRA” = Canada Revenue Agency tax, not the client’s field", "Academic credit-risk content", "Brand/product name (Culturelle)", "Good fit: on-niche buyer". Not a generic restatement.\nAlso return "profession": the likely SEARCHER\'S role/profession in 1-3 words — prefer one of the client\'s ICP roles above when it fits (e.g. "Wealth Manager", "Financial Advisor", "Credit Analyst"); otherwise a general role like "Consumer", "Business owner", "Job seeker", "Student/Researcher", "Clinician". Use "General" only if truly unclear.\nReturn ONLY JSON: {"results":[{"id":<id>,"audience":"...","type":"...","keep":true|false,"reason":"...","confidence":"high|low","explain":"...","profession":"..."}]}.';
   var lines=items.map(function(it){ return JSON.stringify({id:it.id, keyword:it.kw, ranking_titles:(it.titles||[]).slice(0,6).join(' | ')}); }).join('\n');
   var j=openai([{role:'system',content:sys},{role:'user',content:'Classify these:\n'+lines}]); var byId={};
-  (j.results||[]).forEach(function(o){ byId[String(o.id)]={ audience:AUDIENCES.indexOf(o.audience)>=0?o.audience:'General', type:(o.type||'').toString().slice(0,40), keep:o.keep!==false, reason:o.keep!==false?'':(REJECT_REASONS.indexOf(o.reason)>=0?o.reason:'No commercial intent'), conf:(String(o.confidence||'').toLowerCase()==='high'?'high':'low'), explain:(o.explain||'').toString().slice(0,160) }; });
+  (j.results||[]).forEach(function(o){ byId[String(o.id)]={ audience:AUDIENCES.indexOf(o.audience)>=0?o.audience:'General', type:(o.type||'').toString().slice(0,40), keep:o.keep!==false, reason:o.keep!==false?'':(REJECT_REASONS.indexOf(o.reason)>=0?o.reason:'No commercial intent'), conf:(String(o.confidence||'').toLowerCase()==='high'?'high':'low'), explain:(o.explain||'').toString().slice(0,160), profession:(o.profession||'').toString().slice(0,40) }; });
   return byId;
 }
 // process the next BATCH of un-enriched Topics rows (optionally only one phase); returns count processed
@@ -440,11 +440,11 @@ function processBatch(phase){
     var slice=toAI.slice(b,b+AI_BATCH);
     var items=slice.map(function(i){ var kw=String(vals[i][COL.KW-1]).toLowerCase(); return {id:String(i), kw:vals[i][COL.KW-1], titles:(cache[kw].titles||[])}; });
     var res; try{ res=classifyBatch(items, cfg); }catch(e){ res={}; }
-    slice.forEach(function(i){ var kw=String(vals[i][COL.KW-1]).toLowerCase(), o=res[String(i)]; if(o){ cache[kw].audience=o.audience; cache[kw].type=o.type; cache[kw].keep=o.keep; cache[kw].reason=o.reason; cache[kw].conf=o.conf; cache[kw].explain=o.explain; } else { cache[kw].audience='General'; cache[kw].conf='low'; } });
+    slice.forEach(function(i){ var kw=String(vals[i][COL.KW-1]).toLowerCase(), o=res[String(i)]; if(o){ cache[kw].audience=o.audience; cache[kw].type=o.type; cache[kw].keep=o.keep; cache[kw].reason=o.reason; cache[kw].conf=o.conf; cache[kw].explain=o.explain; cache[kw].profession=o.profession; } else { cache[kw].audience='General'; cache[kw].conf='low'; } });
   }
   todo.forEach(function(i){ var v=vals[i], kw=String(v[COL.KW-1]).toLowerCase(), c=cache[kw];
     v[COL.AUD-1]=c.audience||'General'; v[COL.TYPE-1]=c.type||''; v[COL.DOMAINS-1]=(c.domains||[]).join(',');
-    v[COL.MOD-1]=modifiersOf(v[COL.KW-1], cfg); v[COL.BOFU-1]=isBofu(v[COL.KW-1])?'Yes':'No'; v[COL.CONF-1]=c.conf||''; v[COL.REXP-1]=c.explain||'';
+    v[COL.MOD-1]=modifiersOf(v[COL.KW-1], cfg); v[COL.BOFU-1]=isBofu(v[COL.KW-1])?'Yes':'No'; v[COL.CONF-1]=c.conf||''; v[COL.REXP-1]=c.explain||''; v[COL.PROF-1]=c.profession||'';
     v[COL.STATUS-1]=statNorm(v[COL.STATUS-1]);
     if(v[COL.STATUS-1]!=='1'){   // keeps (human or AI) are protected; review/override them manually
       var hit=evalRules({kw:v[COL.KW-1],topic:v[COL.TOPIC-1],sec:v[COL.SEC-1],vol:v[COL.VOL-1],rel:v[COL.REL-1],pageType:v[COL.PT-1],domains:(c.domains||[])}, cfg);
