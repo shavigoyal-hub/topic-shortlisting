@@ -79,7 +79,6 @@ function buildMenu(ui){
     .addItem('3. Run Blog', 'runBlog')
     .addSeparator()
     .addItem('Self-review my selected', 'selfReview')
-    .addItem('Re-apply rules', 'runRules')
     .addSeparator()
     .addItem('Clear & start over', 'clearCache');
   if(typeof forceUpdate==='function') menu.addItem('Update to latest version', 'forceUpdate');
