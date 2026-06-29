@@ -11,8 +11,8 @@
 var SHEET = { AKR:'AKR', CONFIG:'Config', TOPICS:'Topics', CACHE:'_Cache' };
 var VIEW_TABS = ['✅ Selected','🔎 To review','❌ Rejected'];   // legacy tabs to remove (now one tab)
 // Topics columns (1-indexed)
-var COL = { KW:1, PT:2, TOPIC:3, SEC:4, VOL:5, REL:6, AUD:7, TYPE:8, MOD:9, BOFU:10, STATUS:11, REASON:12, REXP:13, LAYER:14, DOMAINS:15, RVERDICT:16, RREASON:17, CONF:18, PROF:19 };
-var TOPIC_HEADERS = ['Keyword','Page Type','Topic','Secondary','Volume','Relevance','Audience','Type','Modifier','BOFU','Status','Reason','Reason Explained','Layer','_domains','Review','Review Reason','Confidence','Profession'];
+var COL = { KW:1, PT:2, TOPIC:3, SEC:4, VOL:5, REL:6, AUD:7, PROF:8, TYPE:9, MOD:10, BOFU:11, STATUS:12, REASON:13, REXP:14, CONF:15, LAYER:16, DOMAINS:17, RVERDICT:18, RREASON:19 };
+var TOPIC_HEADERS = ['Keyword','Page Type','Topic','Secondary','Volume','Relevance','Audience','Profession','Type','Modifier','BOFU','Status','Reason','Reason Explained','Confidence','Layer','_domains','Review','Review Reason'];
 var NCOL = TOPIC_HEADERS.length;
 var BATCH = 100;     // Topics rows enriched per processBatch call
 var AI_BATCH = 30;   // keywords per OpenAI call
@@ -500,7 +500,7 @@ function reviewBatch(items, cfg){
 /* --------------------------- FORMATTING --------------------------- */
 function applyFormatting(silent){
   var t=sheet(SHEET.TOPICS); if(!t) return; var n=Math.max(t.getLastRow()-1,1);
-  try{ t.showColumns(1,NCOL); t.hideColumns(COL.LAYER); t.hideColumns(COL.DOMAINS); var sc=t.getRange(2,COL.STATUS,n,1); sc.clearDataValidations(); sc.setNumberFormat('@'); }catch(e){}
+  try{ t.showColumns(1,NCOL); t.hideColumns(COL.LAYER, 4); var sc=t.getRange(2,COL.STATUS,n,1); sc.clearDataValidations(); sc.setNumberFormat('@'); }catch(e){}   // hide Layer, _domains, Review, Review Reason (cols 16-19)
   try{ t.clearConditionalFormatRules(); }catch(e){}   // no row colouring
   if(t.getFilter()) t.getFilter().remove();
   t.getRange(1,1,Math.max(t.getLastRow(),1),NCOL).createFilter();   // keep native column filters (use them for Service/Blog/picks)
