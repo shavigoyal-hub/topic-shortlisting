@@ -77,6 +77,7 @@ function buildMenu(ui){
     .addItem('1. Set / edit client info', 'showSetup')
     .addItem('2. Run Service / Product', 'runEverything')
     .addItem('3. Run Blog', 'runBlog')
+    .addItem('4. Run all (Service + Blog)', 'act1')
     .addSeparator()
     .addItem('Self-review my selected', 'selfReview')
     .addSeparator()
@@ -269,7 +270,10 @@ function prop(k){ return PropertiesService.getScriptProperties().getProperty(k);
 /* ------------------------- RUN BY PHASE --------------------------- */
 function runEverything(){ return runPhase('Service'); }   // "Run Service / Product"
 function runBlog(){ return runPhase('Blog'); }
+function runAll(){ return runPhase('All'); }               // Service + Blog in one go
+function act1(){ return runAll(); }                        // mapped to a spare bootstrap wrapper (no re-paste)
 function runPhase(phase){
+  var ph = (phase==='All') ? null : phase;                // null = all phases
   var ui=SpreadsheetApp.getUi();
   ensureAllSheets();
   if(sheet(SHEET.AKR).getLastRow()<2){ ui.alert('Paste your keyword report into the "AKR" tab first.'); return; }
@@ -285,12 +289,13 @@ function runPhase(phase){
   var t=sheet(SHEET.TOPICS);
   importAkrSilent();   // re-sync Topics to the current AKR (carries over picks + enrichment for keywords that remain)
   runRules(); applyFormatting(true);
-  var did=enrichForeground(phase);
-  var remaining=0; t.getRange(2,1,Math.max(t.getLastRow()-1,1),NCOL).getValues().forEach(function(r){ if(r[COL.KW-1] && (phase==='Service')===isServicePage(r[COL.PT-1]) && !r[COL.AUD-1]) remaining++; });
+  var did=enrichForeground(ph);
+  var remaining=0; t.getRange(2,1,Math.max(t.getLastRow()-1,1),NCOL).getValues().forEach(function(r){ if(r[COL.KW-1] && (ph===null || (phase==='Service')===isServicePage(r[COL.PT-1])) && !r[COL.AUD-1]) remaining++; });
 
-  var msg='Processed '+did+' '+phase+' topics.';
-  if(remaining>0){ msg+=' '+remaining+' more to go — click "Run '+(phase==='Service'?'Service / Product':'Blog')+'" again to continue.'; }
-  else { msg+=' All '+phase+' topics done.'; }
+  var label = phase==='All'?'all':phase;
+  var msg='Processed '+did+' '+label+' topics.';
+  if(remaining>0){ msg+=' '+remaining+' more to go — click the same Run option again to continue.'; }
+  else { msg+=' All '+label+' topics done.'; }
   msg+='\n\nThe AI auto-decided the confident ones (Status 1 = keep, 0 = reject) and left the borderline ones BLANK for you. Filter the Confidence column to "low" to review just those. 1 = keep, 0 = reject.';
   ui.alert(msg);
 }
