@@ -79,6 +79,7 @@ function buildMenu(ui){
     .addItem('3. Run Blog', 'runBlog')
     .addItem('4. Run all (Service + Blog)', 'act1')
     .addSeparator()
+    .addItem('Re-classify (reuse saved rankings — no fetch)', 'act2')
     .addItem('Self-review my selected', 'selfReview')
     .addSeparator()
     .addItem('Clear & start over', 'clearCache');
@@ -274,6 +275,28 @@ function runEverything(){ return runPhase('Service'); }   // "Run Service / Prod
 function runBlog(){ return runPhase('Blog'); }
 function runAll(){ return runPhase('All'); }               // Service + Blog in one go
 function act1(){ return runAll(); }                        // mapped to a spare bootstrap wrapper (no re-paste)
+// Re-run the AI using the rankings ALREADY saved in _Cache — no new SERP/UrlFetch (avoids the daily quota).
+function reclassifyKeepRankings(){
+  var ui=SpreadsheetApp.getUi();
+  if(ui.alert('Re-classify (reuse saved rankings)','Re-run the AI (Audience / Profession / Type / keep-reject) using the Google rankings already saved — NO new SERP calls, so it won\'t hit the daily fetch quota. Auto keep/reject are recomputed; your manual 1/0 picks are kept. Continue?',ui.ButtonSet.YES_NO)!==ui.Button.YES) return;
+  var cs=sheet(SHEET.CACHE);
+  if(cs && cs.getLastRow()>1){ var nr=cs.getLastRow()-1;
+    cs.getRange(2,3,nr,2).clearContent();   // Audience, Type
+    cs.getRange(2,5,nr,2).clearContent();   // Keep, Reason   (Domains col2 + Titles col7 KEPT → no re-SERP)
+    cs.getRange(2,8,nr,3).clearContent();   // Confidence, Explain, Profession
+  }
+  var t=sheet(SHEET.TOPICS);
+  if(t && t.getLastRow()>1){ var n=t.getLastRow()-1, rng=t.getRange(2,1,n,NCOL), v=rng.getValues();
+    for(var i=0;i<v.length;i++){ if(!v[i][COL.KW-1]) continue;
+      v[i][COL.AUD-1]=''; v[i][COL.PROF-1]=''; v[i][COL.TYPE-1]=''; v[i][COL.CONF-1]=''; v[i][COL.REXP-1]='';   // clear so rows re-process
+      if(String(v[i][COL.LAYER-1])==='AI'||String(v[i][COL.LAYER-1])==='Rule'){ v[i][COL.STATUS-1]=''; v[i][COL.REASON-1]=''; v[i][COL.LAYER-1]=''; }   // reset auto decisions; keep manual picks
+    }
+    var sc=t.getRange(2,COL.STATUS,n,1); try{ sc.clearDataValidations(); }catch(e){} sc.setNumberFormat('@');
+    rng.setValues(v);
+  }
+  ui.alert('Done — AI verdicts cleared, rankings kept. Now click "Run all": it reuses the saved rankings (no SERP) and only re-calls the AI.');
+}
+function act2(){ return reclassifyKeepRankings(); }
 function runPhase(phase){
   var ph = (phase==='All') ? null : phase;                // null = all phases
   var ui=SpreadsheetApp.getUi();
