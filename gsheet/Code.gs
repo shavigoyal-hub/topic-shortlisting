@@ -110,16 +110,23 @@ function ensureSheet(name){ var s=sheet(name); if(!s) s=ss().insertSheet(name); 
 
 function ensureAllSheets(){
   var cfg = ensureSheet(SHEET.CONFIG);
+  var DEFAULTS = [['offering','Both'],['website',''],['services',''],['products',''],['industries',''],
+    ['target_professions',''],['competitors',''],['locations',''],['geoMode','all'],['serpGl','us'],
+    ['rule_zero','TRUE'],['rule_free','TRUE'],['rule_nearme','FALSE'],['rule_competitor','TRUE'],
+    ['rule_location','TRUE'],['rule_info','TRUE'],['rule_jobs','TRUE'],['rule_format','TRUE'],
+    ['rule_org','TRUE'],['rule_lowrel','FALSE'],['lowrel_threshold','1']];
   if(cfg.getLastRow()===0){
     cfg.getRange(1,1,1,2).setValues([['Key','Value']]).setFontWeight('bold');
-    var defaults = [['offering','Both'],['website',''],['services',''],['industries',''],['products',''],
-      ['target_professions',''],['competitors',''],['locations',''],['geoMode','all'],['serpGl','us'],
-      ['rule_zero','TRUE'],['rule_free','TRUE'],['rule_nearme','FALSE'],['rule_competitor','TRUE'],
-      ['rule_location','TRUE'],['rule_info','TRUE'],['rule_jobs','TRUE'],['rule_format','TRUE'],
-      ['rule_org','TRUE'],['rule_lowrel','FALSE'],['lowrel_threshold','1']];
-    cfg.getRange(2,1,defaults.length,2).setValues(defaults);
+    cfg.getRange(2,1,DEFAULTS.length,2).setValues(DEFAULTS);
     cfg.setColumnWidth(1,180); cfg.setColumnWidth(2,460);
+  } else {   // migrate existing Config: add any missing keys (e.g. products, target_professions)
+    var have={}; cfg.getRange(1,1,cfg.getLastRow(),1).getValues().forEach(function(r){ if(r[0]!=='') have[String(r[0]).trim()]=1; });
+    var add=DEFAULTS.filter(function(kv){ return !have[kv[0]]; });
+    if(add.length) cfg.getRange(cfg.getLastRow()+1,1,add.length,2).setValues(add);
   }
+  // make "offering" a dropdown: Product / Services / Both
+  try{ var cv=cfg.getRange(1,1,cfg.getLastRow(),1).getValues();
+    for(var ci=0;ci<cv.length;ci++){ if(String(cv[ci][0]).trim()==='offering'){ cfg.getRange(ci+1,2).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(['Product','Services','Both'],true).build()); break; } } }catch(e){}
   var akr = ensureSheet(SHEET.AKR);
   if(akr.getLastRow()===0) akr.getRange(1,1,1,7).setValues([['Primary Keyword','Page Type','Topic','Secondary Keywords','Total Search Volume','Relevance Score','Shortlisting']]).setFontWeight('bold');
   var t = ensureSheet(SHEET.TOPICS);
@@ -207,18 +214,19 @@ function showSetup(){
     +'<div style="background:#eef4ff;border:1px solid #cdd9f8;border-radius:7px;padding:8px 10px;font-size:12px;color:#33518f;margin-bottom:6px">💡 Have the client datasheet? Use <b>File ▸ Import ▸ Upload</b> → <b>Insert new sheet(s)</b>, then re-open this (or Run everything) — the Services / Industry / Competitors / Geographies tabs auto-fill below.</div>'
     +'<label>Client website / domain</label><input id="website" value="'+v(c.website)+'" placeholder="https://client.com">'
     +'<label>Offering</label><select id="offering"><option '+(c.offering==='Product'?'selected':'')+'>Product</option><option '+(c.offering==='Services'?'selected':'')+'>Services</option><option '+(c.offering!=='Product'&&c.offering!=='Services'?'selected':'')+'>Both</option></select>'
-    +'<label>Services / Products <small>(one per line)</small></label><textarea id="services" rows="4" placeholder="One service per line&#10;Charts, Tables &amp; Graphs&#10;White-label customization">'+v(c.services.join('\n'))+'</textarea>'
+    +'<label>Services <small>(one per line)</small></label><textarea id="services" rows="3" placeholder="One service per line">'+v(c.services.join('\n'))+'</textarea>'
+    +'<label>Products <small>(one per line)</small></label><textarea id="products" rows="3" placeholder="One product per line">'+v((c.products||[]).join('\n'))+'</textarea>'
     +'<label>Industries / ICP <small>(one per line)</small></label><textarea id="industries" rows="3" placeholder="Wealth Managers&#10;Financial Advisors (RIAs)">'+v(c.industries.join('\n'))+'</textarea>'
     +'<label>Competitors / brands to reject <small>(one per line)</small></label><textarea id="competitors" rows="3" placeholder="vistaprint&#10;moo&#10;minted">'+v(c.competitors.join('\n'))+'</textarea>'
     +'<label>Served locations <small>(one per line; leave blank if national)</small></label><textarea id="locations" rows="2" placeholder="new york&#10;los angeles">'+v(c.locations.join('\n'))+'</textarea>'
     +'<label>Geo mode</label><select id="geoMode"><option value="all" '+(c.geoMode!=='restricted'?'selected':'')+'>Serve anywhere (don\'t reject by location)</option><option value="restricted" '+(c.geoMode==='restricted'?'selected':'')+'>Only the locations above</option></select>'
     +'<button onclick="save()">Save</button>'
-    +'<script>function save(){var d={website:website.value,offering:offering.value,services:services.value,industries:industries.value,competitors:competitors.value,locations:locations.value,geoMode:geoMode.value};google.script.run.withSuccessHandler(function(){google.script.host.close();}).saveClientInfo(d);}</script>';
+    +'<script>function save(){var d={website:website.value,offering:offering.value,services:services.value,products:products.value,industries:industries.value,competitors:competitors.value,locations:locations.value,geoMode:geoMode.value};google.script.run.withSuccessHandler(function(){google.script.host.close();}).saveClientInfo(d);}</script>';
   SpreadsheetApp.getUi().showModalDialog(HtmlService.createHtmlOutput(html).setWidth(430).setHeight(560), 'Client info');
 }
 function saveClientInfo(d){
   setConfigVal('website', d.website||''); setConfigVal('offering', d.offering||'Both');
-  setConfigVal('services', d.services||''); setConfigVal('industries', d.industries||'');
+  setConfigVal('services', d.services||''); setConfigVal('products', d.products||''); setConfigVal('industries', d.industries||'');
   setConfigVal('competitors', d.competitors||''); setConfigVal('locations', d.locations||'');
   setConfigVal('geoMode', d.geoMode||'all');
   var props=PropertiesService.getScriptProperties();
@@ -442,7 +450,8 @@ function openai(messages){
   try{ return JSON.parse(JSON.parse(resp.getContentText()).choices[0].message.content); }catch(e){ return {}; }
 }
 function clientDesc(cfg){
-  return [cfg.offering?('Offering: '+cfg.offering+'.'):'', cfg.services.length?('Sells: '+cfg.services.join(', ')+'.'):'',
+  var sells=(cfg.services||[]).concat(cfg.products||[]);
+  return [cfg.offering?('Offering: '+cfg.offering+'.'):'', sells.length?('Sells: '+sells.join(', ')+'.'):'',
     cfg.industries.length?('Ideal customers (ICP): '+cfg.industries.join(', ')+'.'):'',
     (cfg.targetProfessions&&cfg.targetProfessions.length)?('TARGET BUYER ROLES: '+cfg.targetProfessions.join(', ')+'.'):'',
     cfg.website?('Site: '+cfg.website+'.'):''].filter(String).join(' ') || '(client profile not provided)';
@@ -450,7 +459,8 @@ function clientDesc(cfg){
 // derive the client's target buyer professions/roles from the whole config (one cheap AI call)
 function deriveTargetProfessions(cfg){
   if(!prop('OPENAI_API_KEY')) return [];
-  var base=[cfg.offering?('Offering: '+cfg.offering+'.'):'', cfg.services.length?('Sells: '+cfg.services.join(', ')+'.'):'',
+  var sells=(cfg.services||[]).concat(cfg.products||[]);
+  var base=[cfg.offering?('Offering: '+cfg.offering+'.'):'', sells.length?('Sells: '+sells.join(', ')+'.'):'',
     cfg.industries.length?('Industries/ICP: '+cfg.industries.join(', ')+'.'):'', cfg.website?('Site: '+cfg.website+'.'):''].filter(String).join(' ');
   if(!base) return [];
   try{
