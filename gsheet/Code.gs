@@ -82,6 +82,9 @@ function buildMenu(ui){
     .addItem('Re-classify (reuse saved rankings — no fetch)', 'act2')
     .addItem('Self-review my selected', 'selfReview')
     .addSeparator()
+    .addItem('Metabase: check schema & status (run first)', 'act3')
+    .addItem('Metabase: fetch published URLs (next batch)', 'act4')
+    .addSeparator()
     .addItem('Clear & start over', 'clearCache');
   if(typeof forceUpdate==='function') menu.addItem('Update to latest version', 'forceUpdate');
   menu.addToUi();
@@ -268,6 +271,104 @@ function autofillClientFromTabs(){
   if(found.locations.length){ setConfigVal('locations', uniq(found.locations).join('\n')); setConfigVal('geoMode','restricted'); filled++; }
   return {hits:hits, filled:filled, counts:{services:found.services.length,industries:found.industries.length,competitors:found.competitors.length,locations:found.locations.length}};
 }
+
+/* =================== METABASE: published URLs per client =================== */
+// Script properties: METABASE_URL, METABASE_USERNAME, METABASE_PASSWORD, METABASE_DATABASE_ID
+// Optional: MB_STATUS_SQL (WHERE fragment), MB_RELEVANCE ('match'|'all'), MB_BATCH (clients/run), MB_CURSOR
+function mbCfg_(k){ var v=PropertiesService.getScriptProperties().getProperty(k); if(!v) throw new Error('Missing script property: '+k+' (Project Settings ▸ Script properties)'); return v; }
+function mbEsc_(s){ return String(s).replace(/'/g,"''"); }
+function mbNormDomain_(s){ return String(s||'').toLowerCase().replace(/^https?:\/\//,'').replace(/^www\./,'').replace(/\/.*$/,'').trim(); }
+function mbLogin_(){
+  var cache=CacheService.getScriptCache(), hit=cache.get('METABASE_SESSION'); if(hit) return hit;
+  var base=mbCfg_('METABASE_URL').replace(/\/$/,'');
+  var resp=UrlFetchApp.fetch(base+'/api/session',{method:'post',contentType:'application/json',
+    payload:JSON.stringify({username:mbCfg_('METABASE_USERNAME'),password:mbCfg_('METABASE_PASSWORD')}),muteHttpExceptions:true});
+  if(resp.getResponseCode()!==200) throw new Error('Metabase login failed: '+resp.getContentText().slice(0,300));
+  var id=JSON.parse(resp.getContentText()).id; cache.put('METABASE_SESSION',id,21600); return id;
+}
+function mbDbId_(s){
+  var raw=mbCfg_('METABASE_DATABASE_ID').trim(); if(/^\d+$/.test(raw)) return Number(raw);
+  var base=mbCfg_('METABASE_URL').replace(/\/$/,'');
+  var resp=UrlFetchApp.fetch(base+'/api/database',{headers:{'X-Metabase-Session':s},muteHttpExceptions:true});
+  var list=(JSON.parse(resp.getContentText()).data)||[]; var m=list.find(function(db){return (db.name||'').toLowerCase()===raw.toLowerCase();});
+  if(!m) throw new Error('DB not found. Available: '+list.map(function(d){return d.name;}).join(', ')); return m.id;
+}
+function mbRunSql_(s,db,sql){
+  var base=mbCfg_('METABASE_URL').replace(/\/$/,'');
+  var resp=UrlFetchApp.fetch(base+'/api/dataset',{method:'post',contentType:'application/json',headers:{'X-Metabase-Session':s},
+    payload:JSON.stringify({type:'native',native:{query:sql},database:db,constraints:{'max-results':1000000,'max-results-bare-rows':1000000}}),muteHttpExceptions:true});
+  var code=resp.getResponseCode(); if(code!==200&&code!==202) throw new Error('Query failed: '+code+' '+resp.getContentText().slice(0,500));
+  var body=JSON.parse(resp.getContentText()); if(body.status==='failed'||body.error) throw new Error('Metabase error: '+(body.error||'').slice(0,300));
+  var d=body.data||{}; return {cols:(d.cols||[]).map(function(c){return c.name||c.display_name;}), rows:d.rows||[]};
+}
+// detect the real clusters column names
+function mbClusterCols_(s,db){
+  var r=mbRunSql_(s,db,"SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='clusters'");
+  var names=r.rows.map(function(x){return String(x[0]);});
+  var find=function(cands){ for(var i=0;i<cands.length;i++){ var e=names.filter(function(n){return n.toLowerCase()===cands[i];})[0]; if(e) return e; } for(var j=0;j<cands.length;j++){ var c=names.filter(function(n){return n.toLowerCase().indexOf(cands[j])>=0;})[0]; if(c) return c; } return null; };
+  return { pk:find(['primary_keyword','keyword']), topic:find(['topic']), sec:find(['secondary_keywords','secondary']),
+    pt:find(['page_type','type']), vol:find(['volume','search_volume','msv']), ps:find(['page_status','status']), url:find(['published_url','url']) };
+}
+// STEP 1 — verify schema + what status values exist (run this first)
+function mbDiagnose(){
+  var ui=SpreadsheetApp.getUi();
+  try{
+    var s=mbLogin_(), db=mbDbId_(s);
+    var colsRes=mbRunSql_(s,db,"SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='clusters' ORDER BY ordinal_position");
+    var stat=mbRunSql_(s,db,"SELECT page_status::text AS page_status, COUNT(*) AS n FROM public.clusters GROUP BY page_status ORDER BY n DESC");
+    var sh=ss().getSheetByName('_Metabase Diag')||ss().insertSheet('_Metabase Diag'); sh.clear();
+    sh.getRange(1,1).setValue('clusters columns').setFontWeight('bold');
+    if(colsRes.rows.length) sh.getRange(2,1,colsRes.rows.length,2).setValues(colsRes.rows);
+    var off=colsRes.rows.length+3; sh.getRange(off,1).setValue('page_status values (count)').setFontWeight('bold');
+    if(stat.rows.length) sh.getRange(off+1,1,stat.rows.length,2).setValues(stat.rows);
+    ss().setActiveSheet(sh);
+    ui.alert('Connected ✅ — see the "_Metabase Diag" tab: the clusters columns and the actual page_status values. Tell me which value = your "status 0" (I see it stored as text), and I\'ll lock the filter.');
+  }catch(e){ ui.alert('Metabase: '+e.message); }
+}
+function act3(){ return mbDiagnose(); }
+// STEP 2 — fetch published URLs per client, chunked by cursor
+function mbFetchPublished(){
+  var ui=SpreadsheetApp.getUi(), props=PropertiesService.getScriptProperties();
+  var kb=ss().getSheetByName('Client Knowledge Bases');
+  if(!kb || kb.getLastRow()<2){ ui.alert('No "Client Knowledge Bases" tab with rows.'); return; }
+  var kv=kb.getDataRange().getValues(), head=kv[0].map(function(h){return String(h).toLowerCase();});
+  var hFind=function(sub){ for(var i=0;i<head.length;i++){ if(head[i].indexOf(sub)>=0) return i; } return -1; };
+  var ci={cl:hFind('client'), prod:hFind('product'), serv:hFind('service')}; if(ci.cl<0) ci.cl=0;
+  var clients=[]; for(var i=1;i<kv.length;i++){ var dn=mbNormDomain_(kv[i][ci.cl]); if(!dn) continue;
+    var names=[]; [ci.prod,ci.serv].forEach(function(c){ if(c>=0) String(kv[i][c]||'').split(/[,\n;]+/).forEach(function(x){ x=x.trim(); if(x) names.push(x); }); });
+    clients.push({client:dn, names:names}); }
+  if(!clients.length){ ui.alert('No client domains found in "Client Knowledge Bases".'); return; }
+  var cursor=Number(props.getProperty('MB_CURSOR')||0), batch=Number(props.getProperty('MB_BATCH')||5);
+  if(cursor>=clients.length){ props.deleteProperty('MB_CURSOR'); ui.alert('All '+clients.length+' clients already done. To re-run, clear the "Published URLs" tab and run again.'); return; }
+  var statusSql=props.getProperty('MB_STATUS_SQL') || "c.published_url IS NOT NULL AND c.published_url <> ''";   // default: published pages; set MB_STATUS_SQL after diagnostic
+  var relevance=(props.getProperty('MB_RELEVANCE')||'match').toLowerCase();
+  try{
+    var s=mbLogin_(), db=mbDbId_(s), C=mbClusterCols_(s,db);
+    var col=function(x,alias){ return (x?'c.'+x:'NULL')+' AS "'+alias+'"'; };
+    var sel=['p.root_domain AS "client"',col(C.pk,'primaryKeyword'),col(C.topic,'topic'),col(C.sec,'secondaryKeywords'),col(C.pt,'pageType'),col(C.vol,'volume'),col(C.ps,'pageStatus'),col(C.url,'publishedUrl')].join(', ');
+    var out=ss().getSheetByName('Published URLs')||ss().insertSheet('Published URLs');
+    if(out.getLastRow()===0) out.getRange(1,1,1,8).setValues([['client','primaryKeyword','topic','secondaryKeywords','pageType','volume','pageStatus','publishedUrl']]).setFontWeight('bold');
+    var end=Math.min(cursor+batch, clients.length), wrote=0, hitClients=0;
+    for(var k=cursor;k<end;k++){ var cl=clients[k];
+      var sql='SELECT '+sel+' FROM public.clusters c JOIN public.projects p ON p.id=c.p_id'
+        +" WHERE LOWER(p.root_domain)='"+mbEsc_(cl.client)+"' AND ("+statusSql+')'
+        +(C.vol?(' ORDER BY c.'+C.vol+' DESC NULLS LAST'):'');
+      var r; try{ r=mbRunSql_(s,db,sql); }catch(e){ continue; }
+      if(r.rows.length) hitClients++;
+      var rowsOut=[];
+      r.rows.forEach(function(row){
+        var pk=row[1], topic=row[2];
+        if(relevance==='match' && cl.names.length){ var blob=(String(pk||'')+' '+String(topic||'')).toLowerCase();
+          if(!cl.names.some(function(nm){ nm=nm.toLowerCase().trim(); return nm && blob.indexOf(nm)>=0; })) return; }
+        rowsOut.push(row);
+      });
+      if(rowsOut.length){ out.getRange(out.getLastRow()+1,1,rowsOut.length,8).setValues(rowsOut); wrote+=rowsOut.length; }
+    }
+    props.setProperty('MB_CURSOR', String(end));
+    ui.alert('Clients '+(cursor+1)+'–'+end+' of '+clients.length+' ('+hitClients+' had matches). Wrote '+wrote+' rows to "Published URLs".\n\n'+(end<clients.length?'Run "Fetch published URLs" again for the next batch.':'Done — all clients processed.'));
+  }catch(e){ ui.alert('Metabase: '+e.message); }
+}
+function act4(){ return mbFetchPublished(); }
 
 function setApiKeys(){
   var ui=SpreadsheetApp.getUi(), props=PropertiesService.getScriptProperties();
