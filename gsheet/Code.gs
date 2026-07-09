@@ -383,19 +383,16 @@ function mbEnsureAccounts_(){
   sh.setColumnWidth(1,240); sh.setColumnWidth(2,340); sh.setColumnWidth(3,340); sh.setFrozenRows(1);
   return sh;
 }
-// accounts to audit: the "Accounts" tab if it has rows, else "Client Knowledge Bases"
+// accounts to audit — ALWAYS the "Accounts" tab (single, unambiguous feed)
 function mbAccounts_(){
-  var names=['Accounts','Client Knowledge Bases'];
-  for(var oi=0;oi<names.length;oi++){ var sh=ss().getSheetByName(names[oi]); if(!sh||sh.getLastRow()<2) continue;
-    var v=sh.getDataRange().getValues(), head=v[0].map(function(h){return String(h).toLowerCase();});
-    var hf=function(sub){ for(var i=0;i<head.length;i++){ if(head[i].indexOf(sub)>=0) return i; } return -1; };
-    var dc=hf('domain'); if(dc<0)dc=hf('client'); if(dc<0)dc=0; var pc=hf('product'), sc=hf('service');
-    var out=[]; for(var i=1;i<v.length;i++){ var d=mbNormDomain_(v[i][dc]); if(!d || d==='example.com') continue;
-      var nm=[]; [pc,sc].forEach(function(c){ if(c>=0) String(v[i][c]||'').split(/[,\n;]+/).forEach(function(x){x=x.trim(); if(x)nm.push(x);}); });
-      out.push({domain:d, names:nm}); }
-    if(out.length) return out;
-  }
-  return [];
+  var sh=ss().getSheetByName('Accounts'); if(!sh||sh.getLastRow()<2) return [];
+  var v=sh.getDataRange().getValues(), head=v[0].map(function(h){return String(h).toLowerCase();});
+  var hf=function(sub){ for(var i=0;i<head.length;i++){ if(head[i].indexOf(sub)>=0) return i; } return -1; };
+  var dc=hf('domain'); if(dc<0)dc=hf('client'); if(dc<0)dc=0; var pc=hf('product'), sc=hf('service');
+  var out=[]; for(var i=1;i<v.length;i++){ var d=mbNormDomain_(v[i][dc]); if(!d || d==='example.com') continue;
+    var nm=[]; [pc,sc].forEach(function(c){ if(c>=0) String(v[i][c]||'').split(/[,\n;]+/).forEach(function(x){x=x.trim(); if(x)nm.push(x);}); });
+    out.push({domain:d, names:nm}); }
+  return out;
 }
 function mbAuditCfg_(names){ return { offering:'Both', website:'', services:names||[], products:[], industries:[], targetProfessions:[], competitors:[], locations:[], negatives:[], geoMode:'all', serpGl:'us',
   rules:{zero:false,free:true,nearme:false,competitor:false,location:false,info:false,jobs:true,format:true,org:true,lowrel:false}, lowRel:1 }; }
