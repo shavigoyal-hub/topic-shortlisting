@@ -306,8 +306,9 @@ function mbClusterCols_(s,db){
   var r=mbRunSql_(s,db,"SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='clusters'");
   var names=r.rows.map(function(x){return String(x[0]);});
   var find=function(cands){ for(var i=0;i<cands.length;i++){ var e=names.filter(function(n){return n.toLowerCase()===cands[i];})[0]; if(e) return e; } for(var j=0;j<cands.length;j++){ var c=names.filter(function(n){return n.toLowerCase().indexOf(cands[j])>=0;})[0]; if(c) return c; } return null; };
-  return { pk:find(['primary_keyword','keyword']), topic:find(['topic']), sec:find(['secondary_keywords','secondary']),
-    pt:find(['page_type','type']), vol:find(['volume','search_volume','msv']), ps:find(['page_status','status']), url:find(['published_url','url']) };
+  return { pk:find(['primary_kw','primary_keyword','keyword']), topic:find(['topic']), sec:find(['secondary_keywords','secondary_kw','secondary']),
+    pt:find(['page_type','type']), vol:find(['volume','search_volume','msv']), ps:find(['page_status','status']),
+    url:find(['published_url','page_url','url']), slug:find(['slug']) };
 }
 // STEP 1 — verify schema + what status values exist (run this first)
 function mbDiagnose(){
@@ -340,12 +341,13 @@ function mbFetchPublished(){
   if(!clients.length){ ui.alert('No client domains found in "Client Knowledge Bases".'); return; }
   var cursor=Number(props.getProperty('MB_CURSOR')||0), batch=Number(props.getProperty('MB_BATCH')||5);
   if(cursor>=clients.length){ props.deleteProperty('MB_CURSOR'); ui.alert('All '+clients.length+' clients already done. To re-run, clear the "Published URLs" tab and run again.'); return; }
-  var statusSql=props.getProperty('MB_STATUS_SQL') || "c.published_url IS NOT NULL AND c.published_url <> ''";   // default: published pages; set MB_STATUS_SQL after diagnostic
+  var statusSql=props.getProperty('MB_STATUS_SQL') || "c.page_status = 'PUBLISHED'";   // no numeric 0 exists; published pages = page_status 'PUBLISHED'
   var relevance=(props.getProperty('MB_RELEVANCE')||'match').toLowerCase();
   try{
     var s=mbLogin_(), db=mbDbId_(s), C=mbClusterCols_(s,db);
     var col=function(x,alias){ return (x?'c.'+x:'NULL')+' AS "'+alias+'"'; };
-    var sel=['p.root_domain AS "client"',col(C.pk,'primaryKeyword'),col(C.topic,'topic'),col(C.sec,'secondaryKeywords'),col(C.pt,'pageType'),col(C.vol,'volume'),col(C.ps,'pageStatus'),col(C.url,'publishedUrl')].join(', ');
+    var urlExpr = C.url ? ('c.'+C.url) : (C.slug ? "('https://' || p.root_domain || '/' || COALESCE(c."+C.slug+",''))" : 'NULL');   // no published_url column → build from slug
+    var sel=['p.root_domain AS "client"',col(C.pk,'primaryKeyword'),col(C.topic,'topic'),col(C.sec,'secondaryKeywords'),col(C.pt,'pageType'),col(C.vol,'volume'),col(C.ps,'pageStatus'),urlExpr+' AS "publishedUrl"'].join(', ');
     var out=ss().getSheetByName('Published URLs')||ss().insertSheet('Published URLs');
     if(out.getLastRow()===0) out.getRange(1,1,1,8).setValues([['client','primaryKeyword','topic','secondaryKeywords','pageType','volume','pageStatus','publishedUrl']]).setFontWeight('bold');
     var end=Math.min(cursor+batch, clients.length), wrote=0, hitClients=0;
