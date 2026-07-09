@@ -84,6 +84,7 @@ function buildMenu(ui){
     .addSeparator()
     .addItem('Metabase: check schema & status (run first)', 'act3')
     .addItem('Metabase: fetch published URLs (next batch)', 'act4')
+    .addItem('Metabase: audit published → rejects (per account)', 'act5')
     .addSeparator()
     .addItem('Clear & start over', 'clearCache');
   if(typeof forceUpdate==='function') menu.addItem('Update to latest version', 'forceUpdate');
@@ -371,6 +372,57 @@ function mbFetchPublished(){
   }catch(e){ ui.alert('Metabase: '+e.message); }
 }
 function act4(){ return mbFetchPublished(); }
+
+// accounts to audit: an "Accounts" tab if present, else "Client Knowledge Bases" (domain + product/service names)
+function mbAccounts_(){
+  var sh=ss().getSheetByName('Accounts')||ss().getSheetByName('Client Knowledge Bases'); if(!sh||sh.getLastRow()<2) return [];
+  var v=sh.getDataRange().getValues(), head=v[0].map(function(h){return String(h).toLowerCase();});
+  var hf=function(sub){ for(var i=0;i<head.length;i++){ if(head[i].indexOf(sub)>=0) return i; } return -1; };
+  var dc=hf('domain'); if(dc<0)dc=hf('client'); if(dc<0)dc=0; var pc=hf('product'), sc=hf('service');
+  var out=[]; for(var i=1;i<v.length;i++){ var d=mbNormDomain_(v[i][dc]); if(!d) continue;
+    var names=[]; [pc,sc].forEach(function(c){ if(c>=0) String(v[i][c]||'').split(/[,\n;]+/).forEach(function(x){x=x.trim(); if(x)names.push(x);}); });
+    out.push({domain:d, names:names}); }
+  return out;
+}
+function mbAuditCfg_(names){ return { offering:'Both', website:'', services:names||[], products:[], industries:[], targetProfessions:[], competitors:[], locations:[], negatives:[], geoMode:'all', serpGl:'us',
+  rules:{zero:false,free:true,nearme:false,competitor:false,location:false,info:false,jobs:true,format:true,org:true,lowrel:false}, lowRel:1 }; }
+// STEP 3 — per account: pull PUBLISHED pages, run the shortlisting logic (rules + AI, NO SERP), output only the REJECTED (status 0) rows
+function mbAuditPublished(){
+  var ui=SpreadsheetApp.getUi(), props=PropertiesService.getScriptProperties();
+  var accounts=mbAccounts_(); if(!accounts.length){ ui.alert('Add accounts (domain + product/service) to an "Accounts" or "Client Knowledge Bases" tab.'); return; }
+  if(!prop('OPENAI_API_KEY')){ ui.alert('Set OPENAI_API_KEY first.'); return; }
+  var cursor=Number(props.getProperty('MB2_CURSOR')||0), pageOff=Number(props.getProperty('MB2_PAGE')||0);
+  if(cursor>=accounts.length){ props.deleteProperty('MB2_CURSOR'); props.deleteProperty('MB2_PAGE'); ui.alert('All '+accounts.length+' accounts audited. To re-run, clear "Published – Rejected" and run again.'); return; }
+  var acc=accounts[cursor];
+  try{
+    var s=mbLogin_(), db=mbDbId_(s), C=mbClusterCols_(s,db);
+    var urlExpr=C.url?('c.'+C.url):(C.slug?"('https://' || p.root_domain || '/' || COALESCE(c."+C.slug+",''))":'NULL');
+    var sql='SELECT '+(C.pk?'c.'+C.pk:'NULL')+' AS kw, '+(C.topic?'c.'+C.topic:'NULL')+' AS topic, '+(C.pt?'c.'+C.pt:'NULL')+' AS pt, '+(C.vol?'c.'+C.vol:'NULL')+' AS vol, '+urlExpr+' AS url'
+      +" FROM public.clusters c JOIN public.projects p ON p.id=c.p_id WHERE LOWER(p.root_domain)='"+mbEsc_(acc.domain)+"' AND c.page_status='PUBLISHED'"+(C.vol?' ORDER BY c.'+C.vol+' DESC NULLS LAST':'');
+    var rows=mbRunSql_(s,db,sql).rows, cfg=mbAuditCfg_(acc.names);
+    var out=ss().getSheetByName('Published – Rejected')||ss().insertSheet('Published – Rejected');
+    if(out.getLastRow()===0) out.getRange(1,1,1,9).setValues([['client','primaryKeyword','topic','pageType','volume','publishedUrl','reason','reasonExplained','confidence']]).setFontWeight('bold');
+    var start=Date.now(), i=pageOff, outRows=[];
+    while(i<rows.length && Date.now()-start<FG_BUDGET_MS){
+      var slice=rows.slice(i,i+AI_BATCH);
+      var items=slice.map(function(row,idx){ return {id:String(idx), kw:row[0], titles:[String(row[1]||'')]}; });   // topic as context, no SERP
+      var res; try{ res=classifyBatch(items, cfg); }catch(e){ res={}; }
+      slice.forEach(function(row,idx){ var o=res[String(idx)]||{};
+        var hit=evalRules({kw:row[0],topic:row[1],sec:'',vol:row[3],rel:'',pageType:row[2],domains:[]}, cfg);
+        var reason='', rexp='';
+        if(hit){ reason=hit.reason; rexp=hit.reason; }
+        else if(o.keep===false){ reason=o.reason||'Off-ICP audience'; rexp=o.explain||''; }
+        if(reason) outRows.push([acc.domain, row[0], row[1], row[2], row[3], row[4], reason, rexp, o.conf||'']);
+      });
+      i+=slice.length;
+    }
+    if(outRows.length) out.getRange(out.getLastRow()+1,1,outRows.length,9).setValues(outRows);
+    var done=i>=rows.length;
+    if(done){ props.setProperty('MB2_CURSOR', String(cursor+1)); props.deleteProperty('MB2_PAGE'); } else { props.setProperty('MB2_PAGE', String(i)); }
+    ui.alert('Account '+(cursor+1)+'/'+accounts.length+' — '+acc.domain+'\nAudited '+(i-pageOff)+' of '+rows.length+' published pages, wrote '+outRows.length+' REJECTED rows.\n\n'+(done?(cursor+1<accounts.length?'Run again for the NEXT account.':'All accounts done.'):'This account has more — run again to continue it.'));
+  }catch(e){ ui.alert('Metabase: '+e.message); }
+}
+function act5(){ return mbAuditPublished(); }
 
 function setApiKeys(){
   var ui=SpreadsheetApp.getUi(), props=PropertiesService.getScriptProperties();
