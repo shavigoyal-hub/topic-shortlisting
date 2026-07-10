@@ -375,18 +375,30 @@ function act4(){ return mbFetchPublished(); }
 
 // matching key: reduce a domain OR a client name to a comparable core (e.g. "https://www.SeizSigns.com/x" and "Seiz Signs" -> "seizsigns")
 function mbCore_(s){ return String(s||'').toLowerCase().replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0].split('.')[0].replace(/[^a-z0-9]/g,''); }
-// build a lookup from "Client Knowledge Bases": core(domain or client name) -> [product/service names]
+// find the "Client Knowledge Bases" tab (exact, else any tab whose name contains "knowledge")
+function mbKbSheet_(){
+  var exact=ss().getSheetByName('Client Knowledge Bases'); if(exact) return exact;
+  var all=ss().getSheets(); for(var i=0;i<all.length;i++){ if(String(all[i].getName()).toLowerCase().indexOf('knowledge')>=0) return all[i]; }
+  return null;
+}
+// build a lookup from the KB tab: core(domain OR client name) -> [product/service/offering names]
 function mbKbLookup_(){
-  var map={}, sh=ss().getSheetByName('Client Knowledge Bases'); if(!sh||sh.getLastRow()<2) return map;
+  var map={}, sh=mbKbSheet_(); if(!sh||sh.getLastRow()<2) return map;
   var v=sh.getDataRange().getValues(), head=v[0].map(function(h){return String(h).toLowerCase();});
-  var hf=function(sub){ for(var i=0;i<head.length;i++){ if(head[i].indexOf(sub)>=0) return i; } return -1; };
-  var dc=hf('domain'), cc=hf('client'), pc=hf('product'), sc=hf('service');
+  var hf=function(){ var subs=arguments; for(var i=0;i<head.length;i++){ for(var j=0;j<subs.length;j++){ if(head[i].indexOf(subs[j])>=0) return i; } } return -1; };
+  var kd=hf('website','url','domain'), kc=hf('client','company','account','brand'), pc=hf('product'), sc=hf('service'), oc=hf('offering','what they do','description');
   for(var i=1;i<v.length;i++){
-    var nm=[]; [pc,sc].forEach(function(c){ if(c>=0) String(v[i][c]||'').split(/[,\n;]+/).forEach(function(x){x=x.trim(); if(x)nm.push(x);}); });
+    var nm=[]; [pc,sc,oc].forEach(function(c){ if(c>=0) String(v[i][c]||'').split(/[,\n;\/]+/).forEach(function(x){x=x.trim(); if(x)nm.push(x);}); });
     if(!nm.length) continue;
-    [dc,cc].forEach(function(c){ if(c>=0){ var k=mbCore_(v[i][c]); if(k) map[k]=nm; } });
+    [kd,kc].forEach(function(c){ if(c>=0){ var k=mbCore_(v[i][c]); if(k) map[k]=nm; } });
   }
   return map;
+}
+// match an account's domain-core against the KB (exact core, else fuzzy contains, min 5 chars)
+function mbBestKb_(core, kb){
+  if(!core) return []; if(kb[core]) return kb[core];
+  var keys=Object.keys(kb); for(var i=0;i<keys.length;i++){ var k=keys[i]; if(k.length>=5 && core.length>=5 && (k.indexOf(core)>=0 || core.indexOf(k)>=0)) return kb[k]; }
+  return [];
 }
 // create the "Accounts" input tab — just a Domain list; products/services come from Client Knowledge Bases
 function mbEnsureAccounts_(){
@@ -406,7 +418,7 @@ function mbAccounts_(){
   var kb=mbKbLookup_(), out=[];
   for(var i=1;i<v.length;i++){ var raw=v[i][dc], d=mbNormDomain_(raw); if(!d || d==='example.com') continue;
     var own=[]; [pc,sc].forEach(function(c){ if(c>=0) String(v[i][c]||'').split(/[,\n;]+/).forEach(function(x){x=x.trim(); if(x)own.push(x);}); });
-    var kbnm=kb[mbCore_(raw)]||[];
+    var kbnm=mbBestKb_(mbCore_(raw), kb);
     out.push({domain:d, names:(own.length?own:kbnm), matched:(own.length?true:!!kbnm.length)}); }
   return out;
 }
@@ -418,36 +430,47 @@ function mbAuditPublished(){
   var accounts=mbAccounts_();
   if(!accounts.length){ var sh=mbEnsureAccounts_(); ss().setActiveSheet(sh); ui.alert('I set up the "Accounts" tab. Fill in one account per row — Domain, Products, Services — (delete the grey example), then run this again.'); return; }
   if(!prop('OPENAI_API_KEY')){ ui.alert('Set OPENAI_API_KEY first.'); return; }
+  var out=ss().getSheetByName('Published – Rejected')||ss().insertSheet('Published – Rejected');
+  if(out.getLastRow()===0) out.getRange(1,1,1,9).setValues([['client','primaryKeyword','topic','pageType','volume','publishedUrl','reason','reasonExplained','confidence']]).setFontWeight('bold');
+  // restart from the top whenever the account list changes, OR after a completed pass (a fresh click = run again)
+  var sig=accounts.length+'|'+accounts[0].domain+'|'+accounts[accounts.length-1].domain;
   var cursor=Number(props.getProperty('MB2_CURSOR')||0), pageOff=Number(props.getProperty('MB2_PAGE')||0);
-  if(cursor>=accounts.length){ props.deleteProperty('MB2_CURSOR'); props.deleteProperty('MB2_PAGE'); ui.alert('All '+accounts.length+' accounts audited. To re-run, clear "Published – Rejected" and run again.'); return; }
-  var acc=accounts[cursor];
+  if(props.getProperty('MB2_SIG')!==sig || cursor>=accounts.length){
+    props.setProperty('MB2_SIG',sig); cursor=0; pageOff=0; props.setProperty('MB2_CURSOR','0'); props.deleteProperty('MB2_PAGE');
+    if(out.getLastRow()>1) out.getRange(2,1,out.getLastRow()-1,9).clearContent();   // clear old results for a clean pass
+  }
+  var kbCount=Object.keys(mbKbLookup_()).length;
   try{
     var s=mbLogin_(), db=mbDbId_(s), C=mbClusterCols_(s,db);
     var urlExpr=C.url?('c.'+C.url):(C.slug?"('https://' || p.root_domain || '/' || COALESCE(c."+C.slug+",''))":'NULL');
-    var sql='SELECT '+(C.pk?'c.'+C.pk:'NULL')+' AS kw, '+(C.topic?'c.'+C.topic:'NULL')+' AS topic, '+(C.pt?'c.'+C.pt:'NULL')+' AS pt, '+(C.vol?'c.'+C.vol:'NULL')+' AS vol, '+urlExpr+' AS url'
-      +" FROM public.clusters c JOIN public.projects p ON p.id=c.p_id WHERE LOWER(p.root_domain)='"+mbEsc_(acc.domain)+"' AND c.page_status='PUBLISHED'"+(C.vol?' ORDER BY c.'+C.vol+' DESC NULLS LAST':'');
-    var rows=mbRunSql_(s,db,sql).rows, cfg=mbAuditCfg_(acc.names);
-    var out=ss().getSheetByName('Published – Rejected')||ss().insertSheet('Published – Rejected');
-    if(out.getLastRow()===0) out.getRange(1,1,1,9).setValues([['client','primaryKeyword','topic','pageType','volume','publishedUrl','reason','reasonExplained','confidence']]).setFontWeight('bold');
-    var start=Date.now(), i=pageOff, outRows=[];
-    while(i<rows.length && Date.now()-start<FG_BUDGET_MS){
-      var slice=rows.slice(i,i+AI_BATCH);
-      var items=slice.map(function(row,idx){ return {id:String(idx), kw:row[0], titles:[String(row[1]||'')]}; });   // topic as context, no SERP
-      var res; try{ res=classifyBatch(items, cfg); }catch(e){ res={}; }
-      slice.forEach(function(row,idx){ var o=res[String(idx)]||{};
-        var hit=evalRules({kw:row[0],topic:row[1],sec:'',vol:row[3],rel:'',pageType:row[2],domains:[]}, cfg);
-        var reason='', rexp='';
-        if(hit){ reason=hit.reason; rexp=hit.reason; }
-        else if(o.keep===false){ reason=o.reason||'Off-ICP audience'; rexp=o.explain||''; }
-        if(reason) outRows.push([acc.domain, row[0], row[1], row[2], row[3], row[4], reason, rexp, o.conf||'']);
-      });
-      i+=slice.length;
+    var start=Date.now(), summary=[], totalRej=0, timeUp=false;
+    while(cursor<accounts.length && !timeUp){
+      var acc=accounts[cursor];
+      var sql='SELECT '+(C.pk?'c.'+C.pk:'NULL')+' AS kw, '+(C.topic?'c.'+C.topic:'NULL')+' AS topic, '+(C.pt?'c.'+C.pt:'NULL')+' AS pt, '+(C.vol?'c.'+C.vol:'NULL')+' AS vol, '+urlExpr+' AS url'
+        +" FROM public.clusters c JOIN public.projects p ON p.id=c.p_id WHERE LOWER(p.root_domain)='"+mbEsc_(acc.domain)+"' AND c.page_status='PUBLISHED'"+(C.vol?' ORDER BY c.'+C.vol+' DESC NULLS LAST':'');
+      var rows=mbRunSql_(s,db,sql).rows, cfg=mbAuditCfg_(acc.names), i=pageOff, outRows=[];
+      while(i<rows.length){
+        if(Date.now()-start>=FG_BUDGET_MS){ timeUp=true; break; }
+        var slice=rows.slice(i,i+AI_BATCH);
+        var items=slice.map(function(row,idx){ return {id:String(idx), kw:row[0], titles:[String(row[1]||'')]}; });   // topic as context, no SERP
+        var res; try{ res=classifyBatch(items, cfg); }catch(e){ res={}; }
+        slice.forEach(function(row,idx){ var o=res[String(idx)]||{};
+          var hit=evalRules({kw:row[0],topic:row[1],sec:'',vol:row[3],rel:'',pageType:row[2],domains:[]}, cfg);
+          var reason='', rexp='';
+          if(hit){ reason=hit.reason; rexp=hit.reason; }
+          else if(o.keep===false){ reason=o.reason||'Off-ICP audience'; rexp=o.explain||''; }
+          if(reason) outRows.push([acc.domain, row[0], row[1], row[2], row[3], row[4], reason, rexp, o.conf||'']);
+        });
+        i+=slice.length;
+      }
+      if(outRows.length){ out.getRange(out.getLastRow()+1,1,outRows.length,9).setValues(outRows); totalRej+=outRows.length; }
+      var done=i>=rows.length;
+      summary.push('• '+acc.domain+' — '+rows.length+' pages, '+outRows.length+' rejected  '+(acc.names.length?'['+acc.names.slice(0,4).join(', ')+']':'[⚠ NO KB match]')+(done?'':' (paused)'));
+      if(done){ cursor++; pageOff=0; } else { pageOff=i; break; }
     }
-    if(outRows.length) out.getRange(out.getLastRow()+1,1,outRows.length,9).setValues(outRows);
-    var done=i>=rows.length;
-    if(done){ props.setProperty('MB2_CURSOR', String(cursor+1)); props.deleteProperty('MB2_PAGE'); } else { props.setProperty('MB2_PAGE', String(i)); }
-    var offer=acc.names.length? acc.names.join(', ') : '(none found in Client Knowledge Bases — match by domain failed, so only rule-based rejects apply)';
-    ui.alert('Account '+(cursor+1)+'/'+accounts.length+' — '+acc.domain+'\nOffering (from Client Knowledge Bases): '+offer+'\n\nAudited '+(i-pageOff)+' of '+rows.length+' published pages, wrote '+outRows.length+' REJECTED rows.\n\n'+(done?(cursor+1<accounts.length?'Run again for the NEXT account.':'All accounts done.'):'This account has more — run again to continue it.'));
+    props.setProperty('MB2_CURSOR', String(cursor)); props.setProperty('MB2_PAGE', String(pageOff));
+    var allDone=cursor>=accounts.length;
+    ui.alert('KB entries loaded: '+kbCount+'   |   audited '+summary.length+' account(s) this run, '+totalRej+' rejected rows.\n\n'+summary.join('\n')+'\n\n'+(allDone?'✅ All '+accounts.length+' accounts done.':'▶ Run again to continue ('+cursor+'/'+accounts.length+' done).'));
   }catch(e){ ui.alert('Metabase: '+e.message); }
 }
 function act5(){ return mbAuditPublished(); }
