@@ -373,25 +373,41 @@ function mbFetchPublished(){
 }
 function act4(){ return mbFetchPublished(); }
 
-// create the "Accounts" input tab (Domain | Products | Services) if it doesn't exist yet
+// matching key: reduce a domain OR a client name to a comparable core (e.g. "https://www.SeizSigns.com/x" and "Seiz Signs" -> "seizsigns")
+function mbCore_(s){ return String(s||'').toLowerCase().replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0].split('.')[0].replace(/[^a-z0-9]/g,''); }
+// build a lookup from "Client Knowledge Bases": core(domain or client name) -> [product/service names]
+function mbKbLookup_(){
+  var map={}, sh=ss().getSheetByName('Client Knowledge Bases'); if(!sh||sh.getLastRow()<2) return map;
+  var v=sh.getDataRange().getValues(), head=v[0].map(function(h){return String(h).toLowerCase();});
+  var hf=function(sub){ for(var i=0;i<head.length;i++){ if(head[i].indexOf(sub)>=0) return i; } return -1; };
+  var dc=hf('domain'), cc=hf('client'), pc=hf('product'), sc=hf('service');
+  for(var i=1;i<v.length;i++){
+    var nm=[]; [pc,sc].forEach(function(c){ if(c>=0) String(v[i][c]||'').split(/[,\n;]+/).forEach(function(x){x=x.trim(); if(x)nm.push(x);}); });
+    if(!nm.length) continue;
+    [dc,cc].forEach(function(c){ if(c>=0){ var k=mbCore_(v[i][c]); if(k) map[k]=nm; } });
+  }
+  return map;
+}
+// create the "Accounts" input tab — just a Domain list; products/services come from Client Knowledge Bases
 function mbEnsureAccounts_(){
   var sh=ss().getSheetByName('Accounts'); if(sh) return sh;
   sh=ss().insertSheet('Accounts');
-  sh.getRange(1,1,1,3).setValues([['Domain','Products','Services']]).setFontWeight('bold').setBackground('#e8eefc');
-  sh.getRange(2,1,2,3).setValues([['example.com','product one, product two','service one, service two'],['','','']]);
-  sh.getRange(2,1,1,3).setFontColor('#999').setFontStyle('italic');   // example row (grey) — delete it and add your accounts
-  sh.setColumnWidth(1,240); sh.setColumnWidth(2,340); sh.setColumnWidth(3,340); sh.setFrozenRows(1);
+  sh.getRange(1,1,1,2).setValues([['Domain','Products / Services (auto-filled from Client Knowledge Bases — leave blank)']]).setFontWeight('bold').setBackground('#e8eefc');
+  sh.getRange(2,1).setValue('example.com').setFontColor('#999').setFontStyle('italic');   // delete this example, then paste the domains you want to run
+  sh.setColumnWidth(1,260); sh.setColumnWidth(2,460); sh.setFrozenRows(1);
   return sh;
 }
-// accounts to audit — ALWAYS the "Accounts" tab (single, unambiguous feed)
+// accounts to audit — the "Accounts" tab is just a domain list; product/service pulled from Client Knowledge Bases per domain
 function mbAccounts_(){
   var sh=ss().getSheetByName('Accounts'); if(!sh||sh.getLastRow()<2) return [];
   var v=sh.getDataRange().getValues(), head=v[0].map(function(h){return String(h).toLowerCase();});
   var hf=function(sub){ for(var i=0;i<head.length;i++){ if(head[i].indexOf(sub)>=0) return i; } return -1; };
   var dc=hf('domain'); if(dc<0)dc=hf('client'); if(dc<0)dc=0; var pc=hf('product'), sc=hf('service');
-  var out=[]; for(var i=1;i<v.length;i++){ var d=mbNormDomain_(v[i][dc]); if(!d || d==='example.com') continue;
-    var nm=[]; [pc,sc].forEach(function(c){ if(c>=0) String(v[i][c]||'').split(/[,\n;]+/).forEach(function(x){x=x.trim(); if(x)nm.push(x);}); });
-    out.push({domain:d, names:nm}); }
+  var kb=mbKbLookup_(), out=[];
+  for(var i=1;i<v.length;i++){ var raw=v[i][dc], d=mbNormDomain_(raw); if(!d || d==='example.com') continue;
+    var own=[]; [pc,sc].forEach(function(c){ if(c>=0) String(v[i][c]||'').split(/[,\n;]+/).forEach(function(x){x=x.trim(); if(x)own.push(x);}); });
+    var kbnm=kb[mbCore_(raw)]||[];
+    out.push({domain:d, names:(own.length?own:kbnm), matched:(own.length?true:!!kbnm.length)}); }
   return out;
 }
 function mbAuditCfg_(names){ return { offering:'Both', website:'', services:names||[], products:[], industries:[], targetProfessions:[], competitors:[], locations:[], negatives:[], geoMode:'all', serpGl:'us',
@@ -430,7 +446,8 @@ function mbAuditPublished(){
     if(outRows.length) out.getRange(out.getLastRow()+1,1,outRows.length,9).setValues(outRows);
     var done=i>=rows.length;
     if(done){ props.setProperty('MB2_CURSOR', String(cursor+1)); props.deleteProperty('MB2_PAGE'); } else { props.setProperty('MB2_PAGE', String(i)); }
-    ui.alert('Account '+(cursor+1)+'/'+accounts.length+' — '+acc.domain+'\nAudited '+(i-pageOff)+' of '+rows.length+' published pages, wrote '+outRows.length+' REJECTED rows.\n\n'+(done?(cursor+1<accounts.length?'Run again for the NEXT account.':'All accounts done.'):'This account has more — run again to continue it.'));
+    var offer=acc.names.length? acc.names.join(', ') : '(none found in Client Knowledge Bases — match by domain failed, so only rule-based rejects apply)';
+    ui.alert('Account '+(cursor+1)+'/'+accounts.length+' — '+acc.domain+'\nOffering (from Client Knowledge Bases): '+offer+'\n\nAudited '+(i-pageOff)+' of '+rows.length+' published pages, wrote '+outRows.length+' REJECTED rows.\n\n'+(done?(cursor+1<accounts.length?'Run again for the NEXT account.':'All accounts done.'):'This account has more — run again to continue it.'));
   }catch(e){ ui.alert('Metabase: '+e.message); }
 }
 function act5(){ return mbAuditPublished(); }
