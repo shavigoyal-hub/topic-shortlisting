@@ -73,6 +73,7 @@ function statNorm(v){ return statSel(v)?'1':(statRej(v)?'0':''); }   // canonica
 // The bootstrap delegates to this, so the menu auto-updates with the code (no re-paste for menu changes).
 function buildMenu(ui){
   ui = ui || SpreadsheetApp.getUi();
+  // FLOW 1 — shortlist topics from an AKR
   var menu=ui.createMenu('Topic Tool')
     .addItem('1. Set / edit client info', 'showSetup')
     .addItem('2. Run Service / Product', 'runEverything')
@@ -82,14 +83,22 @@ function buildMenu(ui){
     .addItem('Re-classify (reuse saved rankings — no fetch)', 'act2')
     .addItem('Self-review my selected', 'selfReview')
     .addSeparator()
-    .addItem('Metabase: check schema & status (run first)', 'act3')
-    .addItem('Metabase: fetch published URLs (next batch)', 'act4')
-    .addItem('Metabase: audit published → rejects (per account)', 'act5')
-    .addSeparator()
     .addItem('Clear & start over', 'clearCache');
   if(typeof forceUpdate==='function') menu.addItem('Update to latest version', 'forceUpdate');
   menu.addToUi();
+  // FLOW 2 — bulk-audit many accounts' PUBLISHED pages from Metabase
+  var mb=ui.createMenu('Bulk Account Audit')
+    .addItem('1. Edit accounts (domains to run)', 'act6')
+    .addItem('2. Audit published → rejects (run / continue)', 'act5')
+    .addSeparator()
+    .addItem('Check Metabase schema & status', 'act3')
+    .addItem('Fetch published URLs only (no audit)', 'act4');
+  if(typeof forceUpdate==='function') mb.addItem('Update to latest version', 'forceUpdate');
+  mb.addToUi();
 }
+// open (creating if needed) the Accounts input tab
+function mbOpenAccounts(){ var sh=mbEnsureAccounts_(); ss().setActiveSheet(sh); }
+function act6(){ return mbOpenAccounts(); }
 function onOpen(){
   try{ ensureAllSheets(); }catch(e){}
   buildMenu();
@@ -409,17 +418,16 @@ function mbEnsureAccounts_(){
   sh.setColumnWidth(1,260); sh.setColumnWidth(2,460); sh.setFrozenRows(1);
   return sh;
 }
-// accounts to audit — the "Accounts" tab is just a domain list; product/service pulled from Client Knowledge Bases per domain
+// accounts to audit — the "Accounts" tab is just a domain list; product/service ALWAYS pulled from Client Knowledge Bases per domain
 function mbAccounts_(){
   var sh=ss().getSheetByName('Accounts'); if(!sh||sh.getLastRow()<2) return [];
   var v=sh.getDataRange().getValues(), head=v[0].map(function(h){return String(h).toLowerCase();});
   var hf=function(sub){ for(var i=0;i<head.length;i++){ if(head[i].indexOf(sub)>=0) return i; } return -1; };
-  var dc=hf('domain'); if(dc<0)dc=hf('client'); if(dc<0)dc=0; var pc=hf('product'), sc=hf('service');
+  var dc=hf('domain'); if(dc<0)dc=hf('client'); if(dc<0)dc=0;
   var kb=mbKbLookup_(), out=[];
   for(var i=1;i<v.length;i++){ var raw=v[i][dc], d=mbNormDomain_(raw); if(!d || d==='example.com') continue;
-    var own=[]; [pc,sc].forEach(function(c){ if(c>=0) String(v[i][c]||'').split(/[,\n;]+/).forEach(function(x){x=x.trim(); if(x)own.push(x);}); });
     var kbnm=mbBestKb_(mbCore_(raw), kb);
-    out.push({domain:d, names:(own.length?own:kbnm), matched:(own.length?true:!!kbnm.length)}); }
+    out.push({domain:d, names:kbnm, matched:!!kbnm.length}); }   // offering always from the KB
   return out;
 }
 function mbAuditCfg_(names){ return { offering:'Both', website:'', services:names||[], products:[], industries:[], targetProfessions:[], competitors:[], locations:[], negatives:[], geoMode:'all', serpGl:'us',
@@ -430,14 +438,15 @@ function mbAuditPublished(){
   var accounts=mbAccounts_();
   if(!accounts.length){ var sh=mbEnsureAccounts_(); ss().setActiveSheet(sh); ui.alert('I set up the "Accounts" tab. Fill in one account per row — Domain, Products, Services — (delete the grey example), then run this again.'); return; }
   if(!prop('OPENAI_API_KEY')){ ui.alert('Set OPENAI_API_KEY first.'); return; }
+  var HDR=['client','primaryKeyword','pageType','topic','volume','publishedUrl','Audience','Profession','Type','Modifier','BOFU','Status','Reason','Reason Explained','Confidence'], NC=HDR.length;
   var out=ss().getSheetByName('Published – Rejected')||ss().insertSheet('Published – Rejected');
-  if(out.getLastRow()===0) out.getRange(1,1,1,9).setValues([['client','primaryKeyword','topic','pageType','volume','publishedUrl','reason','reasonExplained','confidence']]).setFontWeight('bold');
+  if(out.getLastRow()===0){ out.getRange(1,1,1,NC).setValues([HDR]).setFontWeight('bold'); out.setFrozenRows(1); }
   // restart from the top whenever the account list changes, OR after a completed pass (a fresh click = run again)
   var sig=accounts.length+'|'+accounts[0].domain+'|'+accounts[accounts.length-1].domain;
   var cursor=Number(props.getProperty('MB2_CURSOR')||0), pageOff=Number(props.getProperty('MB2_PAGE')||0);
   if(props.getProperty('MB2_SIG')!==sig || cursor>=accounts.length){
     props.setProperty('MB2_SIG',sig); cursor=0; pageOff=0; props.setProperty('MB2_CURSOR','0'); props.deleteProperty('MB2_PAGE');
-    if(out.getLastRow()>1) out.getRange(2,1,out.getLastRow()-1,9).clearContent();   // clear old results for a clean pass
+    if(out.getLastRow()>1) out.getRange(2,1,out.getLastRow()-1,NC).clearContent();   // clear old results for a clean pass
   }
   var kbCount=Object.keys(mbKbLookup_()).length;
   try{
@@ -459,11 +468,11 @@ function mbAuditPublished(){
           var reason='', rexp='';
           if(hit){ reason=hit.reason; rexp=hit.reason; }
           else if(o.keep===false){ reason=o.reason||'Off-ICP audience'; rexp=o.explain||''; }
-          if(reason) outRows.push([acc.domain, row[0], row[1], row[2], row[3], row[4], reason, rexp, o.conf||'']);
+          if(reason) outRows.push([acc.domain, row[0], row[2], row[1], row[3], row[4], o.audience||'', o.profession||'', o.type||'', modifiersOf(row[0],cfg), isBofu(row[0])?'Yes':'No', 0, reason, rexp, o.conf||'']);
         });
         i+=slice.length;
       }
-      if(outRows.length){ out.getRange(out.getLastRow()+1,1,outRows.length,9).setValues(outRows); totalRej+=outRows.length; }
+      if(outRows.length){ out.getRange(out.getLastRow()+1,1,outRows.length,NC).setValues(outRows); totalRej+=outRows.length; }
       var done=i>=rows.length;
       summary.push('• '+acc.domain+' — '+rows.length+' pages, '+outRows.length+' rejected  '+(acc.names.length?'['+acc.names.slice(0,4).join(', ')+']':'[⚠ NO KB match]')+(done?'':' (paused)'));
       if(done){ cursor++; pageOff=0; } else { pageOff=i; break; }
