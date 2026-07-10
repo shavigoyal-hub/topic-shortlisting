@@ -14,8 +14,10 @@ var VIEW_TABS = ['✅ Selected','🔎 To review','❌ Rejected'];   // legacy ta
 var COL = { KW:1, PT:2, TOPIC:3, SEC:4, VOL:5, REL:6, AUD:7, PROF:8, TYPE:9, MOD:10, BOFU:11, STATUS:12, REASON:13, REXP:14, CONF:15, LAYER:16, DOMAINS:17, RVERDICT:18, RREASON:19 };
 var TOPIC_HEADERS = ['Keyword','Page Type','Topic','Secondary','Volume','Relevance','Audience','Profession','Type','Modifier','BOFU','Status','Reason','Reason Explained','Confidence','Layer','_domains','Review','Review Reason'];
 var NCOL = TOPIC_HEADERS.length;
+var BUILD = '2026-07-10b';   // bumped on each push so the audit alert shows which version is actually running
 var BATCH = 100;     // Topics rows enriched per processBatch call
 var AI_BATCH = 30;   // keywords per OpenAI call
+var MB_AI_BATCH = 50;   // audit classifies more pages per OpenAI call (fewer round-trips → more accounts per run)
 var FG_BUDGET_MS = 4.5*60*1000;   // foreground enrichment time budget (stay under the 6-min limit)
 
 /* --------------------------- RULE LEXICON ------------------------- */
@@ -460,7 +462,7 @@ function mbAuditPublished(){
       var rows=mbRunSql_(s,db,sql).rows, cfg=mbAuditCfg_(acc.names), i=pageOff, outRows=[];
       while(i<rows.length){
         if(Date.now()-start>=FG_BUDGET_MS){ timeUp=true; break; }
-        var slice=rows.slice(i,i+AI_BATCH);
+        var slice=rows.slice(i,i+MB_AI_BATCH);
         var items=slice.map(function(row,idx){ return {id:String(idx), kw:row[0], titles:[String(row[1]||'')]}; });   // topic as context, no SERP
         var res; try{ res=classifyBatch(items, cfg); }catch(e){ res={}; }
         slice.forEach(function(row,idx){ var o=res[String(idx)]||{};
@@ -479,7 +481,7 @@ function mbAuditPublished(){
     }
     props.setProperty('MB2_CURSOR', String(cursor)); props.setProperty('MB2_PAGE', String(pageOff));
     var allDone=cursor>=accounts.length;
-    ui.alert('KB entries loaded: '+kbCount+'   |   audited '+summary.length+' account(s) this run, '+totalRej+' rejected rows.\n\n'+summary.join('\n')+'\n\n'+(allDone?'✅ All '+accounts.length+' accounts done.':'▶ Run again to continue ('+cursor+'/'+accounts.length+' done).'));
+    ui.alert('Audit v'+BUILD+'   |   KB entries loaded: '+kbCount+'   |   audited '+summary.length+' account(s) this run, '+totalRej+' rejected rows.\n\n'+summary.join('\n')+'\n\n'+(allDone?'✅ All '+accounts.length+' accounts done.':'▶ Run again to continue ('+cursor+'/'+accounts.length+' done).'));
   }catch(e){ ui.alert('Metabase: '+e.message); }
 }
 function act5(){ return mbAuditPublished(); }
