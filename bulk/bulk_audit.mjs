@@ -12,6 +12,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /* ----------------------------- .env ------------------------------ */
 function loadEnv(dir){
@@ -22,7 +23,7 @@ function loadEnv(dir){
     if(m && !line.trim().startsWith('#')){ let v=m[2].trim(); if((v.startsWith('"')&&v.endsWith('"'))||(v.startsWith("'")&&v.endsWith("'"))) v=v.slice(1,-1); if(!(m[1] in process.env)) process.env[m[1]]=v; }
   }
 }
-loadEnv(path.dirname(new URL(import.meta.url).pathname));
+loadEnv(path.dirname(fileURLToPath(import.meta.url)));
 
 /* --------------------------- args -------------------------------- */
 function arg(name, def){ const i=process.argv.indexOf('--'+name); return i>=0 ? process.argv[i+1] : def; }
@@ -100,7 +101,9 @@ function parseClassify(j){
   return byId;
 }
 // audit config for an account (matches mbAuditCfg_): offering always from KB, rules free/jobs/format/org on
-const auditCfg = names => ({ offering:'Both', website:'', services:names||[], products:[], industries:[], targetProfessions:[], competitors:[], locations:[], negatives:[], geoMode:'all', rules:{zero:false,free:true,nearme:false,competitor:false,location:false,info:false,jobs:true,format:true,org:true,lowrel:false}, lowRel:1 });
+// blunt rules (free/jobs/org) over-reject whole client types (training, certification, education, recruiting,
+// professional bodies) — the AI judges intent client-aware, so keep only the truly-junk 'format' rule here.
+const auditCfg = names => ({ offering:'Both', website:'', services:names||[], products:[], industries:[], targetProfessions:[], competitors:[], locations:[], negatives:[], geoMode:'all', rules:{zero:false,free:false,nearme:false,competitor:false,location:false,info:false,jobs:false,format:true,org:false,lowrel:false}, lowRel:1 });
 
 /* --------------------------- OpenAI ------------------------------ */
 async function openai(messages){

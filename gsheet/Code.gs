@@ -432,8 +432,9 @@ function mbAccounts_(){
     out.push({domain:d, names:kbnm, matched:!!kbnm.length}); }   // offering always from the KB
   return out;
 }
+// blunt rules (free/jobs/org) over-reject whole client types (training/certification/education/recruiting/professional bodies) — let the client-aware AI judge intent; keep only the truly-junk 'format' rule
 function mbAuditCfg_(names){ return { offering:'Both', website:'', services:names||[], products:[], industries:[], targetProfessions:[], competitors:[], locations:[], negatives:[], geoMode:'all', serpGl:'us',
-  rules:{zero:false,free:true,nearme:false,competitor:false,location:false,info:false,jobs:true,format:true,org:true,lowrel:false}, lowRel:1 }; }
+  rules:{zero:false,free:false,nearme:false,competitor:false,location:false,info:false,jobs:false,format:true,org:false,lowrel:false}, lowRel:1 }; }
 // STEP 3 — per account: pull PUBLISHED pages, run the shortlisting logic (rules + AI, NO SERP), output only the REJECTED (status 0) rows
 function mbAuditPublished(){
   var ui=SpreadsheetApp.getUi(), props=PropertiesService.getScriptProperties();
