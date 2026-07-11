@@ -505,6 +505,7 @@ function act1(){ return runAll(); }                        // mapped to a spare 
 function reclassifyKeepRankings(){
   var ui=SpreadsheetApp.getUi();
   if(ui.alert('Re-classify (reuse saved rankings)','Re-run the AI (Audience / Profession / Type / keep-reject) using the Google rankings already saved — NO new SERP calls, so it won\'t hit the daily fetch quota. Auto keep/reject are recomputed; your manual 1/0 picks are kept. Continue?',ui.ButtonSet.YES_NO)!==ui.Button.YES) return;
+  syncOverrides();   // capture + lock the CSM's manual edits before clearing auto verdicts
   var cs=sheet(SHEET.CACHE);
   if(cs && cs.getLastRow()>1){ var nr=cs.getLastRow()-1;
     cs.getRange(2,3,nr,2).clearContent();   // Audience, Type
@@ -541,7 +542,9 @@ function runPhase(phase){
   var t=sheet(SHEET.TOPICS);
   importAkrSilent();   // re-sync Topics to the current AKR (carries over picks + enrichment for keywords that remain)
   runRules(); applyFormatting(true);
+  var lockedN=syncOverrides();   // learn the CSM's manual 1/0 edits and lock them so this run never re-flips them
   var did=enrichForeground(ph);
+  syncOverrides();               // re-assert locks after enrichment
   var remaining=0; t.getRange(2,1,Math.max(t.getLastRow()-1,1),NCOL).getValues().forEach(function(r){ if(r[COL.KW-1] && (ph===null || (phase==='Service')===isServicePage(r[COL.PT-1])) && !r[COL.AUD-1]) remaining++; });
 
   var label = phase==='All'?'all':phase;
@@ -549,6 +552,7 @@ function runPhase(phase){
   if(remaining>0){ msg+=' '+remaining+' more to go — click the same Run option again to continue.'; }
   else { msg+=' All '+label+' topics done.'; }
   msg+='\n\nThe AI auto-decided the confident ones (Status 1 = keep, 0 = reject) and left the borderline ones BLANK for you. Filter the Confidence column to "low" to review just those. 1 = keep, 0 = reject.';
+  if(lockedN>0) msg+='\n\n'+lockedN+' keyword(s) locked to your manual decisions (see the "Overrides" tab) — the tool will never re-flip these, on this run or future ones.';
   ui.alert(msg);
 }
 
@@ -633,6 +637,29 @@ function runRules(){
 }
 
 /* --------------------------- ENRICHMENT --------------------------- */
+/* ---- HUMAN-OVERRIDE LEARNING: learn the CSM's manual 1/0 edits, lock them so re-runs never flip them ---- */
+function overridesSheet_(){ var s=sheet('Overrides'); if(!s){ s=ss().insertSheet('Overrides');
+  s.getRange(1,1,1,2).setValues([['Keyword','Decision (keep / reject)']]).setFontWeight('bold').setBackground('#e8eefc');
+  s.setColumnWidth(1,340); s.setColumnWidth(2,170); s.setFrozenRows(1); } return s; }
+function loadOverrides(){ var s=sheet('Overrides'), m={}; if(!s||s.getLastRow()<2) return m;
+  s.getRange(2,1,s.getLastRow()-1,2).getValues().forEach(function(r){ var k=norm(r[0]).trim(); if(!k) return; var d=norm(r[1]); m[k]=(d.indexOf('rej')>=0||d==='0')?'0':'1'; }); return m; }
+function saveOverrides_(map){ var s=overridesSheet_(), keys=Object.keys(map).sort();
+  if(s.getLastRow()>1) s.getRange(2,1,s.getLastRow()-1,2).clearContent();
+  if(keys.length) s.getRange(2,1,keys.length,2).setValues(keys.map(function(k){ return [k, map[k]==='0'?'reject':'keep']; })); }
+// capture any manual 1/0 the tool didn't set (Layer not AI/Rule), then LOCK every overridden keyword so nothing re-flips it
+function syncOverrides(){
+  var t=sheet(SHEET.TOPICS); if(!t||t.getLastRow()<2) return 0;
+  var n=t.getLastRow()-1, rng=t.getRange(2,1,n,NCOL), v=rng.getValues(), ov=loadOverrides();
+  for(var i=0;i<v.length;i++){ var kw=norm(v[i][COL.KW-1]).trim(); if(!kw) continue;
+    var st=statNorm(v[i][COL.STATUS-1]), ly=String(v[i][COL.LAYER-1]);
+    if((st==='0'||st==='1') && ly!=='AI' && ly!=='Rule') ov[kw]=st;   // human decision (incl. re-edited locks) is authoritative
+  }
+  var locked=0;
+  for(var j=0;j<v.length;j++){ var k=norm(v[j][COL.KW-1]).trim(); if(!k||!(k in ov)) continue;
+    v[j][COL.STATUS-1]=ov[k]; v[j][COL.LAYER-1]='Locked'; v[j][COL.REASON-1]=(ov[k]==='1'?'Manual keep (locked)':'Manual reject (locked)'); locked++; }
+  t.getRange(2,COL.STATUS,n,1).setNumberFormat('@'); rng.setValues(v); saveOverrides_(ov);
+  return locked;
+}
 function loadCache(){
   var c=sheet(SHEET.CACHE), map={}; if(!c||c.getLastRow()<2) return map;
   var v=c.getRange(2,1,c.getLastRow()-1,10).getValues();
@@ -720,7 +747,7 @@ function processBatch(phase){
     v[COL.AUD-1]=c.audience||'General'; v[COL.TYPE-1]=c.type||''; v[COL.DOMAINS-1]=(c.domains||[]).join(',');
     v[COL.MOD-1]=modifiersOf(v[COL.KW-1], cfg); v[COL.BOFU-1]=isBofu(v[COL.KW-1])?'Yes':'No'; v[COL.CONF-1]=c.conf||''; v[COL.REXP-1]=c.explain||''; v[COL.PROF-1]=c.profession||'';
     v[COL.STATUS-1]=statNorm(v[COL.STATUS-1]);
-    if(v[COL.STATUS-1]!=='1'){   // keeps (human or AI) are protected; review/override them manually
+    if(v[COL.STATUS-1]!=='1' && String(v[COL.LAYER-1])!=='Locked'){   // human keeps (1) and locked overrides are protected; review the rest manually
       var hit=evalRules({kw:v[COL.KW-1],topic:v[COL.TOPIC-1],sec:v[COL.SEC-1],vol:v[COL.VOL-1],rel:v[COL.REL-1],pageType:v[COL.PT-1],domains:(c.domains||[])}, cfg);
       var conf=String(c.conf||'').toLowerCase();
       if(hit){ v[COL.STATUS-1]='0'; v[COL.REASON-1]=hit.reason; v[COL.REXP-1]=hit.reason; v[COL.LAYER-1]='Rule'; }                       // rules are definitive
