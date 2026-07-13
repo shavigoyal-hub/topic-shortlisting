@@ -537,6 +537,7 @@ function runPhase(phase){
   if(resp!==ui.Button.YES){ showSetup(); return; }
   if(!clientConfigured()){ ui.alert('Set the client info first (services / competitors / domain).'); showSetup(); return; }
   if(!prop('OPENAI_API_KEY') || !prop('SERPER_KEY')){ ui.alert('Set your OpenAI + Serper API keys first (in "Set / edit client info").'); showSetup(); return; }
+  var siteAdded=mergeSiteOffering(c); if(siteAdded>0) c=getConfig();   // ground the offering in the client's real website (cached per domain)
   if(!c.targetProfessions.length){ var profs=deriveTargetProfessions(c); if(profs.length){ setConfigVal('target_professions', profs.join('\n')); c=getConfig(); } }   // derive target buyer roles from the config once
 
   var t=sheet(SHEET.TOPICS);
@@ -553,6 +554,7 @@ function runPhase(phase){
   else { msg+=' All '+label+' topics done.'; }
   msg+='\n\nThe AI auto-decided the confident ones (Status 1 = keep, 0 = reject) and left the borderline ones BLANK for you. Filter the Confidence column to "low" to review just those. 1 = keep, 0 = reject.';
   if(lockedN>0) msg+='\n\n'+lockedN+' keyword(s) locked to your manual decisions (see the "Overrides" tab) — the tool will never re-flip these, on this run or future ones.';
+  if(siteAdded>0) msg+='\n\nGrounded the offering in the client\'s website: added '+siteAdded+' service(s) to Config (from '+c.website+').';
   ui.alert(msg);
 }
 
@@ -715,6 +717,37 @@ function deriveTargetProfessions(cfg){
     ]);
     return (j.professions||[]).map(function(x){return String(x).trim();}).filter(String).slice(0,12);
   }catch(e){ return []; }
+}
+/* ---- WEBSITE GROUNDING: fetch the client's real site + extract what they actually offer, merge into services ---- */
+function htmlToText_(html){ return String(html).replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ').replace(/<[^>]+>/g,' ').replace(/&[a-z#0-9]+;/gi,' ').replace(/\s+/g,' ').trim(); }
+function fetchSiteText_(domain){
+  var paths=['','services','solutions','products','what-we-do','offerings','about'], text='';
+  for(var i=0;i<paths.length && text.length<9000;i++){
+    try{ var r=UrlFetchApp.fetch('https://'+domain+'/'+paths[i], {muteHttpExceptions:true, followRedirects:true, headers:{'User-Agent':'Mozilla/5.0 (compatible; TopicTool/1.0)'}});
+      if(r.getResponseCode()<400){ var t=htmlToText_(r.getContentText()); if(t) text+=' '+t; } }catch(e){}
+  }
+  return text.slice(0,9000);
+}
+function deriveOffering_(text){
+  if(!text || text.length<50 || !prop('OPENAI_API_KEY')) return [];
+  try{ var j=openai([
+    {role:'system',content:'From this company website text, list the concrete PRODUCTS and SERVICES the company offers — short noun phrases, most important first, max 25. Ignore nav/blog/legal boilerplate. Return ONLY JSON: {"offering":["..."]}.'},
+    {role:'user',content:text.slice(0,9000)}]);
+    return (j.offering||[]).map(function(s){return String(s).trim();}).filter(String).slice(0,30);
+  }catch(e){ return []; }
+}
+// fetch (cached per domain) + append any NEW services to Config; returns how many were added
+function mergeSiteOffering(c){
+  if(!c.website) return 0;
+  var dom=mbNormDomain_(c.website); if(!dom) return 0;
+  var props=PropertiesService.getScriptProperties(), key='SITE_OFF_'+dom, offer=null, cached=props.getProperty(key);
+  if(cached){ try{ offer=JSON.parse(cached); }catch(e){ offer=null; } }
+  if(!offer){ offer=deriveOffering_(fetchSiteText_(dom)); props.setProperty(key, JSON.stringify(offer)); }
+  if(!offer || !offer.length) return 0;
+  var cur=c.services||[], seen={}; cur.forEach(function(s){ seen[norm(s).trim()]=1; });
+  var added=[]; offer.forEach(function(s){ var k=norm(s).trim(); if(k && !seen[k]){ seen[k]=1; added.push(s); } });
+  if(added.length) setConfigVal('services', cur.concat(added).join('\n'));
+  return added.length;
 }
 function classifyBatch(items, cfg){
   var sys='You are an SEO analyst deciding whether to KEEP or REJECT each keyword as a page for a client, using the keyword and the titles of pages currently ranking. ONE dominant test, the same for EVERY industry: is the keyword within the client\'s FIELD/offering? If yes, KEEP — regardless of search intent, audience, or how it reads.\n\nCLIENT: '+clientDesc(cfg)+'\n\nReturn per keyword: "audience" (one of: '+AUDIENCES.join(' | ')+'); "type" (broad product/service category, 1-2 words); "keep" (true/false); "reason" (when keep=false, one of: '+REJECT_REASONS.join(' | ')+'; else ""); plus confidence/explain/profession.\n\nSTEP 1 — KEEP if in-field: the keyword is one of the client\'s products/services, OR a category, type, variant, brand, size, feature, part, or accessory of what they sell, OR a directly-adjacent need (repair, installation, maintenance, replacement, design, cost/price, "best", "near me"). The client\'s listed offerings are EXAMPLES, NOT an exhaustive list — judge the whole field/category they operate in. When a keyword is a service applied to a target market ("<service> for <industry>"), judge it by the SERVICE, not the market. If the ranking titles are competitors/retailers selling the same thing, that CONFIRMS it is in-field. A keyword that is in-field is ALWAYS kept — no matter how broad, informational, question-like, or low-intent it reads, and no matter the searcher\'s role. Intent, audience, "research", and "branded" are NEVER reasons to reject something in-field. If unsure whether it is in-field → keep=true, confidence "low".\n\nSTEP 2 — only if it is NOT in-field, REJECT and pick the reason:\n • "Off-ICP audience" — a genuinely DIFFERENT product, service, or industry the client does not provide.\n • "Branded query" — a proper-noun name of a DIFFERENT company or product (not the client\'s own generic category words).\n • "Job-seeker intent" — the searcher wants a job / salary / career, not to buy.\n • "Researcher/student intent" — pure "what is / definition / statistics / history / homework" research about a topic OUTSIDE the client\'s field, with no buying path. Never use this for anything the client sells.\n • "No commercial intent" — junk, wrong-format, or no business relevance.\n\nProfession/role is a SIGNAL, not a filter — a role not in the target list is FINE; reject on it only for a clear NON-buyer (job seeker or pure student/researcher of an out-of-field topic).\n\nReturn "confidence": "high" when obvious, "low" when borderline/unsure. "explain": SHORT specific reason (<=14 words) — e.g. "In-field: a product they sell", "Adjacent need for their offering", "Different product they don\'t offer". "profession": the likely searcher role in 1-3 words, else "General".\nReturn ONLY JSON: {"results":[{"id":<id>,"audience":"...","type":"...","keep":true|false,"reason":"...","confidence":"high|low","explain":"...","profession":"..."}]}.';
