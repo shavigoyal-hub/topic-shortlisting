@@ -2,3 +2,4 @@
 *.csv
 domains.txt
 !/.env.example
+site_cache.json

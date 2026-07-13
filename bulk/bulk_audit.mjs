@@ -32,6 +32,7 @@ const ACC_FILE  = arg('accounts', 'domains.txt');
 const OUT_FILE  = arg('out', 'rejected.csv');
 const CONC      = Number(arg('concurrency', 6));
 const AI_BATCH  = Number(arg('batch', 50));
+const USE_SITE  = arg('site', 'true') !== 'false';   // ground the offering in the client's real website (default on)
 
 const MB_URL  = (process.env.METABASE_URL||'').replace(/\/$/,'');
 const MB_USER = process.env.METABASE_USER || process.env.METABASE_USERNAME;
@@ -124,6 +125,30 @@ async function classifyBatch(items, cfg){
   return parseClassify(j);
 }
 
+/* ------------------- WEBSITE GROUNDING ------------------- */
+// fetch the client's real site (homepage + likely service pages) and reduce to text
+function htmlToText(html){ return String(html).replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ').replace(/<[^>]+>/g,' ').replace(/&[a-z#0-9]+;/gi,' ').replace(/\s+/g,' ').trim(); }
+async function fetchSiteText(domain){
+  const paths=['','services','solutions','products','what-we-do','offerings','about'];
+  let text='';
+  for(const p of paths){ if(text.length>9000) break;
+    try{ const r=await fetch('https://'+domain+'/'+p, {headers:{'User-Agent':'Mozilla/5.0 (compatible; TopicAudit/1.0)'}, redirect:'follow', signal:AbortSignal.timeout(12000)});
+      if(r.ok){ const t=htmlToText(await r.text()); if(t) text+=' '+t; } }catch(e){}
+  }
+  return text.slice(0,9000);
+}
+// one AI call → the concrete products/services the site actually sells
+async function deriveOffering(text){
+  if(!text || text.length<50) return [];
+  const j=await openai([
+    {role:'system',content:'From this company website text, list the concrete PRODUCTS and SERVICES the company offers — short noun phrases, most important first, max 25. Ignore nav/blog/legal boilerplate. Return ONLY JSON: {"offering":["..."]}.'},
+    {role:'user',content:text.slice(0,9000)}
+  ]);
+  return (j.offering||[]).map(s=>String(s).trim()).filter(Boolean).slice(0,30);
+}
+function loadSiteCache(dir){ try{ return JSON.parse(fs.readFileSync(path.resolve(dir,'site_cache.json'),'utf8')); }catch(e){ return {}; } }
+function saveSiteCache(dir, m){ try{ fs.writeFileSync(path.resolve(dir,'site_cache.json'), JSON.stringify(m,null,0)); }catch(e){} }
+
 /* --------------------------- Metabase ---------------------------- */
 let SESSION=null;
 async function mbLogin(){
@@ -208,14 +233,23 @@ async function main(){
   const urlExpr = C.url ? ('c.'+C.url) : (C.slug ? "('https://' || p.root_domain || '/' || COALESCE(c."+C.slug+",''))" : 'NULL');
   console.log('Metabase columns:', JSON.stringify(C));
 
-  // 1) fetch PUBLISHED pages per domain (parallel)
+  // 1) fetch PUBLISHED pages + ground the offering in the client's real website (parallel)
+  const siteCache = USE_SITE ? loadSiteCache(dir) : {};
+  if(USE_SITE) console.log('Website grounding: ON (fetching each client site + merging with KB)');
   const fetched = await mapLimit(domains, CONC, async (d)=>{
     const sql = 'SELECT '+(C.pk?'c.'+C.pk:'NULL')+' AS kw, '+(C.topic?'c.'+C.topic:'NULL')+' AS topic, '+(C.pt?'c.'+C.pt:'NULL')+' AS pt, '+(C.vol?'c.'+C.vol:'NULL')+' AS vol, '+urlExpr+' AS url'
       +" FROM public.clusters c JOIN public.projects p ON p.id=c.p_id WHERE LOWER(p.root_domain)='"+mbEsc(d.domain)+"' AND c.page_status='PUBLISHED'"+(C.vol?' ORDER BY c.'+C.vol+' DESC NULLS LAST':'');
     const rows = (await mbRunSql(db, sql)).rows;
-    const names = bestKb(mbCore(d.raw), kb);
-    return { domain:d.domain, rows, names, matched:!!names.length };
+    const kbNames = bestKb(mbCore(d.raw), kb);
+    let siteNames = [];
+    if(USE_SITE){
+      if(Array.isArray(siteCache[d.domain])) siteNames = siteCache[d.domain];
+      else { try{ siteNames = await deriveOffering(await fetchSiteText(d.domain)); }catch(e){ siteNames = []; } siteCache[d.domain] = siteNames; }
+    }
+    const seen=new Set(), names=[]; [...kbNames, ...siteNames].forEach(x=>{ const k=String(x).toLowerCase(); if(x && !seen.has(k)){ seen.add(k); names.push(x); } });
+    return { domain:d.domain, rows, names, matched:!!names.length, nKb:kbNames.length, nSite:siteNames.length };
   });
+  if(USE_SITE) saveSiteCache(dir, siteCache);
 
   // 2) build classify tasks (batches of AI_BATCH) across all accounts
   const tasks=[];
@@ -253,7 +287,7 @@ async function main(){
   const byDom={}; fetched.forEach(f=>{ if(!f.__error) byDom[f.domain]={pages:f.rows.length, matched:f.matched, rej:0}; });
   allRows.forEach(r=>{ if(byDom[r[0]]) byDom[r[0]].rej++; });
   console.log('=== per-account ===');
-  for(const f of fetched){ if(f.__error) continue; const b=byDom[f.domain]; console.log('  '+f.domain.padEnd(34)+' pages '+String(b.pages).padStart(5)+'  rejected '+String(b.rej).padStart(5)+'  '+(f.matched?'['+f.names.slice(0,4).join(', ')+']':'[NO KB match]')); }
+  for(const f of fetched){ if(f.__error) continue; const b=byDom[f.domain]; console.log('  '+f.domain.padEnd(34)+' pages '+String(b.pages).padStart(5)+'  rejected '+String(b.rej).padStart(5)+'  offering[KB '+(f.nKb||0)+' + site '+(f.nSite||0)+']'+(f.matched?'':' [NO MATCH]')); }
   console.log('\nWrote '+allRows.length+' rejected rows to '+OUT_FILE);
 }
 main().catch(e=>{ console.error('\nFATAL: '+e.message); process.exit(1); });
