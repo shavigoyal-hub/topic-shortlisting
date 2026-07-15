@@ -39,16 +39,25 @@ function onOpen(){
   bootMenu();   // fallback (only if latest code isn't cached yet)
 }
 function bootMenu(){
-  SpreadsheetApp.getUi().createMenu('Topic Tool')
+  var ui = SpreadsheetApp.getUi();
+  ui.createMenu('Topic Tool')
     .addItem('1. Set / edit client info', 'showSetup')
     .addItem('2. Run Service / Product', 'runEverything')
     .addItem('3. Run Blog', 'runBlog')
+    .addItem('4. Run all (Service + Blog)', 'act1')
     .addSeparator()
+    .addItem('Re-classify (reuse saved rankings — no fetch)', 'act2')
     .addItem('Self-review my selected', 'selfReview')
-    .addItem('Re-apply rules', 'runRules')
     .addSeparator()
-    .addItem('Stop background processing', 'stopBackground')
     .addItem('Clear & start over', 'clearCache')
+    .addItem('Update to latest version', 'forceUpdate')
+    .addToUi();
+  ui.createMenu('Bulk Account Audit')
+    .addItem('1. Edit accounts (domains to run)', 'act6')
+    .addItem('2. Audit published → rejects (run / continue)', 'act5')
+    .addSeparator()
+    .addItem('Check Metabase schema & status', 'act3')
+    .addItem('Fetch published URLs only (no audit)', 'act4')
     .addItem('Update to latest version', 'forceUpdate')
     .addToUi();
 }
