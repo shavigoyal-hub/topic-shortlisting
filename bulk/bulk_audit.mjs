@@ -97,16 +97,16 @@ function clientDesc(cfg){
 }
 // AUDIT prompt — ONE decision: is the page TOPIC about what the client offers, or a genuinely DIFFERENT product/industry?
 // Deliberately ignores search intent / audience / student-researcher / branded — those over-rejected on-topic pages.
-const CLASSIFY_SYS = cfg => 'You audit a client\'s already-PUBLISHED web pages. Decide ONLY one thing, the same way for EVERY industry: is the page TOPIC within the client\'s field/offering, or a genuinely DIFFERENT product / service / industry?\n\nCLIENT: '+clientDesc(cfg)+'\n\nKEEP (off=false) if the topic is one of the client\'s products/services, OR a category, type, model, variant, brand, color, size, feature, part, or accessory of what they sell, OR content about their field — INCLUDING how-to, guide, ideas, "what is", certification, exam, course, training, comparison, "best X", cost/price, reviews, or "near me". The client\'s listed offerings are EXAMPLES, NOT an exhaustive list — judge the whole field/category they operate in, not only the exact items listed. When a topic is a SERVICE applied to a target market ("<service> for <industry>"), judge it by the SERVICE, not the market — the named industry is merely who the service is sold to, NOT a different offering. Search INTENT and whether the searcher looks like a student / researcher / job-seeker DO NOT matter and are NEVER a reason to reject.\n\nREJECT (off=true) ONLY when you are CONFIDENT the topic is a DIFFERENT product, service, or industry the client clearly does NOT provide. If the topic could plausibly belong to the client\'s field or product line, KEEP. When unsure, KEEP.\n\nAlso return audience/type/profession for reporting only (they never drive the decision).\nReturn ONLY JSON: {"results":[{"id":<id>,"off":true|false,"reason":"<if off: the different product/industry it is about, <=12 words; else \'\'>","confidence":"high|low","audience":"...","type":"...","profession":"..."}]}.';
+const CLASSIFY_SYS = cfg => 'You audit a client\'s already-PUBLISHED web pages. Decide ONLY one thing, the same way for EVERY industry: is the page TOPIC within the client\'s field/offering, or a genuinely DIFFERENT product / service / industry?\n\nCLIENT: '+clientDesc(cfg)+'\n\nKEEP (off=false) if the topic is one of the client\'s products/services, OR a category, type, model, variant, brand, color, size, feature, part, or accessory of what they sell, OR content about their field — INCLUDING how-to, guide, ideas, "what is", certification, exam, course, training, comparison, "best X", cost/price, reviews, or "near me". The client\'s listed offerings are EXAMPLES, NOT an exhaustive list — judge the whole field/category they operate in, not only the exact items listed. When a topic is a SERVICE applied to a target market ("<service> for <industry>"), judge it by the SERVICE, not the market — the named industry is merely who the service is sold to, NOT a different offering. Search INTENT and whether the searcher looks like a student / researcher / job-seeker DO NOT matter and are NEVER a reason to reject.\n\nREJECT (off=true) ONLY when you are CONFIDENT the topic is a DIFFERENT product, service, or industry the client clearly does NOT provide. If the topic could plausibly belong to the client\'s field or product line, KEEP. When unsure, KEEP.\n\nAlso return audience/type/profession for reporting only (they never drive the decision).\n\nTARGET ICP (customer segments this client sells to): '+(cfg.anyBusiness ? 'ANY business or consumer — this is a HORIZONTAL offering, so EVERY keyword fits the ICP (icpFit is always true).' : ((cfg.icps&&cfg.icps.length) ? cfg.icps.join('; ') : 'not specified — treat icpFit as true'))+'\nFor each keyword ALSO return: "icp" = the single customer segment/industry the page targets (short phrase, e.g. "restaurants", "hospitals", "homeowners", "general business"); "icpFit" = true if that segment is one of the client\'s target ICPs above OR the client is horizontal, else false. icpFit is INDEPENDENT of off (a page can be on-topic but target a segment the client does not serve). If unsure, icpFit=true.\nReturn ONLY JSON: {"results":[{"id":<id>,"off":true|false,"reason":"<if off: the different product/industry, <=12 words; else \'\'>","confidence":"high|low","audience":"...","type":"...","profession":"...","icp":"...","icpFit":true|false}]}.';
 function parseClassify(j){
   const byId={};
-  (j.results||[]).forEach(o=>{ byId[String(o.id)]={ off:o.off===true, reason:String(o.reason||'').slice(0,160), conf:(String(o.confidence||'').toLowerCase()==='high'?'high':'low'), audience:String(o.audience||'General').slice(0,40), type:String(o.type||'').slice(0,40), profession:String(o.profession||'').slice(0,40) }; });
+  (j.results||[]).forEach(o=>{ byId[String(o.id)]={ off:o.off===true, reason:String(o.reason||'').slice(0,160), conf:(String(o.confidence||'').toLowerCase()==='high'?'high':'low'), audience:String(o.audience||'General').slice(0,40), type:String(o.type||'').slice(0,40), profession:String(o.profession||'').slice(0,40), icp:String(o.icp||'').slice(0,50), icpFit:o.icpFit!==false }; });
   return byId;
 }
 // audit config for an account (matches mbAuditCfg_): offering always from KB, rules free/jobs/format/org on
 // blunt rules (free/jobs/org) over-reject whole client types (training, certification, education, recruiting,
 // professional bodies) — the AI judges intent client-aware, so keep only the truly-junk 'format' rule here.
-const auditCfg = names => ({ offering:'Both', website:'', services:names||[], products:[], industries:[], targetProfessions:[], competitors:[], locations:[], negatives:[], geoMode:'all', rules:{zero:false,free:false,nearme:false,competitor:false,location:false,info:false,jobs:false,format:true,org:false,lowrel:false}, lowRel:1 });
+const auditCfg = (names, icps, anyBusiness) => ({ offering:'Both', website:'', services:names||[], products:[], industries:[], targetProfessions:[], competitors:[], locations:[], negatives:[], geoMode:'all', icps:icps||[], anyBusiness:!!anyBusiness, rules:{zero:false,free:false,nearme:false,competitor:false,location:false,info:false,jobs:false,format:true,org:false,lowrel:false}, lowRel:1 });
 
 /* --------------------------- OpenAI ------------------------------ */
 async function openai(messages){
@@ -148,6 +148,19 @@ async function deriveOffering(text){
 }
 function loadSiteCache(dir){ try{ return JSON.parse(fs.readFileSync(path.resolve(dir,'site_cache.json'),'utf8')); }catch(e){ return {}; } }
 function saveSiteCache(dir, m){ try{ fs.writeFileSync(path.resolve(dir,'site_cache.json'), JSON.stringify(m,null,0)); }catch(e){} }
+
+/* ------------------- TARGET ICP (experimental, separate column) ------------------- */
+// from the merged offering, derive the EXHAUSTIVE list of customer segments the client can sell to (+ horizontal flag)
+async function deriveICP(names, domain){
+  if(!names || !names.length) return {icps:[], anyBusiness:false};
+  const j=await openai([
+    {role:'system',content:'You are an ICP analyst. Given a company\'s products/services, list EXHAUSTIVELY every customer segment / industry / business type they could realistically sell to — be generous and complete (aim for 10-40 segments). Also set "anyBusiness" true when the offering is HORIZONTAL — sold to essentially ANY business or consumer (e.g. signage, printing, general marketing, office supplies, generic B2B software, cleaning, logistics) — so ICP filtering should effectively be OFF. Return ONLY JSON: {"icps":["..."],"anyBusiness":true|false}.'},
+    {role:'user',content:'Company: '+domain+'\nOffers: '+names.slice(0,40).join(', ')}
+  ]);
+  return {icps:(j.icps||[]).map(s=>String(s).trim()).filter(Boolean).slice(0,60), anyBusiness:j.anyBusiness===true};
+}
+function loadIcpCache(dir){ try{ return JSON.parse(fs.readFileSync(path.resolve(dir,'icp_cache.json'),'utf8')); }catch(e){ return {}; } }
+function saveIcpCache(dir, m){ try{ fs.writeFileSync(path.resolve(dir,'icp_cache.json'), JSON.stringify(m,null,0)); }catch(e){} }
 
 /* --------------------------- Metabase ---------------------------- */
 let SESSION=null;
@@ -233,9 +246,11 @@ async function main(){
   const urlExpr = C.url ? ('c.'+C.url) : (C.slug ? "('https://' || p.root_domain || '/' || COALESCE(c."+C.slug+",''))" : 'NULL');
   console.log('Metabase columns:', JSON.stringify(C));
 
-  // 1) fetch PUBLISHED pages + ground the offering in the client's real website (parallel)
+  // 1) fetch PUBLISHED pages + ground the offering in the client's real website + derive target ICP (parallel)
   const siteCache = USE_SITE ? loadSiteCache(dir) : {};
+  const icpCache = loadIcpCache(dir);
   if(USE_SITE) console.log('Website grounding: ON (fetching each client site + merging with KB)');
+  console.log('Target-ICP layer: ON (separate columns; horizontal clients -> anyBusiness, no ICP reject)');
   const fetched = await mapLimit(domains, CONC, async (d)=>{
     const sql = 'SELECT '+(C.pk?'c.'+C.pk:'NULL')+' AS kw, '+(C.topic?'c.'+C.topic:'NULL')+' AS topic, '+(C.pt?'c.'+C.pt:'NULL')+' AS pt, '+(C.vol?'c.'+C.vol:'NULL')+' AS vol, '+urlExpr+' AS url'
       +" FROM public.clusters c JOIN public.projects p ON p.id=c.p_id WHERE LOWER(p.root_domain)='"+mbEsc(d.domain)+"' AND c.page_status='PUBLISHED'"+(C.vol?' ORDER BY c.'+C.vol+' DESC NULLS LAST':'');
@@ -247,9 +262,15 @@ async function main(){
       else { try{ siteNames = await deriveOffering(await fetchSiteText(d.domain)); }catch(e){ siteNames = []; } siteCache[d.domain] = siteNames; }
     }
     const seen=new Set(), names=[]; [...kbNames, ...siteNames].forEach(x=>{ const k=String(x).toLowerCase(); if(x && !seen.has(k)){ seen.add(k); names.push(x); } });
-    return { domain:d.domain, rows, names, matched:!!names.length, nKb:kbNames.length, nSite:siteNames.length };
+    let icp = icpCache[d.domain];
+    if(!icp){ try{ icp = await deriveICP(names, d.domain); }catch(e){ icp = {icps:[], anyBusiness:false}; } icpCache[d.domain] = icp; }
+    return { domain:d.domain, rows, names, matched:!!names.length, nKb:kbNames.length, nSite:siteNames.length, icps:icp.icps||[], anyBusiness:!!icp.anyBusiness };
   });
   if(USE_SITE) saveSiteCache(dir, siteCache);
+  saveIcpCache(dir, icpCache);
+  // dump the derived ICP list per account for review
+  fs.writeFileSync(path.resolve(dir,'icp_by_account.csv'), [['client','anyBusiness','targetICPs'].join(',')].concat(
+    fetched.filter(f=>!f.__error).map(f=>[f.domain, f.anyBusiness?'ANY business':'no', (f.icps||[]).join('; ')].map(csvCell).join(','))).join('\n'));
 
   // 2) build classify tasks (batches of AI_BATCH) across all accounts
   const tasks=[];
@@ -259,35 +280,39 @@ async function main(){
   const totalPages = fetched.reduce((n,f)=>n+((f&&f.rows)?f.rows.length:0),0);
   console.log('Total PUBLISHED pages: '+totalPages+' across '+fetched.length+' accounts, '+tasks.length+' AI batches\n');
 
-  // 3) classify + apply rules (parallel), collect rejects
-  const rejByDomain={}; let doneBatches=0;
+  // 3) classify + apply rules (parallel); flag OFF-TOPIC and (separately) NOT-TARGET-ICP
+  let doneBatches=0;
   const results = await mapLimit(tasks, CONC, async (task)=>{
-    const { f, slice } = task; const cfg = auditCfg(f.names);
+    const { f, slice } = task; const cfg = auditCfg(f.names, f.icps, f.anyBusiness);
     const items = slice.map((row,idx)=>({id:String(idx), kw:row[0], titles:[String(row[1]||'')]}));
     let res={}; try{ res=await classifyBatch(items, cfg); }catch(e){ res={}; }
     const out=[];
     slice.forEach((row,idx)=>{ const o=res[String(idx)]||{};
       const hit=evalRules({kw:row[0],topic:row[1],vol:row[3],pageType:row[2]}, cfg);
-      let reason='', rexp='';
-      if(hit){ reason=hit.reason; rexp=hit.reason; }
-      else if(o.off===true){ reason='Off-topic (different product)'; rexp=o.reason||''; }   // ONLY genuinely off-offering pages
-      if(reason) out.push([f.domain, row[0], row[2], row[1], row[3], row[4], o.audience||'', o.profession||'', o.type||'', modifiersOf(row[0],cfg), isBofu(row[0])?'Yes':'No', 0, reason, rexp, o.conf||'']);
+      let reason='';
+      if(hit) reason=hit.reason;
+      else if(o.off===true) reason='Off-topic (different product)';
+      const offTopic = !!reason;
+      const notIcp = (!f.anyBusiness) && (o.icpFit===false);   // ICP reject is separate; horizontal clients never ICP-reject
+      if(offTopic || notIcp) out.push([f.domain, row[0], row[2], row[1], row[3], row[4], o.audience||'', o.profession||'', o.type||'',
+        offTopic?'yes':'no', reason||(hit?hit.reason:(o.reason||'')), (o.icp||''), notIcp?'no':'yes', o.conf||'']);
     });
     doneBatches++; if(doneBatches%10===0||doneBatches===tasks.length) process.stdout.write('\r  classified '+doneBatches+'/'+tasks.length+' batches');
     return out;
   });
   console.log('\n');
 
-  // 4) write output
-  const HDR=['client','primaryKeyword','pageType','topic','volume','publishedUrl','Audience','Profession','Type','Modifier','BOFU','Status','Reason','Reason Explained','Confidence'];
+  // 4) write output — OffTopic and InTargetICP are SEPARATE columns so the ICP layer can be evaluated on its own
+  const HDR=['client','primaryKeyword','pageType','topic','volume','publishedUrl','Audience','Profession','Type','OffTopic','OffTopicReason','ICP','InTargetICP','Confidence'];
   const allRows=[]; results.forEach(r=>{ if(Array.isArray(r)) r.forEach(row=>allRows.push(row)); });
   fs.writeFileSync(path.resolve(dir,OUT_FILE), [HDR].concat(allRows).map(r=>r.map(csvCell).join(',')).join('\n'));
 
-  // 5) per-account summary
-  const byDom={}; fetched.forEach(f=>{ if(!f.__error) byDom[f.domain]={pages:f.rows.length, matched:f.matched, rej:0}; });
-  allRows.forEach(r=>{ if(byDom[r[0]]) byDom[r[0]].rej++; });
-  console.log('=== per-account ===');
-  for(const f of fetched){ if(f.__error) continue; const b=byDom[f.domain]; console.log('  '+f.domain.padEnd(34)+' pages '+String(b.pages).padStart(5)+'  rejected '+String(b.rej).padStart(5)+'  offering[KB '+(f.nKb||0)+' + site '+(f.nSite||0)+']'+(f.matched?'':' [NO MATCH]')); }
-  console.log('\nWrote '+allRows.length+' rejected rows to '+OUT_FILE);
+  // 5) per-account summary (off-topic vs not-target-ICP counts, kept separate)
+  const byDom={}; fetched.forEach(f=>{ if(!f.__error) byDom[f.domain]={pages:f.rows.length, off:0, icp:0}; });
+  allRows.forEach(r=>{ const b=byDom[r[0]]; if(b){ if(r[9]==='yes') b.off++; if(r[12]==='no') b.icp++; } });
+  console.log('=== per-account (off-topic | not-target-ICP) ===');
+  for(const f of fetched){ if(f.__error) continue; const b=byDom[f.domain];
+    console.log('  '+f.domain.padEnd(30)+' pages '+String(b.pages).padStart(4)+'  off-topic '+String(b.off).padStart(4)+'  not-ICP '+String(b.icp).padStart(4)+'  '+(f.anyBusiness?'[ANY business]':'[ICP: '+(f.icps||[]).slice(0,5).join(', ')+']')); }
+  console.log('\nWrote '+allRows.length+' flagged rows to '+OUT_FILE+' (OffTopic + InTargetICP columns); ICP lists in icp_by_account.csv');
 }
 main().catch(e=>{ console.error('\nFATAL: '+e.message); process.exit(1); });
