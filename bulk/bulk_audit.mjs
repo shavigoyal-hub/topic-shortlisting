@@ -289,30 +289,32 @@ async function main(){
     const out=[];
     slice.forEach((row,idx)=>{ const o=res[String(idx)]||{};
       const hit=evalRules({kw:row[0],topic:row[1],vol:row[3],pageType:row[2]}, cfg);
-      let reason='';
-      if(hit) reason=hit.reason;
-      else if(o.off===true) reason='Off-topic (different product)';
-      const offTopic = !!reason;
-      const notIcp = (!f.anyBusiness) && (o.icpFit===false);   // ICP reject is separate; horizontal clients never ICP-reject
-      if(offTopic || notIcp) out.push([f.domain, row[0], row[2], row[1], row[3], row[4], o.audience||'', o.profession||'', o.type||'',
-        offTopic?'yes':'no', reason||(hit?hit.reason:(o.reason||'')), (o.icp||''), notIcp?'no':'yes', o.conf||'']);
+      let reason='', rexp='';
+      if(hit){ reason=hit.reason; rexp=hit.reason; }                                             // rule junk
+      else if(o.off===true){ reason='Off-topic (different product)'; rexp=o.reason||''; }         // different product/industry
+      else if(!f.anyBusiness && o.icpFit===false){ reason='Not our target ICP'; rexp=''; }        // outside ICP only
+      if(reason){
+        // explainer: name the likely searcher segment, and flag when it's outside the client's ICP (vertical clients only)
+        if(o.icp && !f.anyBusiness){ rexp = (rexp ? rexp+' — ' : '') + 'people searching this are most likely ' + o.icp + (o.icpFit===false ? ", which is NOT the client's target ICP" : ''); }
+        out.push([f.domain, row[0], row[2], row[1], row[3], row[4], o.audience||'', o.profession||'', o.type||'', (o.icp||''), modifiersOf(row[0],cfg), isBofu(row[0])?'Yes':'No', 0, reason, rexp, o.conf||'']);
+      }
     });
     doneBatches++; if(doneBatches%10===0||doneBatches===tasks.length) process.stdout.write('\r  classified '+doneBatches+'/'+tasks.length+' batches');
     return out;
   });
   console.log('\n');
 
-  // 4) write output — OffTopic and InTargetICP are SEPARATE columns so the ICP layer can be evaluated on its own
-  const HDR=['client','primaryKeyword','pageType','topic','volume','publishedUrl','Audience','Profession','Type','OffTopic','OffTopicReason','ICP','InTargetICP','Confidence'];
+  // 4) write output — one merged reject list (off-topic OR not-target-ICP); Reason says which, Reason Explained names the likely ICP
+  const HDR=['client','primaryKeyword','pageType','topic','volume','publishedUrl','Audience','Profession','Type','ICP','Modifier','BOFU','Status','Reason','Reason Explained','Confidence'];
   const allRows=[]; results.forEach(r=>{ if(Array.isArray(r)) r.forEach(row=>allRows.push(row)); });
   fs.writeFileSync(path.resolve(dir,OUT_FILE), [HDR].concat(allRows).map(r=>r.map(csvCell).join(',')).join('\n'));
 
-  // 5) per-account summary (off-topic vs not-target-ICP counts, kept separate)
-  const byDom={}; fetched.forEach(f=>{ if(!f.__error) byDom[f.domain]={pages:f.rows.length, off:0, icp:0}; });
-  allRows.forEach(r=>{ const b=byDom[r[0]]; if(b){ if(r[9]==='yes') b.off++; if(r[12]==='no') b.icp++; } });
-  console.log('=== per-account (off-topic | not-target-ICP) ===');
+  // 5) per-account summary (total rejected, of which ICP-reason)
+  const byDom={}; fetched.forEach(f=>{ if(!f.__error) byDom[f.domain]={pages:f.rows.length, rej:0, icp:0}; });
+  allRows.forEach(r=>{ const b=byDom[r[0]]; if(b){ b.rej++; if(r[13]==='Not our target ICP') b.icp++; } });
+  console.log('=== per-account (rejected | of which ICP-reason) ===');
   for(const f of fetched){ if(f.__error) continue; const b=byDom[f.domain];
-    console.log('  '+f.domain.padEnd(30)+' pages '+String(b.pages).padStart(4)+'  off-topic '+String(b.off).padStart(4)+'  not-ICP '+String(b.icp).padStart(4)+'  '+(f.anyBusiness?'[ANY business]':'[ICP: '+(f.icps||[]).slice(0,5).join(', ')+']')); }
-  console.log('\nWrote '+allRows.length+' flagged rows to '+OUT_FILE+' (OffTopic + InTargetICP columns); ICP lists in icp_by_account.csv');
+    console.log('  '+f.domain.padEnd(30)+' pages '+String(b.pages).padStart(4)+'  rejected '+String(b.rej).padStart(4)+'  (ICP '+String(b.icp).padStart(3)+')  '+(f.anyBusiness?'[ANY business]':'[ICP: '+(f.icps||[]).slice(0,4).join(', ')+']')); }
+  console.log('\nWrote '+allRows.length+' rejected rows to '+OUT_FILE+'; ICP lists in icp_by_account.csv');
 }
 main().catch(e=>{ console.error('\nFATAL: '+e.message); process.exit(1); });
