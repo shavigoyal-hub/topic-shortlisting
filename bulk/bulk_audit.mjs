@@ -65,7 +65,8 @@ const MODSET={}; MODIFIER_WORDS.forEach(w=>MODSET[w]=1);
 const STATEset={}; US_STATES.forEach(w=>STATEset[w]=1); const CITYset={}; BIG_CITIES.forEach(w=>CITYset[w]=1);
 const INFO_RX=/\b(how to|how-to|what is|what's|meaning|definition|define|youtube|you ?tube|video|videos|pdf|template|reddit|wiki|free download|guide|tutorial|at home|diy|recording|app|login|download|coupon|reviews?|quotes?|images?|examples?)\b/;
 const JOBS_RX=/\b(jobs?|salary|salaries|hiring|career|careers|certification|certified|certificate|course|courses|degree|class schedule|teacher training|become a|how to become|exam|syllabus)\b/;
-const FORMAT_RX=/\b(login|sign in|app|apk|download|coupon|promo code|discount code|cracked|torrent|free pdf)\b/;
+// NOTE: bare 'app' removed — it is a legitimate product word for any software client ("dispatch app", "booking app").
+const FORMAT_RX=/\b(login|sign in|apk|download|coupon|promo code|discount code|cracked|torrent|free pdf)\b/;
 const BOFU_RX=/\b(buy|buying|purchase|purchasing|order|ordering|reorder|for sale|price|prices|pricing|cost|costs|how much|cheap|cheapest|affordable|discount|quote|quotation|estimate|near me|nearby|supplier|suppliers|wholesale|bulk|vendor|vendors|manufacturer|manufacturers|distributor|distributors|compan(y|ies)|service|services|shop|store|online|hire|rent|rental|custom|customi(z|s)ed?|personali(z|s)ed?|monogram|monogrammed|engraved|branded|promotional|made to order|best|top)\b/;
 const ORG_RX=/\b(institutes?|academ(y|ies)|society|societies|foundations?|associations?|ashram|sangha|vihara|monastery|university|college|ll[cp]|gmbh|pvt|dhamma|goenka|chopra|mindvalley|headspace|deepak|sadhguru|isha)\b/;
 const BIG_BRANDS_RX=/\b(nvidia|google|apple|microsoft|amazon|meta|tesla|samsung|intel|ibm|oracle|salesforce|adobe|cisco|netflix|spotify|uber|airbnb|openai|nike|adidas|disney|coca[- ]?cola|pepsi|ces|wwdc|davos|web summit)\b/;
@@ -295,7 +296,7 @@ async function main(){
   console.log('Total PUBLISHED pages: '+totalPages+' across '+fetched.length+' accounts, '+tasks.length+' AI batches\n');
 
   // 3) classify + apply rules (parallel); flag OFF-TOPIC and (separately) NOT-TARGET-ICP
-  let doneBatches=0, vetoed=0;
+  let doneBatches=0, vetoed=0; const vetoRows=[];
   const results = await mapLimit(tasks, CONC, async (task)=>{
     const { f, slice } = task; const cfg = auditCfg(f.names, f.icps, f.anyBusiness);
     const items = slice.map((row,idx)=>({id:String(idx), kw:row[0], titles:[String(row[1]||'')]}));
@@ -305,7 +306,7 @@ async function main(){
       const hit=evalRules({kw:row[0],topic:row[1],vol:row[3],pageType:row[2]}, cfg);
       let reason='', rexp='';
       if(hit){ reason=hit.reason; rexp=hit.reason; }                                             // rule junk
-      else if(o.off===true && inOffering(row[0], f.names)){ vetoed++; }                           // guard: it's literally in their offering — never reject
+      else if(o.off===true && inOffering(row[0], f.names)){ vetoed++; vetoRows.push([f.domain, row[0], row[1], o.reason||'']); }   // guard: it's literally in their offering — never reject
       else if(o.off===true){ reason='Off-topic (different product)'; rexp=o.reason||''; }         // different product/industry
       else if(!f.anyBusiness && o.icpFit===false){ reason='Not our target ICP'; rexp=''; }        // outside ICP only
       if(reason){
@@ -318,6 +319,7 @@ async function main(){
     return out;
   });
   console.log('\n  in-field guard vetoed '+vetoed+' AI reject(s) whose term was in the client\'s own offering\n');
+  if(vetoRows.length) fs.writeFileSync(path.resolve(dir,'vetoed.csv'), [['client','primaryKeyword','topic','AI wanted to reject because'].join(',')].concat(vetoRows.map(r=>r.map(csvCell).join(','))).join('\n'));
 
   // 4) write output — one merged reject list (off-topic OR not-target-ICP); Reason says which, Reason Explained names the likely ICP
   const HDR=['client','primaryKeyword','pageType','topic','volume','publishedUrl','Matched Services','Audience','Profession','Type','ICP','Modifier','BOFU','Status','Reason','Reason Explained','Confidence'];
