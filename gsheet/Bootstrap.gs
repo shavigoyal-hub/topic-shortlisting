@@ -53,8 +53,9 @@ function bootMenu(){
     .addItem('Update to latest version', 'forceUpdate')
     .addToUi();
   ui.createMenu('Bulk Account Audit')
-    .addItem('1. Edit accounts (domains to run)', 'act6')
-    .addItem('2. Audit published → rejects (run / continue)', 'act5')
+    .addItem('1. Show accounts to review (Onboarding tracker + csms)', 'act6')
+    .addItem('2. Fill website products/services into Client Knowledge Bases', 'act7')
+    .addItem('3. Audit published → rejects (run / continue)', 'act5')
     .addSeparator()
     .addItem('Check Metabase schema & status', 'act3')
     .addItem('Fetch published URLs only (no audit)', 'act4')
@@ -86,6 +87,10 @@ function act3(){ return _call('act3'); }
 function act4(){ return _call('act4'); }
 function act5(){ return _call('act5'); }
 function act6(){ return _call('act6'); }
+function act7(){ return _call('act7'); }
+function act8(){ return _call('act8'); }
+function act9(){ return _call('act9'); }
+function act10(){ return _call('act10'); }
 
 /* REAL-TIME NEGATIVES — runs instantly when you edit the "Negatives" tab (self-contained, no network).
    Any topic whose keyword/topic/secondary contains a negative (whole word) flips Status to 0;

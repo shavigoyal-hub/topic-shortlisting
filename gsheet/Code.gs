@@ -94,7 +94,8 @@ function buildMenu(ui){
   // FLOW 2 — bulk-audit many accounts' PUBLISHED pages from Metabase
   var mb=ui.createMenu('Bulk Account Audit')
     .addItem('1. Show accounts to review (Onboarding tracker + csms)', 'act6')
-    .addItem('2. Audit published → rejects (run / continue)', 'act5')
+    .addItem('2. Fill website products/services into Client Knowledge Bases', 'act7')
+    .addItem('3. Audit published → rejects (run / continue)', 'act5')
     .addSeparator()
     .addItem('Check Metabase schema & status', 'act3')
     .addItem('Fetch published URLs only (no audit)', 'act4');
@@ -103,6 +104,7 @@ function buildMenu(ui){
 }
 // open (creating if needed) the Accounts input tab
 function act6(){ return mbShowAccounts(); }
+function act7(){ return kbFillWebsiteOffering(); }
 function onOpen(){
   try{ ensureAllSheets(); }catch(e){}
   buildMenu();
@@ -469,6 +471,46 @@ function mbShowAccounts(){
   var lines=a.map(function(x){ return '• '+x.domain+(x.matched?'':'  [⚠ no KB offering]')+'   — '+(x.csm||'?'); });
   ui.alert(a.length+' account(s) to review  (CSMs flagged yes: '+Object.keys(review).length+')\n\n'+lines.join('\n')+'\n\nRun "Audit published → rejects" to process them.');
 }
+/* ---- Fill "Website Products / Services" in Client Knowledge Bases, straight from each client's site ----
+   Adds a row for any review account missing from the KB, then fetches its site and writes the extracted
+   offering. Cached per domain (script property) so nothing is re-fetched. Chunked — run again to continue. */
+function kbFillWebsiteOffering(){
+  var ui=SpreadsheetApp.getUi(), sh=mbKbSheet_();
+  if(!sh){ ui.alert('No "Client Knowledge Bases" tab found.'); return; }
+  if(!prop('OPENAI_API_KEY')){ ui.alert('Set OPENAI_API_KEY first.'); return; }
+  var accounts=mbAccounts_();
+  if(!accounts.length){ ui.alert('No accounts to review — check the "Onboarding tracker" + "csms" tabs.'); return; }
+
+  // find/create the website column
+  var lastCol=Math.max(sh.getLastColumn(),1), head=sh.getRange(1,1,1,lastCol).getValues()[0];
+  var wc=-1; for(var i=0;i<head.length;i++){ if(String(head[i]).toLowerCase().indexOf('website product')>=0){ wc=i+1; break; } }
+  if(wc<0){ wc=lastCol+1; sh.getRange(1,wc).setValue('Website Products / Services (from site)').setFontWeight('bold').setBackground('#e8f0e8'); sh.setColumnWidth(wc,520); }
+  // map existing KB rows by domain-core (client/website column)
+  var n=Math.max(sh.getLastRow()-1,0), keyCol=1;
+  var hf=function(){ var subs=arguments; for(var i=0;i<head.length;i++){ for(var j=0;j<subs.length;j++){ if(String(head[i]).toLowerCase().indexOf(subs[j])>=0) return i+1; } } return -1; };
+  var kd=hf('website','url','domain'), kc=hf('client','company','account'); keyCol=(kd>0?kd:(kc>0?kc:1));
+  var rowOf={}; if(n>0){ var keys=sh.getRange(2,keyCol,n,1).getValues();
+    for(var r=0;r<keys.length;r++){ var k=mbCore_(keys[r][0]); if(k && !rowOf[k]) rowOf[k]=r+2; } }
+
+  var start=Date.now(), filled=0, added=0, blocked=[], done=0, props=PropertiesService.getScriptProperties();
+  for(var a=0; a<accounts.length; a++){
+    if(Date.now()-start > FG_BUDGET_MS) break;
+    var acc=accounts[a], core=mbCore_(acc.domain), row=rowOf[core];
+    if(!row){ row=sh.getLastRow()+1; sh.getRange(row,keyCol).setValue(acc.domain); rowOf[core]=row; added++; }   // new account -> add to KB
+    if(String(sh.getRange(row,wc).getValue()||'').trim()){ done++; continue; }                                    // already filled
+    var key='SITE_OFF_'+acc.domain, offer=null, cached=props.getProperty(key);
+    if(cached){ try{ offer=JSON.parse(cached); }catch(e){ offer=null; } }
+    if(!offer){ offer=deriveOffering_(fetchSiteText_(acc.domain)); props.setProperty(key, JSON.stringify(offer)); }
+    if(offer && offer.length){ sh.getRange(row,wc).setValue(offer.join(', ')); filled++; }
+    else { sh.getRange(row,wc).setValue('(site unreachable / blocked — add manually)').setFontColor('#b00'); blocked.push(acc.domain); }
+    done++;
+  }
+  var remaining=accounts.length-done-filled>0 ? accounts.length : 0;
+  var left=0; for(var b=0;b<accounts.length;b++){ var rr=rowOf[mbCore_(accounts[b].domain)]; if(!rr || !String(sh.getRange(rr,wc).getValue()||'').trim()) left++; }
+  ui.alert('Client Knowledge Bases — website offering\n\nFilled '+filled+' | added '+added+' new account row(s) | '+blocked.length+' site(s) unreachable'+(blocked.length?':\n  '+blocked.slice(0,10).join(', '):'')+
+    '\n\n'+(left>0 ? left+' still to do — run this again to continue (it never re-fetches what it already has).' : '✅ All '+accounts.length+' review accounts have a website offering.'));
+}
+
 // blunt rules (free/jobs/org) over-reject whole client types (training/certification/education/recruiting/professional bodies) — let the client-aware AI judge intent; keep only the truly-junk 'format' rule
 function mbAuditCfg_(names){ return { offering:'Both', website:'', services:names||[], products:[], industries:[], targetProfessions:[], competitors:[], locations:[], negatives:[], geoMode:'all', serpGl:'us',
   rules:{zero:false,free:false,nearme:false,competitor:false,location:false,info:false,jobs:false,format:true,org:false,lowrel:false}, lowRel:1 }; }
