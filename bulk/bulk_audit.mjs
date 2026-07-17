@@ -198,6 +198,17 @@ async function mbRunSql(db, sql){
   const body=await r.json(); if(body.status==='failed'||body.error) throw new Error('Metabase error: '+String(body.error||'').slice(0,300));
   const d=body.data||{}; return {cols:(d.cols||[]).map(c=>c.name||c.display_name), rows:d.rows||[]};
 }
+// Real per-client geo + ICP straight from Metabase (public.projects.company_info jsonb).
+// target_geographies is already ISO ("us","in") -> Serper gl. target_customer_segments is the actual ICP,
+// so we don't have to guess it with an AI call.
+async function mbCompanyInfo(db, domains){
+  const list = domains.map(d=>"'"+mbEsc(d)+"'").join(',');
+  const r = await mbRunSql(db, "SELECT LOWER(root_domain), company_info->>'target_geographies', company_info->>'target_customer_segments', company_info->>'service_areas', company_info->>'business_category' FROM public.projects WHERE LOWER(root_domain) IN ("+list+")");
+  const parse = s => { try{ const a=JSON.parse(s||'[]'); return Array.isArray(a)?a.map(String).filter(Boolean):[]; }catch(e){ return []; } };
+  const m = {};
+  for(const row of r.rows) m[String(row[0])] = { geo:parse(row[1]), icps:parse(row[2]), areas:parse(row[3]), category:row[4]||'' };
+  return m;
+}
 async function mbClusterCols(db){
   const r = await mbRunSql(db, "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='clusters'");
   const names=r.rows.map(x=>String(x[0]));
@@ -265,7 +276,9 @@ async function main(){
   const siteCache = USE_SITE ? loadSiteCache(dir) : {};
   const icpCache = loadIcpCache(dir);
   if(USE_SITE) console.log('Website grounding: ON (fetching each client site + merging with KB)');
-  console.log('Target-ICP layer: ON (separate columns; horizontal clients -> anyBusiness, no ICP reject)');
+  const company = await mbCompanyInfo(db, domains.map(d=>d.domain));
+  const nGeo = Object.values(company).filter(c=>c.geo.length).length, nIcp = Object.values(company).filter(c=>c.icps.length).length;
+  console.log('Metabase company_info: geo for '+nGeo+'/'+domains.length+' domains, real ICP for '+nIcp+'/'+domains.length+' (AI-derived ICP only as fallback)');
   const fetched = await mapLimit(domains, CONC, async (d)=>{
     const sql = 'SELECT '+(C.pk?'c.'+C.pk:'NULL')+' AS kw, '+(C.topic?'c.'+C.topic:'NULL')+' AS topic, '+(C.pt?'c.'+C.pt:'NULL')+' AS pt, '+(C.vol?'c.'+C.vol:'NULL')+' AS vol, '+urlExpr+' AS url'
       +" FROM public.clusters c JOIN public.projects p ON p.id=c.p_id WHERE LOWER(p.root_domain)='"+mbEsc(d.domain)+"' AND c.page_status='PUBLISHED'"+(C.vol?' ORDER BY c.'+C.vol+' DESC NULLS LAST':'');
@@ -277,9 +290,13 @@ async function main(){
       else { try{ siteNames = await deriveOffering(await fetchSiteText(d.domain)); }catch(e){ siteNames = []; } siteCache[d.domain] = siteNames; }
     }
     const seen=new Set(), names=[]; [...kbNames, ...siteNames].forEach(x=>{ const k=String(x).toLowerCase(); if(x && !seen.has(k)){ seen.add(k); names.push(x); } });
-    let icp = icpCache[d.domain];
-    if(!icp){ try{ icp = await deriveICP(names, d.domain); }catch(e){ icp = {icps:[], anyBusiness:false}; } icpCache[d.domain] = icp; }
-    return { domain:d.domain, rows, names, matched:!!names.length, nKb:kbNames.length, nSite:siteNames.length, icps:icp.icps||[], anyBusiness:!!icp.anyBusiness };
+    const ci = company[d.domain] || {geo:[], icps:[], areas:[], category:''};
+    let icp;
+    if(ci.icps.length){ icp = {icps:ci.icps, anyBusiness:false}; }                                   // real ICP from Metabase — no AI guess needed
+    else { icp = icpCache[d.domain]; if(!icp){ try{ icp = await deriveICP(names, d.domain); }catch(e){ icp = {icps:[], anyBusiness:false}; } icpCache[d.domain] = icp; } }
+    const gl = (ci.geo[0]||'us').toLowerCase();                                                      // target_geographies is already ISO ("us","in")
+    return { domain:d.domain, rows, names, matched:!!names.length, nKb:kbNames.length, nSite:siteNames.length,
+             icps:icp.icps||[], anyBusiness:!!icp.anyBusiness, gl, areas:ci.areas||[], icpFromMetabase:!!ci.icps.length };
   });
   if(USE_SITE) saveSiteCache(dir, siteCache);
   saveIcpCache(dir, icpCache);
@@ -329,9 +346,9 @@ async function main(){
   // 5) per-account summary (total rejected, of which ICP-reason)
   const byDom={}; fetched.forEach(f=>{ if(!f.__error) byDom[f.domain]={pages:f.rows.length, rej:0, icp:0}; });
   allRows.forEach(r=>{ const b=byDom[r[0]]; if(b){ b.rej++; if(r[14]==='Not our target ICP') b.icp++; } });
-  console.log('=== per-account (rejected | of which ICP-reason) ===');
+  console.log('=== per-account   (ICP* = real, from Metabase | ICP~ = AI-guessed fallback) ===');
   for(const f of fetched){ if(f.__error) continue; const b=byDom[f.domain];
-    console.log('  '+f.domain.padEnd(30)+' pages '+String(b.pages).padStart(4)+'  rejected '+String(b.rej).padStart(4)+'  (ICP '+String(b.icp).padStart(3)+')  '+(f.anyBusiness?'[ANY business]':'[ICP: '+(f.icps||[]).slice(0,4).join(', ')+']')); }
+    console.log('  '+f.domain.padEnd(30)+' pages '+String(b.pages).padStart(4)+'  rejected '+String(b.rej).padStart(4)+'  gl='+(f.gl||'us')+'  '+(f.anyBusiness?'[ANY business]':'[ICP'+(f.icpFromMetabase?'*':'~')+': '+(f.icps||[]).slice(0,3).join(', ')+']')); }
   console.log('\nWrote '+allRows.length+' rejected rows to '+OUT_FILE+'; ICP lists in icp_by_account.csv');
 }
 main().catch(e=>{ console.error('\nFATAL: '+e.message); process.exit(1); });
