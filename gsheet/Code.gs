@@ -93,7 +93,7 @@ function buildMenu(ui){
   menu.addToUi();
   // FLOW 2 — bulk-audit many accounts' PUBLISHED pages from Metabase
   var mb=ui.createMenu('Bulk Account Audit')
-    .addItem('1. Edit accounts (domains to run)', 'act6')
+    .addItem('1. Show accounts to review (Onboarding tracker + csms)', 'act6')
     .addItem('2. Audit published → rejects (run / continue)', 'act5')
     .addSeparator()
     .addItem('Check Metabase schema & status', 'act3')
@@ -102,8 +102,7 @@ function buildMenu(ui){
   mb.addToUi();
 }
 // open (creating if needed) the Accounts input tab
-function mbOpenAccounts(){ var sh=mbEnsureAccounts_(); ss().setActiveSheet(sh); }
-function act6(){ return mbOpenAccounts(); }
+function act6(){ return mbShowAccounts(); }
 function onOpen(){
   try{ ensureAllSheets(); }catch(e){}
   buildMenu();
@@ -427,26 +426,48 @@ function mbBestKb_(core, kb){
   var keys=Object.keys(kb); for(var i=0;i<keys.length;i++){ var k=keys[i]; if(k.length>=5 && core.length>=5 && (k.indexOf(core)>=0 || core.indexOf(k)>=0)) return kb[k]; }
   return [];
 }
-// create the "Accounts" input tab — just a Domain list; products/services come from Client Knowledge Bases
-function mbEnsureAccounts_(){
-  var sh=ss().getSheetByName('Accounts'); if(sh) return sh;
-  sh=ss().insertSheet('Accounts');
-  sh.getRange(1,1,1,2).setValues([['Domain','Products / Services (auto-filled from Client Knowledge Bases — leave blank)']]).setFontWeight('bold').setBackground('#e8eefc');
-  sh.getRange(2,1).setValue('example.com').setFontColor('#999').setFontStyle('italic');   // delete this example, then paste the domains you want to run
-  sh.setColumnWidth(1,260); sh.setColumnWidth(2,460); sh.setFrozenRows(1);
-  return sh;
+// find a tab by fuzzy name (first tab whose name contains any of the given fragments)
+function mbSheetLike_(frags){
+  var all=ss().getSheets();
+  for(var i=0;i<all.length;i++){ var n=String(all[i].getName()).toLowerCase();
+    for(var j=0;j<frags.length;j++){ if(n.indexOf(frags[j])>=0) return all[i]; } }
+  return null;
 }
-// accounts to audit — the "Accounts" tab is just a domain list; product/service ALWAYS pulled from Client Knowledge Bases per domain
-function mbAccounts_(){
-  var sh=ss().getSheetByName('Accounts'); if(!sh||sh.getLastRow()<2) return [];
+// "csms" tab: which CSMs are flagged as needing a review (header typo "Review Requried" tolerated)
+function mbReviewCsms_(){
+  var sh=mbSheetLike_(['csm']), set={}; if(!sh||sh.getLastRow()<2) return set;
   var v=sh.getDataRange().getValues(), head=v[0].map(function(h){return String(h).toLowerCase();});
-  var hf=function(sub){ for(var i=0;i<head.length;i++){ if(head[i].indexOf(sub)>=0) return i; } return -1; };
-  var dc=hf('domain'); if(dc<0)dc=hf('client'); if(dc<0)dc=0;
-  var kb=mbKbLookup_(), out=[];
-  for(var i=1;i<v.length;i++){ var raw=v[i][dc], d=mbNormDomain_(raw); if(!d || d==='example.com') continue;
-    var kbnm=mbBestKb_(mbCore_(raw), kb);
-    out.push({domain:d, names:kbnm, matched:!!kbnm.length}); }   // offering always from the KB
+  var ec=0, rc=1;
+  for(var i=0;i<head.length;i++){ if(head[i].indexOf('review')>=0) rc=i; else if(head[i].indexOf('csm')>=0||head[i].indexOf('email')>=0||head[i].indexOf('name')>=0) ec=i; }
+  for(var r=1;r<v.length;r++){ var e=String(v[r][ec]||'').trim().toLowerCase();
+    if(e && String(v[r][rc]||'').trim().toLowerCase()==='yes') set[e]=1; }
+  return set;
+}
+// accounts to audit = "Onboarding tracker" rows whose CS Name is a csm flagged review=yes in the "csms" tab.
+// (No manual Accounts tab — this is derived so it stays in sync.) Offering always comes from Client Knowledge Bases.
+function mbAccounts_(){
+  var sh=mbSheetLike_(['onboarding']); if(!sh||sh.getLastRow()<2) return [];
+  var v=sh.getDataRange().getValues(), head=v[0].map(function(h){return String(h).toLowerCase();});
+  var hf=function(){ var subs=arguments; for(var i=0;i<head.length;i++){ for(var j=0;j<subs.length;j++){ if(head[i].indexOf(subs[j])>=0) return i; } } return -1; };
+  var dc=hf('domain'), cc=hf('cs name','csm','cs owner','cs email');
+  if(dc<0) return [];
+  var review=mbReviewCsms_(), anyFlagged=Object.keys(review).length>0, kb=mbKbLookup_(), seen={}, out=[];
+  for(var i=1;i<v.length;i++){
+    var raw=v[i][dc], d=mbNormDomain_(raw); if(!d || seen[d]) continue;
+    var csm=String(cc>=0?v[i][cc]:'').trim().toLowerCase();
+    if(cc>=0 && anyFlagged && !review[csm]) continue;   // only accounts under a review-required CSM
+    seen[d]=1;
+    var nm=mbBestKb_(mbCore_(raw), kb);
+    out.push({domain:d, names:nm, matched:!!nm.length, csm:csm});
+  }
   return out;
+}
+// show which accounts will be audited (and under which CSM) before running
+function mbShowAccounts(){
+  var ui=SpreadsheetApp.getUi(), a=mbAccounts_(), review=mbReviewCsms_();
+  if(!a.length){ ui.alert('No accounts found.\n\nExpected an "Onboarding tracker" tab (with Domain Name + CS Name) and a "csms" tab (csm + Review Requried = yes).'); return; }
+  var lines=a.map(function(x){ return '• '+x.domain+(x.matched?'':'  [⚠ no KB offering]')+'   — '+(x.csm||'?'); });
+  ui.alert(a.length+' account(s) to review  (CSMs flagged yes: '+Object.keys(review).length+')\n\n'+lines.join('\n')+'\n\nRun "Audit published → rejects" to process them.');
 }
 // blunt rules (free/jobs/org) over-reject whole client types (training/certification/education/recruiting/professional bodies) — let the client-aware AI judge intent; keep only the truly-junk 'format' rule
 function mbAuditCfg_(names){ return { offering:'Both', website:'', services:names||[], products:[], industries:[], targetProfessions:[], competitors:[], locations:[], negatives:[], geoMode:'all', serpGl:'us',
@@ -455,7 +476,7 @@ function mbAuditCfg_(names){ return { offering:'Both', website:'', services:name
 function mbAuditPublished(){
   var ui=SpreadsheetApp.getUi(), props=PropertiesService.getScriptProperties();
   var accounts=mbAccounts_();
-  if(!accounts.length){ var sh=mbEnsureAccounts_(); ss().setActiveSheet(sh); ui.alert('I set up the "Accounts" tab. Fill in one account per row — Domain, Products, Services — (delete the grey example), then run this again.'); return; }
+  if(!accounts.length){ ui.alert('No accounts to review.\n\nAccounts are derived automatically: the "Onboarding tracker" tab (Domain Name + CS Name) filtered to CSMs marked "yes" in the "csms" tab (Review Requried). Check those two tabs, then run again.'); return; }
   if(!prop('OPENAI_API_KEY')){ ui.alert('Set OPENAI_API_KEY first.'); return; }
   var HDR=['client','primaryKeyword','pageType','topic','volume','publishedUrl','Audience','Profession','Type','Modifier','BOFU','Status','Reason','Reason Explained','Confidence'], NC=HDR.length;
   var out=ss().getSheetByName('Published – Rejected')||ss().insertSheet('Published – Rejected');
