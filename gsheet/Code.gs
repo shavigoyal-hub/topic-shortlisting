@@ -11,8 +11,11 @@
 var SHEET = { AKR:'AKR', CONFIG:'Config', TOPICS:'Topics', CACHE:'_Cache' };
 var VIEW_TABS = ['✅ Selected','🔎 To review','❌ Rejected'];   // legacy tabs to remove (now one tab)
 // Topics columns (1-indexed)
-var COL = { KW:1, PT:2, TOPIC:3, SEC:4, VOL:5, REL:6, AUD:7, PROF:8, TYPE:9, MOD:10, BOFU:11, STATUS:12, REASON:13, REXP:14, CONF:15, LAYER:16, DOMAINS:17, RVERDICT:18, RREASON:19 };
-var TOPIC_HEADERS = ['Keyword','Page Type','Topic','Secondary','Volume','Relevance','Audience','Profession','Type','Modifier','BOFU','Status','Reason','Reason Explained','Confidence','Layer','_domains','Review','Review Reason'];
+// NOTE: 'Matched Services' is APPENDED at the end (col 20) on purpose — the header-heal overwrites headers
+// without migrating data, so inserting mid-table would misalign existing rows. Cols 16-19 are hidden, so it
+// still renders right after Confidence.
+var COL = { KW:1, PT:2, TOPIC:3, SEC:4, VOL:5, REL:6, AUD:7, PROF:8, TYPE:9, MOD:10, BOFU:11, STATUS:12, REASON:13, REXP:14, CONF:15, LAYER:16, DOMAINS:17, RVERDICT:18, RREASON:19, SERVICES:20 };
+var TOPIC_HEADERS = ['Keyword','Page Type','Topic','Secondary','Volume','Relevance','Audience','Profession','Type','Modifier','BOFU','Status','Reason','Reason Explained','Confidence','Layer','_domains','Review','Review Reason','Matched Services'];
 var NCOL = TOPIC_HEADERS.length;
 var BUILD = '2026-07-10b';   // bumped on each push so the audit alert shows which version is actually running
 var BATCH = 100;     // Topics rows enriched per processBatch call
@@ -158,7 +161,7 @@ function ensureAllSheets(){
     try{ applyFormatting(true); }catch(e){}   // re-point conditional formatting/colours at the new columns
   }
   var c = ensureSheet(SHEET.CACHE);
-  if(c.getLastRow()===0) c.getRange(1,1,1,10).setValues([['Keyword','Domains','Audience','Type','Keep','Reason','Titles','Confidence','Explain','Profession']]).setFontWeight('bold');
+  if(c.getLastRow()===0) c.getRange(1,1,1,13).setValues([['Keyword','Domains','Audience','Type','Keep','Reason','Titles','Confidence','Explain','Profession','Services','ICP','IcpFit']]).setFontWeight('bold');
   c.hideSheet();
   // your own negative list — keep adding words/phrases here; topics containing them get auto-rejected
   var neg = ensureSheet('Negatives');
@@ -511,11 +514,12 @@ function reclassifyKeepRankings(){
     cs.getRange(2,3,nr,2).clearContent();   // Audience, Type
     cs.getRange(2,5,nr,2).clearContent();   // Keep, Reason   (Domains col2 + Titles col7 KEPT → no re-SERP)
     cs.getRange(2,8,nr,3).clearContent();   // Confidence, Explain, Profession
+    cs.getRange(2,11,nr,3).clearContent();  // Services, ICP, IcpFit  (re-derived by the AI; Domains+Titles kept → no re-SERP)
   }
   var t=sheet(SHEET.TOPICS);
   if(t && t.getLastRow()>1){ var n=t.getLastRow()-1, rng=t.getRange(2,1,n,NCOL), v=rng.getValues();
     for(var i=0;i<v.length;i++){ if(!v[i][COL.KW-1]) continue;
-      v[i][COL.AUD-1]=''; v[i][COL.PROF-1]=''; v[i][COL.TYPE-1]=''; v[i][COL.CONF-1]=''; v[i][COL.REXP-1]='';   // clear so rows re-process
+      v[i][COL.AUD-1]=''; v[i][COL.PROF-1]=''; v[i][COL.TYPE-1]=''; v[i][COL.CONF-1]=''; v[i][COL.REXP-1]=''; v[i][COL.SERVICES-1]='';   // clear so rows re-process
       if(String(v[i][COL.LAYER-1])==='AI'||String(v[i][COL.LAYER-1])==='Rule'){ v[i][COL.STATUS-1]=''; v[i][COL.REASON-1]=''; v[i][COL.LAYER-1]=''; }   // reset auto decisions; keep manual picks
     }
     var sc=t.getRange(2,COL.STATUS,n,1); try{ sc.clearDataValidations(); }catch(e){} sc.setNumberFormat('@');
@@ -664,15 +668,15 @@ function syncOverrides(){
 }
 function loadCache(){
   var c=sheet(SHEET.CACHE), map={}; if(!c||c.getLastRow()<2) return map;
-  var v=c.getRange(2,1,c.getLastRow()-1,10).getValues();
-  for(var i=0;i<v.length;i++){ if(v[i][0]) map[String(v[i][0]).toLowerCase()]={domains:String(v[i][1]||'').split(',').filter(String),audience:v[i][2],type:v[i][3],keep:!(v[i][4]===false||v[i][4]==='FALSE'),reason:v[i][5],titles:String(v[i][6]||'').split(' ||| ').filter(String),conf:v[i][7]||'',explain:v[i][8]||'',profession:v[i][9]||''}; }
+  var v=c.getRange(2,1,c.getLastRow()-1,13).getValues();
+  for(var i=0;i<v.length;i++){ if(v[i][0]) map[String(v[i][0]).toLowerCase()]={domains:String(v[i][1]||'').split(',').filter(String),audience:v[i][2],type:v[i][3],keep:!(v[i][4]===false||v[i][4]==='FALSE'),reason:v[i][5],titles:String(v[i][6]||'').split(' ||| ').filter(String),conf:v[i][7]||'',explain:v[i][8]||'',profession:v[i][9]||'',services:String(v[i][10]||'').split(', ').filter(String),icp:v[i][11]||'',icpFit:!(v[i][12]===false||v[i][12]==='FALSE')}; }
   return map;
 }
 function saveCache(cache){
   var cs=sheet(SHEET.CACHE), rows=[];
-  Object.keys(cache).forEach(function(kw){ var c=cache[kw]; rows.push([kw,(c.domains||[]).join(','),c.audience||'',c.type||'',c.keep!==false,c.reason||'',(c.titles||[]).join(' ||| '),c.conf||'',c.explain||'',c.profession||'']); });
-  if(cs.getLastRow()>1) cs.getRange(2,1,cs.getLastRow()-1,10).clearContent();
-  if(rows.length) cs.getRange(2,1,rows.length,10).setValues(rows);
+  Object.keys(cache).forEach(function(kw){ var c=cache[kw]; rows.push([kw,(c.domains||[]).join(','),c.audience||'',c.type||'',c.keep!==false,c.reason||'',(c.titles||[]).join(' ||| '),c.conf||'',c.explain||'',c.profession||'',(c.services||[]).join(', '),c.icp||'',c.icpFit!==false]); });
+  if(cs.getLastRow()>1) cs.getRange(2,1,cs.getLastRow()-1,13).clearContent();
+  if(rows.length) cs.getRange(2,1,rows.length,13).setValues(rows);
 }
 function serperFetchAll(keywords, gl){
   var key=prop('SERPER_KEY'); if(!key) throw new Error('Set SERPER_KEY (⚙ Set API keys).');
@@ -750,10 +754,11 @@ function mergeSiteOffering(c){
   return added.length;
 }
 function classifyBatch(items, cfg){
-  var sys='You are an SEO analyst deciding whether to KEEP or REJECT each keyword as a page for a client, using the keyword and the titles of pages currently ranking. ONE dominant test, the same for EVERY industry: is the keyword within the client\'s FIELD/offering? If yes, KEEP — regardless of search intent, audience, or how it reads.\n\nCLIENT: '+clientDesc(cfg)+'\n\nReturn per keyword: "audience" (one of: '+AUDIENCES.join(' | ')+'); "type" (broad product/service category, 1-2 words); "keep" (true/false); "reason" (when keep=false, one of: '+REJECT_REASONS.join(' | ')+'; else ""); plus confidence/explain/profession.\n\nSTEP 1 — KEEP if in-field: the keyword is one of the client\'s products/services, OR a category, type, variant, brand, size, feature, part, or accessory of what they sell, OR a directly-adjacent need (repair, installation, maintenance, replacement, design, cost/price, "best", "near me"). The client\'s listed offerings are EXAMPLES, NOT an exhaustive list — judge the whole field/category they operate in. When a keyword is a service applied to a target market ("<service> for <industry>"), judge it by the SERVICE, not the market. If the ranking titles are competitors/retailers selling the same thing, that CONFIRMS it is in-field. A keyword that is in-field is ALWAYS kept — no matter how broad, informational, question-like, or low-intent it reads, and no matter the searcher\'s role. Intent, audience, "research", and "branded" are NEVER reasons to reject something in-field. If unsure whether it is in-field → keep=true, confidence "low".\n\nSTEP 2 — only if it is NOT in-field, REJECT and pick the reason:\n • "Off-ICP audience" — a genuinely DIFFERENT product, service, or industry the client does not provide.\n • "Branded query" — a proper-noun name of a DIFFERENT company or product (not the client\'s own generic category words).\n • "Job-seeker intent" — the searcher wants a job / salary / career, not to buy.\n • "Researcher/student intent" — pure "what is / definition / statistics / history / homework" research about a topic OUTSIDE the client\'s field, with no buying path. Never use this for anything the client sells.\n • "No commercial intent" — junk, wrong-format, or no business relevance.\n\nProfession/role is a SIGNAL, not a filter — a role not in the target list is FINE; reject on it only for a clear NON-buyer (job seeker or pure student/researcher of an out-of-field topic).\n\nReturn "confidence": "high" when obvious, "low" when borderline/unsure. "explain": SHORT specific reason (<=14 words) — e.g. "In-field: a product they sell", "Adjacent need for their offering", "Different product they don\'t offer". "profession": the likely searcher role in 1-3 words, else "General".\nReturn ONLY JSON: {"results":[{"id":<id>,"audience":"...","type":"...","keep":true|false,"reason":"...","confidence":"high|low","explain":"...","profession":"..."}]}.';
+  var sys='You are an SEO analyst deciding whether to KEEP or REJECT each keyword as a page for a client, using the keyword and the titles of pages currently ranking. ONE dominant test, the same for EVERY industry: is the keyword within the client\'s FIELD/offering? If yes, KEEP — regardless of search intent, audience, or how it reads.\n\nCLIENT: '+clientDesc(cfg)+'\n\nReturn per keyword: "audience" (one of: '+AUDIENCES.join(' | ')+'); "type" (broad product/service category, 1-2 words); "keep" (true/false); "reason" (when keep=false, one of: '+REJECT_REASONS.join(' | ')+'; else ""); plus confidence/explain/profession.\n\nSTEP 1 — KEEP if in-field: the keyword is one of the client\'s products/services, OR a category, type, variant, brand, size, feature, part, or accessory of what they sell, OR a directly-adjacent need (repair, installation, maintenance, replacement, design, cost/price, "best", "near me"). The client\'s listed offerings are EXAMPLES, NOT an exhaustive list — judge the whole field/category they operate in. When a keyword is a service applied to a target market ("<service> for <industry>"), judge it by the SERVICE, not the market. If the ranking titles are competitors/retailers selling the same thing, that CONFIRMS it is in-field. A keyword that is in-field is ALWAYS kept — no matter how broad, informational, question-like, or low-intent it reads, and no matter the searcher\'s role. Intent, audience, "research", and "branded" are NEVER reasons to reject something in-field. If unsure whether it is in-field → keep=true, confidence "low".\n\nSTEP 2 — only if it is NOT in-field, REJECT and pick the reason:\n • "Off-ICP audience" — a genuinely DIFFERENT product, service, or industry the client does not provide.\n • "Branded query" — a proper-noun name of a DIFFERENT company or product (not the client\'s own generic category words).\n • "Job-seeker intent" — the searcher wants a job / salary / career, not to buy.\n • "Researcher/student intent" — pure "what is / definition / statistics / history / homework" research about a topic OUTSIDE the client\'s field, with no buying path. Never use this for anything the client sells.\n • "No commercial intent" — junk, wrong-format, or no business relevance.\n\nProfession/role is a SIGNAL, not a filter — a role not in the target list is FINE; reject on it only for a clear NON-buyer (job seeker or pure student/researcher of an out-of-field topic).\n\nReturn "confidence": "high" when obvious, "low" when borderline/unsure. "explain": SHORT specific reason (<=14 words) — e.g. "In-field: a product they sell", "Adjacent need for their offering", "Different product they don\'t offer". "profession": the likely searcher role in 1-3 words, else "General".\nReturn "services": the client\'s own listed products/services (copied VERBATIM from the CLIENT offering above) that this keyword maps to — array, most relevant first, max 4; [] if it maps to none.\nReturn "icp": the customer segment/industry the people searching this are most likely from (short phrase, e.g. "restaurants", "hospitals", "homeowners", "general business"); and "icpFit": false ONLY when that segment is clearly outside the client\'s ideal customers — if the client sells to almost any business, or you are unsure, icpFit=true.\nReturn ONLY JSON: {"results":[{"id":<id>,"audience":"...","type":"...","keep":true|false,"reason":"...","confidence":"high|low","explain":"...","profession":"...","services":["..."],"icp":"...","icpFit":true|false}]}.';
   var lines=items.map(function(it){ return JSON.stringify({id:it.id, keyword:it.kw, ranking_titles:(it.titles||[]).slice(0,6).join(' | ')}); }).join('\n');
   var j=openai([{role:'system',content:sys},{role:'user',content:'Classify these:\n'+lines}]); var byId={};
-  (j.results||[]).forEach(function(o){ byId[String(o.id)]={ audience:AUDIENCES.indexOf(o.audience)>=0?o.audience:'General', type:(o.type||'').toString().slice(0,40), keep:o.keep!==false, reason:o.keep!==false?'':(REJECT_REASONS.indexOf(o.reason)>=0?o.reason:'No commercial intent'), conf:(String(o.confidence||'').toLowerCase()==='high'?'high':'low'), explain:(o.explain||'').toString().slice(0,160), profession:(o.profession||'').toString().slice(0,40) }; });
+  (j.results||[]).forEach(function(o){ byId[String(o.id)]={ audience:AUDIENCES.indexOf(o.audience)>=0?o.audience:'General', type:(o.type||'').toString().slice(0,40), keep:o.keep!==false, reason:o.keep!==false?'':(REJECT_REASONS.indexOf(o.reason)>=0?o.reason:'No commercial intent'), conf:(String(o.confidence||'').toLowerCase()==='high'?'high':'low'), explain:(o.explain||'').toString().slice(0,160), profession:(o.profession||'').toString().slice(0,40),
+    services:(Object.prototype.toString.call(o.services)==='[object Array]'?o.services:[]).map(function(s){return String(s).trim();}).filter(String).slice(0,4), icp:(o.icp||'').toString().slice(0,50), icpFit:o.icpFit!==false }; });
   return byId;
 }
 // process the next BATCH of un-enriched Topics rows (optionally only one phase); returns count processed
@@ -774,11 +779,12 @@ function processBatch(phase){
     var slice=toAI.slice(b,b+AI_BATCH);
     var items=slice.map(function(i){ var kw=String(vals[i][COL.KW-1]).toLowerCase(); return {id:String(i), kw:vals[i][COL.KW-1], titles:(cache[kw].titles||[])}; });
     var res; try{ res=classifyBatch(items, cfg); }catch(e){ res={}; }
-    slice.forEach(function(i){ var kw=String(vals[i][COL.KW-1]).toLowerCase(), o=res[String(i)]; if(o){ cache[kw].audience=o.audience; cache[kw].type=o.type; cache[kw].keep=o.keep; cache[kw].reason=o.reason; cache[kw].conf=o.conf; cache[kw].explain=o.explain; cache[kw].profession=o.profession; } else { cache[kw].audience='General'; cache[kw].conf='low'; } });
+    slice.forEach(function(i){ var kw=String(vals[i][COL.KW-1]).toLowerCase(), o=res[String(i)]; if(o){ cache[kw].audience=o.audience; cache[kw].type=o.type; cache[kw].keep=o.keep; cache[kw].reason=o.reason; cache[kw].conf=o.conf; cache[kw].explain=o.explain; cache[kw].profession=o.profession; cache[kw].services=o.services||[]; cache[kw].icp=o.icp||''; cache[kw].icpFit=o.icpFit!==false; } else { cache[kw].audience='General'; cache[kw].conf='low'; } });
   }
   todo.forEach(function(i){ var v=vals[i], kw=String(v[COL.KW-1]).toLowerCase(), c=cache[kw];
     v[COL.AUD-1]=c.audience||'General'; v[COL.TYPE-1]=c.type||''; v[COL.DOMAINS-1]=(c.domains||[]).join(',');
     v[COL.MOD-1]=modifiersOf(v[COL.KW-1], cfg); v[COL.BOFU-1]=isBofu(v[COL.KW-1])?'Yes':'No'; v[COL.CONF-1]=c.conf||''; v[COL.REXP-1]=c.explain||''; v[COL.PROF-1]=c.profession||'';
+    v[COL.SERVICES-1]=(c.services||[]).join(', ');   // which of the client's own products/services this topic maps to
     v[COL.STATUS-1]=statNorm(v[COL.STATUS-1]);
     if(v[COL.STATUS-1]!=='1' && String(v[COL.LAYER-1])!=='Locked'){   // human keeps (1) and locked overrides are protected; review the rest manually
       var hit=evalRules({kw:v[COL.KW-1],topic:v[COL.TOPIC-1],sec:v[COL.SEC-1],vol:v[COL.VOL-1],rel:v[COL.REL-1],pageType:v[COL.PT-1],domains:(c.domains||[])}, cfg);
@@ -787,6 +793,8 @@ function processBatch(phase){
       else if(c.keep===false && conf!=='low'){ v[COL.STATUS-1]='0'; v[COL.REASON-1]=c.reason||'Off intent'; v[COL.LAYER-1]='AI'; }   // confident reject (REXP = AI explain)
       else if(c.keep!==false && conf==='high'){ v[COL.STATUS-1]='1'; v[COL.REASON-1]='AI keep'; v[COL.LAYER-1]='AI'; }   // confident keep → auto-select
       else { if(String(v[COL.LAYER-1])==='Rule'||String(v[COL.LAYER-1])==='AI'){ v[COL.STATUS-1]=''; v[COL.REASON-1]=''; v[COL.LAYER-1]=''; } }   // low confidence → leave blank for you to review
+      // ICP explainer: on any reject, say who most likely searches this and flag when they're outside the client's ICP
+      if(v[COL.STATUS-1]==='0' && c.icp) v[COL.REXP-1]=(v[COL.REXP-1]?v[COL.REXP-1]+' — ':'')+'people searching this are most likely '+c.icp+(c.icpFit===false?", which is NOT the client's target ICP":'');
     }
   });
   t.getRange(2,COL.STATUS,n,1).setNumberFormat('@');   // keep 0/1 as text
@@ -844,7 +852,7 @@ function clearCache(){
   var ui=SpreadsheetApp.getUi();
   if(ui.alert('Start over?','Clears the processed Topics + AI/SERP cache (AKR and Client info kept). Continue?',ui.ButtonSet.YES_NO)!==ui.Button.YES) return;
   stopBackground();
-  var c=sheet(SHEET.CACHE); if(c && c.getLastRow()>1) c.getRange(2,1,c.getLastRow()-1,7).clearContent();
+  var c=sheet(SHEET.CACHE); if(c && c.getLastRow()>1) c.getRange(2,1,c.getLastRow()-1,13).clearContent();
   var t=sheet(SHEET.TOPICS); if(t && t.getLastRow()>1) t.getRange(2,1,t.getLastRow()-1,NCOL).clearContent();
   ui.alert('Cleared. Refresh the AKR tab and click "Run everything".');
 }
