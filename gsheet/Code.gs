@@ -130,9 +130,13 @@ function ensureAllSheets(){
   var cfg = ensureSheet(SHEET.CONFIG);
   var DEFAULTS = [['offering','Both'],['website',''],['services',''],['products',''],['industries',''],
     ['target_professions',''],['competitors',''],['locations',''],['geoMode','all'],['serpGl','us'],
-    ['rule_zero','TRUE'],['rule_free','TRUE'],['rule_nearme','FALSE'],['rule_competitor','TRUE'],
-    ['rule_location','TRUE'],['rule_info','TRUE'],['rule_jobs','TRUE'],['rule_format','TRUE'],
-    ['rule_org','TRUE'],['rule_lowrel','FALSE'],['lowrel_threshold','1']];
+    // blunt, context-free rules are OFF by default: free/info/jobs/org/location reject whole client types
+    // (a recruiter's "staffing agency", a career-coach's "job" keywords, "university signage", "printing in <city>").
+    // The client-aware AI judges those. Only keep rules that are safe for ANY client: zero-volume, your own
+    // competitor list, and truly-junk formats (login/apk/torrent).
+    ['rule_zero','TRUE'],['rule_free','FALSE'],['rule_nearme','FALSE'],['rule_competitor','TRUE'],
+    ['rule_location','FALSE'],['rule_info','FALSE'],['rule_jobs','FALSE'],['rule_format','TRUE'],
+    ['rule_org','FALSE'],['rule_lowrel','FALSE'],['lowrel_threshold','1']];
   if(cfg.getLastRow()===0){
     cfg.getRange(1,1,1,2).setValues([['Key','Value']]).setFontWeight('bold');
     cfg.getRange(2,1,DEFAULTS.length,2).setValues(DEFAULTS);
@@ -141,6 +145,15 @@ function ensureAllSheets(){
     var have={}; cfg.getRange(1,1,cfg.getLastRow(),1).getValues().forEach(function(r){ if(r[0]!=='') have[String(r[0]).trim()]=1; });
     var add=DEFAULTS.filter(function(kv){ return !have[kv[0]]; });
     if(add.length) cfg.getRange(cfg.getLastRow()+1,1,add.length,2).setValues(add);
+    // one-time: turn OFF the blunt rules on sheets created before they were defaulted off (they mass-rejected
+    // clients' own services — a recruiter's "staffing agency", a career-coach's "jobs", "university signage")
+    var props=PropertiesService.getScriptProperties();
+    if(!props.getProperty('RULES_BLUNT_OFF_V2')){
+      var off={rule_free:1, rule_info:1, rule_jobs:1, rule_org:1, rule_location:1};
+      var cv=cfg.getRange(1,1,cfg.getLastRow(),1).getValues();
+      for(var ri=0;ri<cv.length;ri++){ if(off[String(cv[ri][0]).trim()]) cfg.getRange(ri+1,2).setValue('FALSE'); }
+      props.setProperty('RULES_BLUNT_OFF_V2','1');
+    }
   }
   // make "offering" a dropdown: Product / Services / Both
   try{ var cv=cfg.getRange(1,1,cfg.getLastRow(),1).getValues();
