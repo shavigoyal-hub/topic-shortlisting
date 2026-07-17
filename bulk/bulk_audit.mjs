@@ -32,7 +32,11 @@ const ACC_FILE  = arg('accounts', 'domains.txt');
 const OUT_FILE  = arg('out', 'rejected.csv');
 const CONC      = Number(arg('concurrency', 6));
 const AI_BATCH  = Number(arg('batch', 50));
-const USE_SITE  = arg('site', 'true') !== 'false';   // ground the offering in the client's real website (default on)
+const USE_SITE  = arg('site', 'true') !== 'false';
+// SERP is OPT-IN (--serp true). With gpt-4o-mini it BACKFIRED: it read competitors ranking for a client's
+// own core service as proof of a "different industry" (theredpen: 0 -> 34 false rejects on 'study abroad consultants').
+// It does fix word-sense misses ('application roadmap'), so revisit with a stronger model.
+const USE_SERP  = arg('serp', 'false') === 'true';
 
 const MB_URL  = (process.env.METABASE_URL||'').replace(/\/$/,'');
 const MB_USER = process.env.METABASE_USER || process.env.METABASE_USERNAME;
@@ -98,7 +102,7 @@ function clientDesc(cfg){
 }
 // AUDIT prompt — ONE decision: is the page TOPIC about what the client offers, or a genuinely DIFFERENT product/industry?
 // Deliberately ignores search intent / audience / student-researcher / branded — those over-rejected on-topic pages.
-const CLASSIFY_SYS = cfg => 'You audit a client\'s already-PUBLISHED web pages. Decide ONLY one thing, the same way for EVERY industry: is the page TOPIC within the client\'s field/offering, or a genuinely DIFFERENT product / service / industry?\n\nCLIENT: '+clientDesc(cfg)+'\n\nKEEP (off=false) if the topic is one of the client\'s products/services, OR a category, type, model, variant, brand, color, size, feature, part, or accessory of what they sell, OR content about their field — INCLUDING how-to, guide, ideas, "what is", certification, exam, course, training, comparison, "best X", cost/price, reviews, or "near me". The client\'s listed offerings are EXAMPLES, NOT an exhaustive list — judge the whole field/category they operate in, not only the exact items listed. When a topic is a SERVICE applied to a target market ("<service> for <industry>"), judge it by the SERVICE, not the market — the named industry is merely who the service is sold to, NOT a different offering. Search INTENT and whether the searcher looks like a student / researcher / job-seeker DO NOT matter and are NEVER a reason to reject.\n\nREJECT (off=true) ONLY when you are CONFIDENT the topic is a DIFFERENT product, service, or industry the client clearly does NOT provide. If the topic could plausibly belong to the client\'s field or product line, KEEP. When unsure, KEEP.\n\nAlso return audience/type/profession for reporting only (they never drive the decision).\n\nTARGET ICP (customer segments this client sells to): '+(cfg.anyBusiness ? 'ANY business or consumer — this is a HORIZONTAL offering, so EVERY keyword fits the ICP (icpFit is always true).' : ((cfg.icps&&cfg.icps.length) ? cfg.icps.join('; ') : 'not specified — treat icpFit as true'))+'\nFor each keyword ALSO return: "icp" = the single customer segment/industry the page targets (short phrase, e.g. "restaurants", "hospitals", "homeowners", "general business"); "icpFit" = true if that segment is one of the client\'s target ICPs above OR the client is horizontal, else false. icpFit is INDEPENDENT of off (a page can be on-topic but target a segment the client does not serve). If unsure, icpFit=true.\nAlso return "services": the client\'s own listed products/services (copied from the CLIENT offering above, verbatim) that this keyword maps to — an array, most relevant first, max 4; [] if the keyword maps to none of them.\nReturn ONLY JSON: {"results":[{"id":<id>,"off":true|false,"reason":"<if off: the different product/industry, <=12 words; else \'\'>","confidence":"high|low","audience":"...","type":"...","profession":"...","icp":"...","icpFit":true|false,"services":["..."]}]}.';
+const CLASSIFY_SYS = cfg => 'You audit a client\'s already-PUBLISHED web pages. Decide ONLY one thing, the same way for EVERY industry: is the page TOPIC within the client\'s field/offering, or a genuinely DIFFERENT product / service / industry?\n\nCLIENT: '+clientDesc(cfg)+'\n\nKEEP (off=false) if the topic is one of the client\'s products/services, OR a category, type, model, variant, brand, color, size, feature, part, or accessory of what they sell, OR content about their field — INCLUDING how-to, guide, ideas, "what is", certification, exam, course, training, comparison, "best X", cost/price, reviews, or "near me". The client\'s listed offerings are EXAMPLES, NOT an exhaustive list — judge the whole field/category they operate in, not only the exact items listed. When a topic is a SERVICE applied to a target market ("<service> for <industry>"), judge it by the SERVICE, not the market — the named industry is merely who the service is sold to, NOT a different offering. Search INTENT and whether the searcher looks like a student / researcher / job-seeker DO NOT matter and are NEVER a reason to reject.\n\nWORD SENSE — decisive: "ranking_titles" are the pages Google actually returns for this keyword, so they reveal what the keyword MEANS to searchers. A keyword can share a word with the client\'s offering while meaning something entirely different (a different sense of that word). If the ranking pages are consistently a DIFFERENT industry from the client\'s, the keyword is OFF-topic (off=true) even though it overlaps a word in their offering — the shared word is a coincidence, not a match. Conversely, if the ranking pages are the client\'s field / competitors, that CONFIRMS in-field. Trust ranking_titles over word overlap.\n\nREJECT (off=true) ONLY when you are CONFIDENT the topic is a DIFFERENT product, service, or industry the client clearly does NOT provide. If the topic could plausibly belong to the client\'s field or product line, KEEP. When unsure, KEEP.\n\nAlso return audience/type/profession for reporting only (they never drive the decision).\n\nTARGET ICP (customer segments this client sells to): '+(cfg.anyBusiness ? 'ANY business or consumer — this is a HORIZONTAL offering, so EVERY keyword fits the ICP (icpFit is always true).' : ((cfg.icps&&cfg.icps.length) ? cfg.icps.join('; ') : 'not specified — treat icpFit as true'))+'\nFor each keyword ALSO return: "icp" = the single customer segment/industry the page targets (short phrase, e.g. "restaurants", "hospitals", "homeowners", "general business"); "icpFit" = true if that segment is one of the client\'s target ICPs above OR the client is horizontal, else false. icpFit is INDEPENDENT of off (a page can be on-topic but target a segment the client does not serve). If unsure, icpFit=true.\nAlso return "services": the client\'s own listed products/services (copied from the CLIENT offering above, verbatim) that this keyword maps to — an array, most relevant first, max 4; [] if the keyword maps to none of them.\nReturn ONLY JSON: {"results":[{"id":<id>,"off":true|false,"reason":"<if off: the different product/industry, <=12 words; else \'\'>","confidence":"high|low","audience":"...","type":"...","profession":"...","icp":"...","icpFit":true|false,"services":["..."]}]}.';
 function parseClassify(j){
   const byId={};
   (j.results||[]).forEach(o=>{ byId[String(o.id)]={ off:o.off===true, reason:String(o.reason||'').slice(0,160), conf:(String(o.confidence||'').toLowerCase()==='high'?'high':'low'), audience:String(o.audience||'General').slice(0,40), type:String(o.type||'').slice(0,40), profession:String(o.profession||'').slice(0,40), icp:String(o.icp||'').slice(0,50), icpFit:o.icpFit!==false, services:(Array.isArray(o.services)?o.services:[]).map(s=>String(s).trim()).filter(Boolean).slice(0,4) }; });
@@ -135,10 +139,38 @@ async function openai(messages){
   return {};
 }
 async function classifyBatch(items, cfg){
-  const lines = items.map(it=>JSON.stringify({id:it.id, keyword:it.kw, ranking_titles:(it.titles||[]).slice(0,6).join(' | ')})).join('\n');
+  const lines = items.map(it=>JSON.stringify({id:it.id, keyword:it.kw, page_title:it.topic||'', ranking_titles:(it.titles||[]).slice(0,6).join(' | ')})).join('\n');
   const j = await openai([{role:'system',content:CLASSIFY_SYS(cfg)},{role:'user',content:'Classify these:\n'+lines}]);
   return parseClassify(j);
 }
+
+/* ------------------- SERP (what the keyword actually MEANS) -------------------
+   Word overlap alone can't tell "college application" from "application roadmap" (software).
+   The ranking pages can. Fetched per keyword using the client's REAL target_geographies gl,
+   cached to serp_cache.json so re-runs cost nothing. */
+const SERPER_KEY = process.env.SERPER_KEY;
+const IGNORE_DOMAINS=/(wikipedia|wikihow|britannica|fandom|youtube|youtu\.be|vimeo|reddit|quora|stackexchange|stackoverflow|medium\.com|tumblr|facebook|instagram|tiktok|twitter|x\.com|pinterest|linkedin\.com|snapchat|threads\.net|discord|news\.ycombinator)/;
+const hostOf = u => { try{ return String(u).replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0].toLowerCase(); }catch(e){ return ''; } };
+async function serper(kw, gl){
+  if(!SERPER_KEY) return {titles:[], domains:[]};
+  for(let a=0;a<3;a++){
+    try{
+      const r = await fetch('https://google.serper.dev/search',{ method:'POST', headers:{'X-API-KEY':SERPER_KEY,'Content-Type':'application/json'},
+        body:JSON.stringify({q:kw, gl:gl||'us', num:10}), signal:AbortSignal.timeout(15000) });
+      if(r.status===429 || r.status>=500){ await sleep(1200*(a+1)); continue; }
+      if(!r.ok) return {titles:[], domains:[]};
+      const j = await r.json(), titles=[], domains=[];
+      for(const o of (j.organic||[]).slice(0,10)){
+        const h = hostOf(o.link||''); if(!h) continue; domains.push(h);
+        if(!IGNORE_DOMAINS.test(h)) titles.push(((o.title||'')+' '+(o.snippet||'')).trim());
+      }
+      return {titles, domains};
+    }catch(e){ await sleep(800); }
+  }
+  return {titles:[], domains:[]};
+}
+function loadSerpCache(dir){ try{ return JSON.parse(fs.readFileSync(path.resolve(dir,'serp_cache.json'),'utf8')); }catch(e){ return {}; } }
+function saveSerpCache(dir, m){ try{ fs.writeFileSync(path.resolve(dir,'serp_cache.json'), JSON.stringify(m)); }catch(e){} }
 
 /* ------------------- WEBSITE GROUNDING ------------------- */
 // fetch the client's real site (homepage + likely service pages) and reduce to text
@@ -313,10 +345,16 @@ async function main(){
   console.log('Total PUBLISHED pages: '+totalPages+' across '+fetched.length+' accounts, '+tasks.length+' AI batches\n');
 
   // 3) classify + apply rules (parallel); flag OFF-TOPIC and (separately) NOT-TARGET-ICP
-  let doneBatches=0, vetoed=0; const vetoRows=[];
+  let doneBatches=0, vetoed=0, serpFetched=0; const vetoRows=[]; const serpCache = USE_SERP ? loadSerpCache(dir) : {};
   const results = await mapLimit(tasks, CONC, async (task)=>{
     const { f, slice } = task; const cfg = auditCfg(f.names, f.icps, f.anyBusiness);
-    const items = slice.map((row,idx)=>({id:String(idx), kw:row[0], titles:[String(row[1]||'')]}));
+    const serps = await mapLimit(slice, 8, async row=>{
+      if(!USE_SERP) return {titles:[],domains:[]};
+      const k=(f.gl||'us')+'|'+String(row[0]||'').toLowerCase();
+      if(serpCache[k]) return serpCache[k];
+      const r=await serper(row[0], f.gl); serpCache[k]=r; serpFetched++; return r;
+    });
+    const items = slice.map((row,idx)=>({id:String(idx), kw:row[0], topic:String(row[1]||''), titles:(serps[idx]&&serps[idx].titles)||[]}));
     let res={}; try{ res=await classifyBatch(items, cfg); }catch(e){ res={}; }
     const out=[];
     slice.forEach((row,idx)=>{ const o=res[String(idx)]||{};
@@ -335,7 +373,8 @@ async function main(){
     doneBatches++; if(doneBatches%10===0||doneBatches===tasks.length) process.stdout.write('\r  classified '+doneBatches+'/'+tasks.length+' batches');
     return out;
   });
-  console.log('\n  in-field guard vetoed '+vetoed+' AI reject(s) whose term was in the client\'s own offering\n');
+  if(USE_SERP) saveSerpCache(dir, serpCache);
+  console.log('\n  SERP: '+serpFetched+' new lookups (rest cached) | in-field guard vetoed '+vetoed+' (guard only applies where SERP is unavailable)\n');
   if(vetoRows.length) fs.writeFileSync(path.resolve(dir,'vetoed.csv'), [['client','primaryKeyword','topic','AI wanted to reject because'].join(',')].concat(vetoRows.map(r=>r.map(csvCell).join(','))).join('\n'));
 
   // 4) write output — one merged reject list (off-topic OR not-target-ICP); Reason says which, Reason Explained names the likely ICP
