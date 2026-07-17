@@ -106,6 +106,20 @@ function parseClassify(j){
 // audit config for an account (matches mbAuditCfg_): offering always from KB, rules free/jobs/format/org on
 // blunt rules (free/jobs/org) over-reject whole client types (training, certification, education, recruiting,
 // professional bodies) — the AI judges intent client-aware, so keep only the truly-junk 'format' rule here.
+/* DETERMINISTIC IN-FIELD GUARD — the model sometimes rejects a keyword whose exact product/service is
+   sitting in the client's own offering list (long lists especially). Prompting didn't fix it, so this is a
+   hard code-level veto: if a meaningful term from the keyword appears in the offering, it CANNOT be rejected.
+   Industry-agnostic, and it errs toward keep — which is the stated priority (never reject a relevant keyword). */
+const GENERIC=new Set(['the','and','for','with','your','you','are','can','how','what','why','does','from','that','this','into','best','top','near','free','cost','price','guide','tips','ideas','service','services','product','products','solution','solutions','company','companies','custom','professional','online','list','types','type','about','more','other','their','they','when','where','which','will','make','made','need','using','used','vs']);
+const stem = t => t.replace(/ies$/,'y').replace(/s$/,'');
+function inOffering(kw, names){
+  if(!names || !names.length) return false;
+  const hayToks = names.join(' ').toLowerCase().replace(/[^a-z0-9]+/g,' ').split(' ').filter(Boolean).map(stem);
+  const hay = new Set(hayToks), hayStr = ' '+hayToks.join(' ')+' ';
+  const toks = String(kw||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').split(' ').filter(t=>t && t.length>=4 && !GENERIC.has(t)).map(stem);
+  for(let i=0;i<toks.length-1;i++){ if(hayStr.includes(' '+toks[i]+' '+toks[i+1]+' ')) return true; }   // phrase match (strong)
+  return toks.some(t => t.length>=4 && hay.has(t));   // single term — 4 chars matters ("sign","door","wrap","skin","gel")
+}
 const auditCfg = (names, icps, anyBusiness) => ({ offering:'Both', website:'', services:names||[], products:[], industries:[], targetProfessions:[], competitors:[], locations:[], negatives:[], geoMode:'all', icps:icps||[], anyBusiness:!!anyBusiness, rules:{zero:false,free:false,nearme:false,competitor:false,location:false,info:false,jobs:false,format:true,org:false,lowrel:false}, lowRel:1 });
 
 /* --------------------------- OpenAI ------------------------------ */
@@ -281,7 +295,7 @@ async function main(){
   console.log('Total PUBLISHED pages: '+totalPages+' across '+fetched.length+' accounts, '+tasks.length+' AI batches\n');
 
   // 3) classify + apply rules (parallel); flag OFF-TOPIC and (separately) NOT-TARGET-ICP
-  let doneBatches=0;
+  let doneBatches=0, vetoed=0;
   const results = await mapLimit(tasks, CONC, async (task)=>{
     const { f, slice } = task; const cfg = auditCfg(f.names, f.icps, f.anyBusiness);
     const items = slice.map((row,idx)=>({id:String(idx), kw:row[0], titles:[String(row[1]||'')]}));
@@ -291,6 +305,7 @@ async function main(){
       const hit=evalRules({kw:row[0],topic:row[1],vol:row[3],pageType:row[2]}, cfg);
       let reason='', rexp='';
       if(hit){ reason=hit.reason; rexp=hit.reason; }                                             // rule junk
+      else if(o.off===true && inOffering(row[0], f.names)){ vetoed++; }                           // guard: it's literally in their offering — never reject
       else if(o.off===true){ reason='Off-topic (different product)'; rexp=o.reason||''; }         // different product/industry
       else if(!f.anyBusiness && o.icpFit===false){ reason='Not our target ICP'; rexp=''; }        // outside ICP only
       if(reason){
@@ -302,7 +317,7 @@ async function main(){
     doneBatches++; if(doneBatches%10===0||doneBatches===tasks.length) process.stdout.write('\r  classified '+doneBatches+'/'+tasks.length+' batches');
     return out;
   });
-  console.log('\n');
+  console.log('\n  in-field guard vetoed '+vetoed+' AI reject(s) whose term was in the client\'s own offering\n');
 
   // 4) write output — one merged reject list (off-topic OR not-target-ICP); Reason says which, Reason Explained names the likely ICP
   const HDR=['client','primaryKeyword','pageType','topic','volume','publishedUrl','Matched Services','Audience','Profession','Type','ICP','Modifier','BOFU','Status','Reason','Reason Explained','Confidence'];
