@@ -39,6 +39,7 @@ const USE_SITE  = arg('site', 'true') !== 'false';
 const USE_SERP  = arg('serp', 'true') !== 'false';
 const MODEL     = arg('model', (arg('serp','true')!=='false') ? 'gpt-4o' : 'gpt-4o-mini');   // SERP reasoning needs gpt-4o; no-SERP uses cheap mini
 const USE_SITECHECK = (arg('serp','true')!=='false') && arg('sitecheck','true')!=='false';   // verify off-topic rejects against the client's own (non-feed) site
+const SKIP_AUDITED  = arg('skip-audited','false')==='true';   // skip accounts already recorded in audited_ledger.csv
 
 const MB_URL  = (process.env.METABASE_URL||'').replace(/\/$/,'');
 const MB_USER = process.env.METABASE_USER || process.env.METABASE_USERNAME;
@@ -339,6 +340,13 @@ async function mbClusterCols(db){
   const find=cands=>{ for(const c of cands){ const e=names.find(n=>n.toLowerCase()===c); if(e) return e; } for(const c of cands){ const p=names.find(n=>n.toLowerCase().includes(c)); if(p) return p; } return null; };
   return { pk:find(['primary_kw','primary_keyword','keyword']), topic:find(['topic']), pt:find(['page_type','type']), vol:find(['volume','search_volume','msv']), url:find(['published_url','page_url','url']), slug:find(['slug']) };
 }
+// audited ledger — a persistent record of every account we've run, so future runs can --skip-audited them
+function loadLedger(dir){ const p=path.resolve(dir,'audited_ledger.csv'); const m={};
+  try{ const rows=parseCSV(fs.readFileSync(p,'utf8')); for(const r of rows.slice(1)){ if(r[0]) m[String(r[0]).toLowerCase()]={pages:Number(r[1]||0), rejected:Number(r[2]||0), last_audited:r[3]||'', out:r[4]||''}; } }catch(e){}
+  return m; }
+function saveLedger(dir, m){ const p=path.resolve(dir,'audited_ledger.csv');
+  const rows=[['domain','published_pages','rejected','last_audited','output_file']].concat(Object.keys(m).sort().map(d=>[d,m[d].pages,m[d].rejected,m[d].last_audited,m[d].out||'']));
+  try{ fs.writeFileSync(p, rows.map(r=>r.map(csvCell).join(',')).join('\n')); }catch(e){} }
 const mbEsc = s => String(s).replace(/'/g,"''");
 const mbNormDomain = s => String(s||'').toLowerCase().replace(/^https?:\/\//,'').replace(/^www\./,'').replace(/\/.*$/,'').trim();
 const mbCore = s => String(s||'').toLowerCase().replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0].split('.')[0].replace(/[^a-z0-9]/g,'');
@@ -390,6 +398,10 @@ async function main(){
   domains = domains.map(d=>({raw:d, domain:mbNormDomain(d)})).filter(d=>d.domain && d.domain!=='example.com');
   // de-dup
   const seen=new Set(); domains=domains.filter(d=>!seen.has(d.domain)&&seen.add(d.domain));
+  // ledger: skip accounts already audited in a previous run (so we never re-run/re-bill them)
+  const ledger = loadLedger(dir);
+  if(SKIP_AUDITED){ const before=domains.length; domains=domains.filter(d=>!ledger[d.domain]);
+    console.log('Skipping '+(before-domains.length)+' already-audited accounts (from audited_ledger.csv)'); }
   console.log('Accounts to audit: '+domains.length);
 
   await mbLogin(); const db = await mbDbId(); const C = await mbClusterCols(db);
@@ -519,5 +531,10 @@ async function main(){
   for(const f of fetched){ if(f.__error) continue; const b=byDom[f.domain];
     console.log('  '+f.domain.padEnd(30)+' pages '+String(b.pages).padStart(4)+'  rejected '+String(b.rej).padStart(4)+'  gl='+(f.gl||'us')+'  '+(f.anyBusiness?'[ANY business]':'[ICP'+(f.icpFromMetabase?'*':'~')+': '+(f.icps||[]).slice(0,3).join(', ')+']')); }
   console.log('\nWrote '+allRows.length+' rejected rows to '+OUT_FILE+'; ICP lists in icp_by_account.csv');
+  // record what we audited so future runs can --skip-audited these
+  const today = new Date().toISOString().slice(0,10);
+  for(const f of fetched){ if(f.__error) continue; ledger[f.domain] = { pages:byDom[f.domain].pages, rejected:byDom[f.domain].rej, last_audited:today, out:OUT_FILE }; }
+  saveLedger(dir, ledger);
+  console.log('Ledger updated: '+Object.keys(ledger).length+' accounts total in audited_ledger.csv');
 }
 main().catch(e=>{ console.error('\nFATAL: '+e.message); process.exit(1); });

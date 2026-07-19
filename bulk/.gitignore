@@ -7,3 +7,5 @@ icp_cache.json
 category_cache.json
 serp_cache.json
 cap_cache.json
+audited_ledger.csv
+domain_aliases.csv
