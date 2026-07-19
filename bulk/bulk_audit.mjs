@@ -37,6 +37,7 @@ const USE_SITE  = arg('site', 'true') !== 'false';
 // own core service as proof of a "different industry" (theredpen: 0 -> 34 false rejects on 'study abroad consultants').
 // It does fix word-sense misses ('application roadmap'), so revisit with a stronger model.
 const USE_SERP  = arg('serp', 'false') === 'true';
+const MODEL     = arg('model', 'gpt-4o-mini');   // --model gpt-4o for the SERP-reasoning judge
 
 const MB_URL  = (process.env.METABASE_URL||'').replace(/\/$/,'');
 const MB_USER = process.env.METABASE_USER || process.env.METABASE_USERNAME;
@@ -95,14 +96,14 @@ const AUDIENCES=['B2B / Corporate','Healthcare / Clinical','Aspiring Practitione
 const REJECT_REASONS=['Job-seeker intent','Researcher/student intent','Branded query','Off-ICP audience','No commercial intent'];
 function clientDesc(cfg){
   const sells=(cfg.services||[]).concat(cfg.products||[]);
-  return [cfg.offering?('Offering: '+cfg.offering+'.'):'', sells.length?('Sells: '+sells.join(', ')+'.'):'',
+  return [cfg.identity?('THIS COMPANY IS: '+cfg.identity+'.'):'', cfg.offering?('Offering: '+cfg.offering+'.'):'', sells.length?('Sells: '+sells.join(', ')+'.'):'',
     cfg.industries.length?('Ideal customers (ICP): '+cfg.industries.join(', ')+'.'):'',
     (cfg.targetProfessions&&cfg.targetProfessions.length)?('TARGET BUYER ROLES: '+cfg.targetProfessions.join(', ')+'.'):'',
     cfg.website?('Site: '+cfg.website+'.'):''].filter(Boolean).join(' ') || '(client profile not provided)';
 }
 // AUDIT prompt — ONE decision: is the page TOPIC about what the client offers, or a genuinely DIFFERENT product/industry?
 // Deliberately ignores search intent / audience / student-researcher / branded — those over-rejected on-topic pages.
-const CLASSIFY_SYS = cfg => 'You audit a client\'s already-PUBLISHED web pages. Decide ONLY one thing, the same way for EVERY industry: is the page TOPIC within the client\'s field/offering, or a genuinely DIFFERENT product / service / industry?\n\nCLIENT: '+clientDesc(cfg)+'\n\nKEEP (off=false) if the topic is one of the client\'s products/services, OR a category, type, model, variant, brand, color, size, feature, part, or accessory of what they sell, OR content about their field — INCLUDING how-to, guide, ideas, "what is", certification, exam, course, training, comparison, "best X", cost/price, reviews, or "near me". The client\'s listed offerings are EXAMPLES, NOT an exhaustive list — judge the whole field/category they operate in, not only the exact items listed. When a topic is a SERVICE applied to a target market ("<service> for <industry>"), judge it by the SERVICE, not the market — the named industry is merely who the service is sold to, NOT a different offering. Search INTENT and whether the searcher looks like a student / researcher / job-seeker DO NOT matter and are NEVER a reason to reject.\n\nWORD SENSE — decisive: "ranking_titles" are the pages Google actually returns for this keyword, so they reveal what the keyword MEANS to searchers. A keyword can share a word with the client\'s offering while meaning something entirely different (a different sense of that word). If the ranking pages are consistently a DIFFERENT industry from the client\'s, the keyword is OFF-topic (off=true) even though it overlaps a word in their offering — the shared word is a coincidence, not a match. Conversely, if the ranking pages are the client\'s field / competitors, that CONFIRMS in-field. Trust ranking_titles over word overlap.\n\nREJECT (off=true) ONLY when you are CONFIDENT the topic is a DIFFERENT product, service, or industry the client clearly does NOT provide. If the topic could plausibly belong to the client\'s field or product line, KEEP. When unsure, KEEP.\n\nAlso return audience/type/profession for reporting only (they never drive the decision).\n\nTARGET ICP (customer segments this client sells to): '+(cfg.anyBusiness ? 'ANY business or consumer — this is a HORIZONTAL offering, so EVERY keyword fits the ICP (icpFit is always true).' : ((cfg.icps&&cfg.icps.length) ? cfg.icps.join('; ') : 'not specified — treat icpFit as true'))+'\nFor each keyword ALSO return: "icp" = the single customer segment/industry the page targets (short phrase, e.g. "restaurants", "hospitals", "homeowners", "general business"); "icpFit" = true if that segment is one of the client\'s target ICPs above OR the client is horizontal, else false. icpFit is INDEPENDENT of off (a page can be on-topic but target a segment the client does not serve). If unsure, icpFit=true.\nAlso return "services": the client\'s own listed products/services (copied from the CLIENT offering above, verbatim) that this keyword maps to — an array, most relevant first, max 4; [] if the keyword maps to none of them.\nReturn ONLY JSON: {"results":[{"id":<id>,"off":true|false,"reason":"<if off: the different product/industry, <=12 words; else \'\'>","confidence":"high|low","audience":"...","type":"...","profession":"...","icp":"...","icpFit":true|false,"services":["..."]}]}.';
+const CLASSIFY_SYS = cfg => 'You audit a client\'s already-PUBLISHED web pages. Decide ONLY one thing, the same way for EVERY industry: is the page TOPIC within the client\'s field/offering, or a genuinely DIFFERENT product / service / industry?\n\nCLIENT: '+clientDesc(cfg)+'\n\nKEEP (off=false) if the topic is one of the client\'s products/services, OR a category, type, model, variant, brand, color, size, feature, part, or accessory of what they sell, OR content about their field — INCLUDING how-to, guide, ideas, "what is", certification, exam, course, training, comparison, "best X", cost/price, reviews, or "near me". The client\'s listed offerings are EXAMPLES, NOT an exhaustive list — judge the whole field/category they operate in, not only the exact items listed. When a topic is a SERVICE applied to a target market ("<service> for <industry>"), judge it by the SERVICE, not the market — the named industry is merely who the service is sold to, NOT a different offering. Search INTENT and whether the searcher looks like a student / researcher / job-seeker DO NOT matter and are NEVER a reason to reject.\n\nHOW TO READ ranking_titles (the actual top-10 Google results — do this in two steps):\n  STEP 1: From the ranking_titles, name the single INDUSTRY / FIELD these results belong to, ignoring the client entirely (e.g. "software product management", "overseas education consulting", "commercial signage", "automotive glass").\n  STEP 2: Is that field the SAME as THIS COMPANY\'s field (see CLIENT above)? \n    • If the ranking pages are OTHER COMPANIES offering the SAME service/product as the client — i.e. the client\'s COMPETITORS or the same category — that CONFIRMS the keyword is the client\'s field → off=false (KEEP). Competitors ranking is NOT a reason to reject; it is proof the client belongs there.\n    • Set off=true ONLY when the ranking field is a genuinely DIFFERENT business category than the client\'s (e.g. keyword shares the word "application" but the results are all software-roadmap tools while the client does university admissions → different field → REJECT). A shared word with a different meaning is a coincidence, not a match.\n  Trust the ranking_titles over word overlap, but "different industry" means a different CATEGORY of business — never merely other providers of the client\'s own service.\n\nREJECT (off=true) ONLY when you are CONFIDENT the topic is a DIFFERENT product, service, or industry the client clearly does NOT provide. If the topic could plausibly belong to the client\'s field or product line, KEEP. When unsure, KEEP.\n\nAlso return audience/type/profession for reporting only (they never drive the decision).\n\nTARGET ICP (customer segments this client sells to): '+(cfg.anyBusiness ? 'ANY business or consumer — this is a HORIZONTAL offering, so EVERY keyword fits the ICP (icpFit is always true).' : ((cfg.icps&&cfg.icps.length) ? cfg.icps.join('; ') : 'not specified — treat icpFit as true'))+'\nFor each keyword ALSO return: "icp" = the single customer segment/industry the page targets (short phrase, e.g. "restaurants", "hospitals", "homeowners", "general business"); "icpFit" = true if that segment is one of the client\'s target ICPs above OR the client is horizontal, else false. icpFit is INDEPENDENT of off (a page can be on-topic but target a segment the client does not serve). If unsure, icpFit=true.\nAlso return "services": the client\'s own listed products/services (copied from the CLIENT offering above, verbatim) that this keyword maps to — an array, most relevant first, max 4; [] if the keyword maps to none of them.\nReturn ONLY JSON: {"results":[{"id":<id>,"off":true|false,"reason":"<if off: the different product/industry, <=12 words; else \'\'>","confidence":"high|low","audience":"...","type":"...","profession":"...","icp":"...","icpFit":true|false,"services":["..."]}]}.';
 function parseClassify(j){
   const byId={};
   (j.results||[]).forEach(o=>{ byId[String(o.id)]={ off:o.off===true, reason:String(o.reason||'').slice(0,160), conf:(String(o.confidence||'').toLowerCase()==='high'?'high':'low'), audience:String(o.audience||'General').slice(0,40), type:String(o.type||'').slice(0,40), profession:String(o.profession||'').slice(0,40), icp:String(o.icp||'').slice(0,50), icpFit:o.icpFit!==false, services:(Array.isArray(o.services)?o.services:[]).map(s=>String(s).trim()).filter(Boolean).slice(0,4) }; });
@@ -131,7 +132,7 @@ const auditCfg = (names, icps, anyBusiness) => ({ offering:'Both', website:'', s
 async function openai(messages){
   for(let attempt=0; attempt<4; attempt++){
     const resp = await fetch('https://api.openai.com/v1/chat/completions',{ method:'POST', headers:{'Authorization':'Bearer '+OPENAI_KEY,'Content-Type':'application/json'},
-      body:JSON.stringify({ model:'gpt-4o-mini', temperature:0, response_format:{type:'json_object'}, messages }) });
+      body:JSON.stringify({ model:MODEL, temperature:0, response_format:{type:'json_object'}, messages }) });
     if(resp.status===429 || resp.status>=500){ await sleep(1500*(attempt+1)); continue; }
     if(!resp.ok) throw new Error('OpenAI '+resp.status+': '+(await resp.text()).slice(0,200));
     try{ return JSON.parse(JSON.parse(await resp.text()).choices[0].message.content); }catch(e){ return {}; }
@@ -235,10 +236,12 @@ async function mbRunSql(db, sql){
 // so we don't have to guess it with an AI call.
 async function mbCompanyInfo(db, domains){
   const list = domains.map(d=>"'"+mbEsc(d)+"'").join(',');
-  const r = await mbRunSql(db, "SELECT LOWER(root_domain), company_info->>'target_geographies', company_info->>'target_customer_segments', company_info->>'service_areas', company_info->>'business_category' FROM public.projects WHERE LOWER(root_domain) IN ("+list+")");
+  const r = await mbRunSql(db, "SELECT LOWER(root_domain), company_info->>'target_geographies', company_info->>'target_customer_segments', company_info->>'service_areas', company_info->>'business_category', company_info->>'name', company_info->>'value_propositions' FROM public.projects WHERE LOWER(root_domain) IN ("+list+")");
   const parse = s => { try{ const a=JSON.parse(s||'[]'); return Array.isArray(a)?a.map(String).filter(Boolean):[]; }catch(e){ return []; } };
+  const nm = s => { try{ const o=JSON.parse(s||'{}'); return o.company_name||o.dba_name||o.legal_name||''; }catch(e){ return String(s||''); } };
   const m = {};
-  for(const row of r.rows) m[String(row[0])] = { geo:parse(row[1]), icps:parse(row[2]), areas:parse(row[3]), category:row[4]||'' };
+  for(const row of r.rows){ const cats=parse(row[4]);
+    m[String(row[0])] = { geo:parse(row[1]), icps:parse(row[2]), areas:parse(row[3]), category:cats, name:nm(row[5]), valueProps:parse(row[6]) }; }
   return m;
 }
 async function mbClusterCols(db){
@@ -327,8 +330,11 @@ async function main(){
     if(ci.icps.length){ icp = {icps:ci.icps, anyBusiness:false}; }                                   // real ICP from Metabase — no AI guess needed
     else { icp = icpCache[d.domain]; if(!icp){ try{ icp = await deriveICP(names, d.domain); }catch(e){ icp = {icps:[], anyBusiness:false}; } icpCache[d.domain] = icp; } }
     const gl = (ci.geo[0]||'us').toLowerCase();                                                      // target_geographies is already ISO ("us","in")
+    // one-line identity so the model knows WHAT THE COMPANY IS (not just a list of service items)
+    const identity = [ (ci.name||d.domain), (ci.category&&ci.category.length)?('— '+ci.category.slice(0,4).join(', ')):'',
+      (ci.areas&&ci.areas.length)?('serving '+ci.areas.slice(0,4).join(', ')):'' ].filter(Boolean).join(' ');
     return { domain:d.domain, rows, names, matched:!!names.length, nKb:kbNames.length, nSite:siteNames.length,
-             icps:icp.icps||[], anyBusiness:!!icp.anyBusiness, gl, areas:ci.areas||[], icpFromMetabase:!!ci.icps.length };
+             icps:icp.icps||[], anyBusiness:!!icp.anyBusiness, gl, areas:ci.areas||[], icpFromMetabase:!!ci.icps.length, identity };
   });
   if(USE_SITE) saveSiteCache(dir, siteCache);
   saveIcpCache(dir, icpCache);
@@ -347,7 +353,7 @@ async function main(){
   // 3) classify + apply rules (parallel); flag OFF-TOPIC and (separately) NOT-TARGET-ICP
   let doneBatches=0, vetoed=0, serpFetched=0; const vetoRows=[]; const serpCache = USE_SERP ? loadSerpCache(dir) : {};
   const results = await mapLimit(tasks, CONC, async (task)=>{
-    const { f, slice } = task; const cfg = auditCfg(f.names, f.icps, f.anyBusiness);
+    const { f, slice } = task; const cfg = auditCfg(f.names, f.icps, f.anyBusiness); cfg.identity = f.identity;
     const serps = await mapLimit(slice, 8, async row=>{
       if(!USE_SERP) return {titles:[],domains:[]};
       const k=(f.gl||'us')+'|'+String(row[0]||'').toLowerCase();
@@ -361,7 +367,7 @@ async function main(){
       const hit=evalRules({kw:row[0],topic:row[1],vol:row[3],pageType:row[2]}, cfg);
       let reason='', rexp='';
       if(hit){ reason=hit.reason; rexp=hit.reason; }                                             // rule junk
-      else if(o.off===true && inOffering(row[0], f.names)){ vetoed++; vetoRows.push([f.domain, row[0], row[1], o.reason||'']); }   // guard: it's literally in their offering — never reject
+      else if(o.off===true && !(serps[idx]&&serps[idx].titles.length) && inOffering(row[0], f.names)){ vetoed++; vetoRows.push([f.domain, row[0], row[1], o.reason||'']); }   // guard only where SERP gave no evidence; with SERP, trust the SERP-informed AI   // guard: it's literally in their offering — never reject
       else if(o.off===true){ reason='Off-topic (different product)'; rexp=o.reason||''; }         // different product/industry
       else if(!f.anyBusiness && o.icpFit===false){ reason='Not our target ICP'; rexp=''; }        // outside ICP only
       if(reason){
