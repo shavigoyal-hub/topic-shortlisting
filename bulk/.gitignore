@@ -4,3 +4,4 @@ domains.txt
 !/.env.example
 site_cache.json
 icp_cache.json
+category_cache.json
