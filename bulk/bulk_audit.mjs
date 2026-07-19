@@ -38,6 +38,7 @@ const USE_SITE  = arg('site', 'true') !== 'false';
 // It does fix word-sense misses ('application roadmap'), so revisit with a stronger model.
 const USE_SERP  = arg('serp', 'true') !== 'false';
 const MODEL     = arg('model', (arg('serp','true')!=='false') ? 'gpt-4o' : 'gpt-4o-mini');   // SERP reasoning needs gpt-4o; no-SERP uses cheap mini
+const USE_SITECHECK = (arg('serp','true')!=='false') && arg('sitecheck','true')!=='false';   // verify off-topic rejects against the client's own (non-feed) site
 
 const MB_URL  = (process.env.METABASE_URL||'').replace(/\/$/,'');
 const MB_USER = process.env.METABASE_USER || process.env.METABASE_USERNAME;
@@ -202,6 +203,35 @@ async function serper(kw, gl){
 function loadSerpCache(dir){ try{ return JSON.parse(fs.readFileSync(path.resolve(dir,'serp_cache.json'),'utf8')); }catch(e){ return {}; } }
 function saveSerpCache(dir, m){ try{ fs.writeFileSync(path.resolve(dir,'serp_cache.json'), JSON.stringify(m)); }catch(e){} }
 
+// site: search returning full organic links (for the own-site coverage check)
+async function serperLinks(q, gl){
+  if(!SERPER_KEY) return [];
+  try{
+    const r = await fetch('https://google.serper.dev/search',{ method:'POST', headers:{'X-API-KEY':SERPER_KEY,'Content-Type':'application/json'},
+      body:JSON.stringify({q, gl:gl||'us', num:10}), signal:AbortSignal.timeout(15000) });
+    if(!r.ok) return [];
+    return ((await r.json()).organic||[]).map(o=>({link:o.link||'', title:o.title||'', snippet:o.snippet||''})).filter(o=>o.link);
+  }catch(e){ return []; }
+}
+/* OWN-SITE COVERAGE CHECK — Gushwork's SEO pages live under /feeds (or are the audited URLs); a match on a GENUINE
+   (non-feed) page that indicates they sell/offer the thing means they really do it → override the reject. */
+async function siteCheck(f, kw, gl){
+  const hits = await serperLinks('site:'+f.domain+' '+kw, gl);
+  const genuine = hits.filter(h=>{
+    const u = h.link.toLowerCase().replace(/\/$/,'');
+    if(f.feedPath && u.includes(f.domain+f.feedPath)) return false;   // Gushwork feed section
+    if(/\/feeds?(\/|$)/.test(u)) return false;                        // any /feeds path (fallback)
+    if(f.gushUrls && f.gushUrls.has(u)) return false;                 // the audited pages themselves
+    return true;
+  }).slice(0,4);
+  if(!genuine.length) return null;
+  const j = await openai([
+    {role:'system',content:'A client\'s OWN website (excluding their auto-generated SEO feed pages) has these pages for a keyword. Do these genuine pages indicate the client actually SELLS / OFFERS / SERVES this product or service (not just mentions it in passing)? Return ONLY JSON: {"offers":true|false,"url":"<best supporting url or \'\'>"}.'},
+    {role:'user',content:'Client: '+(f.identity||f.domain)+'\nKeyword: '+kw+'\nTheir genuine pages:\n'+genuine.map(g=>'- '+g.title+' — '+g.snippet+' ('+g.link+')').join('\n')}
+  ]);
+  return (j&&j.offers===true) ? {url:(j.url||genuine[0].link)} : null;
+}
+
 /* ------------------- WEBSITE GROUNDING ------------------- */
 // fetch the client's real site (homepage + likely service pages) and reduce to text
 function htmlToText(html){ return String(html).replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ').replace(/<[^>]+>/g,' ').replace(/&[a-z#0-9]+;/gi,' ').replace(/\s+/g,' ').trim(); }
@@ -294,12 +324,13 @@ async function mbRunSql(db, sql){
 // so we don't have to guess it with an AI call.
 async function mbCompanyInfo(db, domains){
   const list = domains.map(d=>"'"+mbEsc(d)+"'").join(',');
-  const r = await mbRunSql(db, "SELECT LOWER(root_domain), company_info->>'target_geographies', company_info->>'target_customer_segments', company_info->>'service_areas', company_info->>'business_category', company_info->>'name', company_info->>'value_propositions' FROM public.projects WHERE LOWER(root_domain) IN ("+list+")");
+  const r = await mbRunSql(db, "SELECT LOWER(root_domain), company_info->>'target_geographies', company_info->>'target_customer_segments', company_info->>'service_areas', company_info->>'business_category', company_info->>'name', company_info->>'value_propositions', canonical_url FROM public.projects WHERE LOWER(root_domain) IN ("+list+")");
   const parse = s => { try{ const a=JSON.parse(s||'[]'); return Array.isArray(a)?a.map(String).filter(Boolean):[]; }catch(e){ return []; } };
   const nm = s => { try{ const o=JSON.parse(s||'{}'); return o.company_name||o.dba_name||o.legal_name||''; }catch(e){ return String(s||''); } };
+  const feedPathOf = u => { try{ const p=new URL(u).pathname.replace(/\/$/,''); return (p && p!=='') ? p.toLowerCase() : ''; }catch(e){ return ''; } };   // e.g. "/feeds" — where Gushwork's SEO pages live
   const m = {};
   for(const row of r.rows){ const cats=parse(row[4]);
-    m[String(row[0])] = { geo:parse(row[1]), icps:parse(row[2]), areas:parse(row[3]), category:cats, name:nm(row[5]), valueProps:parse(row[6]) }; }
+    m[String(row[0])] = { geo:parse(row[1]), icps:parse(row[2]), areas:parse(row[3]), category:cats, name:nm(row[5]), valueProps:parse(row[6]), feedPath:feedPathOf(row[7]) }; }
   return m;
 }
 async function mbClusterCols(db){
@@ -398,9 +429,10 @@ async function main(){
     // WHAT THEY DO / DON'T (reconciled from KB + website), cached
     let cap = capCache[d.domain];
     if(!cap){ try{ cap = await deriveCapabilities(kbNames, siteNames); }catch(e){ cap = {does:[], doesNot:[]}; } capCache[d.domain] = cap; }
+    const gushUrls = new Set(rows.map(rr=>String(rr[4]||'').toLowerCase().replace(/\/$/,'')).filter(Boolean));   // the audited Gushwork pages themselves
     return { domain:d.domain, rows, names, kbNames, siteNames, matched:!!names.length, nKb:kbNames.length, nSite:siteNames.length,
              icps:icp.icps||[], anyBusiness:!!icp.anyBusiness, gl, areas:ci.areas||[], icpFromMetabase:!!ci.icps.length, identity, category,
-             does:cap.does||[], doesNot:cap.doesNot||[] };
+             does:cap.does||[], doesNot:cap.doesNot||[], feedPath:(ci.feedPath||'/feeds'), gushUrls };
   });
   if(USE_SITE) saveSiteCache(dir, siteCache);
   saveIcpCache(dir, icpCache);
@@ -419,7 +451,7 @@ async function main(){
   console.log('Total PUBLISHED pages: '+totalPages+' across '+fetched.length+' accounts, '+tasks.length+' AI batches\n');
 
   // 3) classify + apply rules (parallel); flag OFF-TOPIC and (separately) NOT-TARGET-ICP
-  let doneBatches=0, vetoed=0, catVetoed=0, serpFetched=0; const vetoRows=[]; const serpCache = USE_SERP ? loadSerpCache(dir) : {};
+  let doneBatches=0, vetoed=0, catVetoed=0, siteVetoed=0, serpFetched=0; const vetoRows=[]; const serpCache = USE_SERP ? loadSerpCache(dir) : {};
   const results = await mapLimit(tasks, CONC, async (task)=>{
     const { f, slice } = task; const cfg = auditCfg(f.names, f.icps, f.anyBusiness); cfg.identity = f.identity; cfg.category = f.category; cfg.does = f.does; cfg.doesNot = f.doesNot;
     const serps = await mapLimit(slice, 8, async row=>{
@@ -430,31 +462,44 @@ async function main(){
     });
     const items = slice.map((row,idx)=>({id:String(idx), kw:row[0], topic:String(row[1]||''), titles:(serps[idx]&&serps[idx].titles)||[]}));
     let res={}; try{ res=await classifyBatch(items, cfg); }catch(e){ res={}; }
-    const out=[];
+    // PHASE 1 — base decision per row (guards + AI off-topic)
+    const cand=[];
     slice.forEach((row,idx)=>{ const o=res[String(idx)]||{};
       const hit=evalRules({kw:row[0],topic:row[1],vol:row[3],pageType:row[2]}, cfg);
       let reason='', rexp='';
       if(hit){ reason=hit.reason; rexp=hit.reason; }                                             // rule junk
-      else if(o.off===true && inCategory(row[0], f.category)){ catVetoed++; }   // client's OWN category term — never reject, even with SERP
-      else if(o.off===true && !(serps[idx]&&serps[idx].titles.length) && inOffering(row[0], f.names)){ vetoed++; vetoRows.push([f.domain, row[0], row[1], o.reason||'']); }   // offering guard only where SERP gave no evidence; under SERP the DO/DON'T-informed AI decides
+      else if(o.off===true && inCategory(row[0], f.category)){ catVetoed++; return; }            // client's OWN category term
+      else if(o.off===true && !(serps[idx]&&serps[idx].titles.length) && inOffering(row[0], f.names)){ vetoed++; vetoRows.push([f.domain, row[0], row[1], o.reason||'']); return; }
       else if(o.off===true){ reason='Off-topic (different product)'; rexp=o.reason||''; }         // different product/industry
-      // NOTE: ICP is a SIGNAL, not a filter — it never causes a reject on its own (only off-topic does). ICP columns stay for context.
-      if(reason){
-        // explainer: name the likely searcher segment, and flag when it's outside the client's ICP (vertical clients only)
-        if(o.icp && !f.anyBusiness){ rexp = (rexp ? rexp+' — ' : '') + 'people searching this are most likely ' + o.icp + (o.icpFit===false ? ", which is NOT the client's target ICP" : ''); }
-        out.push([f.domain, row[0], row[2], row[1], row[3], row[4],
-          (f.kbNames||[]).join(', '), (f.siteNames||[]).join(', '),
-          (f.does||[]).join(', '), (f.doesNot||[]).join(', '),
-          (o.services||[]).join(', '), o.audience||'', o.profession||'', o.type||'',
-          (o.icp||''), (f.icps||[]).join(', '),
-          modifiersOf(row[0],cfg), isBofu(row[0])?'Yes':'No', 0, reason, rexp, o.conf||'']);
-      }
+      if(reason) cand.push({row, o, reason, rexp, offtopic: reason.startsWith('Off-topic')});
     });
+    // PHASE 2 — for OFF-TOPIC rejects, check the client's OWN (non-feed) site; if it shows they offer it, override to KEEP
+    if(USE_SITECHECK){
+      await mapLimit(cand.filter(c=>c.offtopic), 6, async c=>{
+        const k='SITE|'+f.domain+'|'+String(c.row[0]||'').toLowerCase();
+        let sc = serpCache[k];
+        if(sc===undefined){ try{ sc = await siteCheck(f, c.row[0], f.gl); }catch(e){ sc=null; } serpCache[k]=sc||null; serpFetched++; }
+        if(sc && sc.url){ c.siteKept = true; c.coverage = sc.url; }
+      });
+    }
+    // PHASE 3 — output the survivors
+    const out=[];
+    for(const c of cand){
+      if(c.siteKept){ siteVetoed++; continue; }   // their own site proves they offer it
+      const row=c.row, o=c.o; let rexp=c.rexp;
+      if(o.icp && !f.anyBusiness){ rexp = (rexp ? rexp+' — ' : '') + 'people searching this are most likely ' + o.icp + (o.icpFit===false ? ", which is NOT the client's target ICP" : ''); }
+      out.push([f.domain, row[0], row[2], row[1], row[3], row[4],
+        (f.kbNames||[]).join(', '), (f.siteNames||[]).join(', '),
+        (f.does||[]).join(', '), (f.doesNot||[]).join(', '),
+        (o.services||[]).join(', '), o.audience||'', o.profession||'', o.type||'',
+        (o.icp||''), (f.icps||[]).join(', '),
+        modifiersOf(row[0],cfg), isBofu(row[0])?'Yes':'No', 0, c.reason, rexp, o.conf||'']);
+    }
     doneBatches++; if(doneBatches%10===0||doneBatches===tasks.length) process.stdout.write('\r  classified '+doneBatches+'/'+tasks.length+' batches');
     return out;
   });
   if(USE_SERP) saveSerpCache(dir, serpCache);
-  console.log('\n  SERP: '+serpFetched+' new lookups | category-guard kept '+catVetoed+' (own-category terms) | offering-guard kept '+vetoed+'\n');
+  console.log('\n  SERP: '+serpFetched+' lookups | category-guard kept '+catVetoed+' | offering-guard kept '+vetoed+' | own-site-check kept '+siteVetoed+' (their own site shows they offer it)\n');
   if(vetoRows.length) fs.writeFileSync(path.resolve(dir,'vetoed.csv'), [['client','primaryKeyword','topic','AI wanted to reject because'].join(',')].concat(vetoRows.map(r=>r.map(csvCell).join(','))).join('\n'));
 
   // 4) write output — one merged reject list (off-topic OR not-target-ICP); Reason says which, Reason Explained names the likely ICP
