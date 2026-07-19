@@ -362,7 +362,7 @@ async function main(){
     if(category===undefined || category===null){ try{ category = await deriveCategory(ci.name, names, icp.icps); }catch(e){ category=''; } catCache[d.domain]=category; }
     const identity = [ (ci.name||d.domain), category?('— a '+category):'',
       (ci.areas&&ci.areas.length)?('serving '+ci.areas.slice(0,4).join(', ')):'' ].filter(Boolean).join(' ');
-    return { domain:d.domain, rows, names, matched:!!names.length, nKb:kbNames.length, nSite:siteNames.length,
+    return { domain:d.domain, rows, names, kbNames, siteNames, matched:!!names.length, nKb:kbNames.length, nSite:siteNames.length,
              icps:icp.icps||[], anyBusiness:!!icp.anyBusiness, gl, areas:ci.areas||[], icpFromMetabase:!!ci.icps.length, identity, category };
   });
   if(USE_SITE) saveSiteCache(dir, siteCache);
@@ -404,7 +404,11 @@ async function main(){
       if(reason){
         // explainer: name the likely searcher segment, and flag when it's outside the client's ICP (vertical clients only)
         if(o.icp && !f.anyBusiness){ rexp = (rexp ? rexp+' — ' : '') + 'people searching this are most likely ' + o.icp + (o.icpFit===false ? ", which is NOT the client's target ICP" : ''); }
-        out.push([f.domain, row[0], row[2], row[1], row[3], row[4], (o.services||[]).join(', '), o.audience||'', o.profession||'', o.type||'', (o.icp||''), modifiersOf(row[0],cfg), isBofu(row[0])?'Yes':'No', 0, reason, rexp, o.conf||'']);
+        out.push([f.domain, row[0], row[2], row[1], row[3], row[4],
+          (f.kbNames||[]).join(', '), (f.siteNames||[]).join(', '),
+          (o.services||[]).join(', '), o.audience||'', o.profession||'', o.type||'',
+          (o.icp||''), (f.icps||[]).join(', '),
+          modifiersOf(row[0],cfg), isBofu(row[0])?'Yes':'No', 0, reason, rexp, o.conf||'']);
       }
     });
     doneBatches++; if(doneBatches%10===0||doneBatches===tasks.length) process.stdout.write('\r  classified '+doneBatches+'/'+tasks.length+' batches');
@@ -415,13 +419,17 @@ async function main(){
   if(vetoRows.length) fs.writeFileSync(path.resolve(dir,'vetoed.csv'), [['client','primaryKeyword','topic','AI wanted to reject because'].join(',')].concat(vetoRows.map(r=>r.map(csvCell).join(','))).join('\n'));
 
   // 4) write output — one merged reject list (off-topic OR not-target-ICP); Reason says which, Reason Explained names the likely ICP
-  const HDR=['client','primaryKeyword','pageType','topic','volume','publishedUrl','Matched Services','Audience','Profession','Type','ICP','Modifier','BOFU','Status','Reason','Reason Explained','Confidence'];
+  const HDR=['client','primaryKeyword','pageType','topic','volume','publishedUrl',
+    'Products/Services (KB/Metabase)','Products/Services (Website)',
+    'Matched Services','Audience','Profession','Type',
+    'ICP (keyword)','Target ICP (client, from products/services)',
+    'Modifier','BOFU','Status','Reason','Reason Explained','Confidence'];
   const allRows=[]; results.forEach(r=>{ if(Array.isArray(r)) r.forEach(row=>allRows.push(row)); });
   fs.writeFileSync(path.resolve(dir,OUT_FILE), [HDR].concat(allRows).map(r=>r.map(csvCell).join(',')).join('\n'));
 
   // 5) per-account summary (total rejected, of which ICP-reason)
   const byDom={}; fetched.forEach(f=>{ if(!f.__error) byDom[f.domain]={pages:f.rows.length, rej:0, icp:0}; });
-  allRows.forEach(r=>{ const b=byDom[r[0]]; if(b){ b.rej++; if(r[14]==='Not our target ICP') b.icp++; } });
+  allRows.forEach(r=>{ const b=byDom[r[0]]; if(b){ b.rej++; if(r[17]==='Not our target ICP') b.icp++; } });
   console.log('=== per-account   (ICP* = real, from Metabase | ICP~ = AI-guessed fallback) ===');
   for(const f of fetched){ if(f.__error) continue; const b=byDom[f.domain];
     console.log('  '+f.domain.padEnd(30)+' pages '+String(b.pages).padStart(4)+'  rejected '+String(b.rej).padStart(4)+'  gl='+(f.gl||'us')+'  '+(f.anyBusiness?'[ANY business]':'[ICP'+(f.icpFromMetabase?'*':'~')+': '+(f.icps||[]).slice(0,3).join(', ')+']')); }
