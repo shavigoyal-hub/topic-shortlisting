@@ -36,8 +36,8 @@ const USE_SITE  = arg('site', 'true') !== 'false';
 // SERP is OPT-IN (--serp true). With gpt-4o-mini it BACKFIRED: it read competitors ranking for a client's
 // own core service as proof of a "different industry" (theredpen: 0 -> 34 false rejects on 'study abroad consultants').
 // It does fix word-sense misses ('application roadmap'), so revisit with a stronger model.
-const USE_SERP  = arg('serp', 'false') === 'true';
-const MODEL     = arg('model', 'gpt-4o-mini');   // --model gpt-4o for the SERP-reasoning judge
+const USE_SERP  = arg('serp', 'true') !== 'false';
+const MODEL     = arg('model', (arg('serp','true')!=='false') ? 'gpt-4o' : 'gpt-4o-mini');   // SERP reasoning needs gpt-4o; no-SERP uses cheap mini
 
 const MB_URL  = (process.env.METABASE_URL||'').replace(/\/$/,'');
 const MB_USER = process.env.METABASE_USER || process.env.METABASE_USERNAME;
@@ -125,6 +125,19 @@ function inOffering(kw, names){
   const toks = String(kw||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').split(' ').filter(t=>t && t.length>=4 && !GENERIC.has(t)).map(stem);
   for(let i=0;i<toks.length-1;i++){ if(hayStr.includes(' '+toks[i]+' '+toks[i+1]+' ')) return true; }   // phrase match (strong)
   return toks.some(t => t.length>=4 && hay.has(t));   // single term — 4 chars matters ("sign","door","wrap","skin","gel")
+}
+/* CATEGORY GUARD — applies EVEN with SERP on. A keyword containing a distinctive word from the client's own
+   BUSINESS CATEGORY (admissions, consultants, signage, windshield…) is their field by definition, so SERP must
+   not reject it (that was the residual failure: 'stanford admissions', 'study abroad consultants in <city>').
+   Uses 5-char prefix matching so consulting~consultants, admissions~admission, educational~education. */
+const CATSTOP=new Set(['services','service','solutions','solution','company','companies','group','agency','firm','and','the','for','with','your','business','industry','provider','providers','professional']);
+function inCategory(kw, category){
+  if(!category) return false;
+  const catToks = String(category).toLowerCase().replace(/[^a-z0-9]+/g,' ').split(' ').filter(t=>t.length>=5 && !CATSTOP.has(t)).map(t=>t.slice(0,5));
+  if(!catToks.length) return false;
+  const kwToks = String(kw||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').split(' ').filter(t=>t.length>=5).map(t=>t.slice(0,5));
+  const set = new Set(catToks);
+  return kwToks.some(t=>set.has(t));
 }
 const auditCfg = (names, icps, anyBusiness) => ({ offering:'Both', website:'', services:names||[], products:[], industries:[], targetProfessions:[], competitors:[], locations:[], negatives:[], geoMode:'all', icps:icps||[], anyBusiness:!!anyBusiness, rules:{zero:false,free:false,nearme:false,competitor:false,location:false,info:false,jobs:false,format:true,org:false,lowrel:false}, lowRel:1 });
 
@@ -368,7 +381,7 @@ async function main(){
   console.log('Total PUBLISHED pages: '+totalPages+' across '+fetched.length+' accounts, '+tasks.length+' AI batches\n');
 
   // 3) classify + apply rules (parallel); flag OFF-TOPIC and (separately) NOT-TARGET-ICP
-  let doneBatches=0, vetoed=0, serpFetched=0; const vetoRows=[]; const serpCache = USE_SERP ? loadSerpCache(dir) : {};
+  let doneBatches=0, vetoed=0, catVetoed=0, serpFetched=0; const vetoRows=[]; const serpCache = USE_SERP ? loadSerpCache(dir) : {};
   const results = await mapLimit(tasks, CONC, async (task)=>{
     const { f, slice } = task; const cfg = auditCfg(f.names, f.icps, f.anyBusiness); cfg.identity = f.identity; cfg.category = f.category;
     const serps = await mapLimit(slice, 8, async row=>{
@@ -384,7 +397,8 @@ async function main(){
       const hit=evalRules({kw:row[0],topic:row[1],vol:row[3],pageType:row[2]}, cfg);
       let reason='', rexp='';
       if(hit){ reason=hit.reason; rexp=hit.reason; }                                             // rule junk
-      else if(o.off===true && !(serps[idx]&&serps[idx].titles.length) && inOffering(row[0], f.names)){ vetoed++; vetoRows.push([f.domain, row[0], row[1], o.reason||'']); }   // guard only where SERP gave no evidence; with SERP, trust the SERP-informed AI   // guard: it's literally in their offering — never reject
+      else if(o.off===true && inCategory(row[0], f.category)){ catVetoed++; }   // client's OWN category term — never reject, even with SERP
+      else if(o.off===true && !(serps[idx]&&serps[idx].titles.length) && inOffering(row[0], f.names)){ vetoed++; vetoRows.push([f.domain, row[0], row[1], o.reason||'']); }   // offering guard only where SERP gave no evidence
       else if(o.off===true){ reason='Off-topic (different product)'; rexp=o.reason||''; }         // different product/industry
       else if(!f.anyBusiness && o.icpFit===false){ reason='Not our target ICP'; rexp=''; }        // outside ICP only
       if(reason){
@@ -397,7 +411,7 @@ async function main(){
     return out;
   });
   if(USE_SERP) saveSerpCache(dir, serpCache);
-  console.log('\n  SERP: '+serpFetched+' new lookups (rest cached) | in-field guard vetoed '+vetoed+' (guard only applies where SERP is unavailable)\n');
+  console.log('\n  SERP: '+serpFetched+' new lookups | category-guard kept '+catVetoed+' (own-category terms) | offering-guard kept '+vetoed+'\n');
   if(vetoRows.length) fs.writeFileSync(path.resolve(dir,'vetoed.csv'), [['client','primaryKeyword','topic','AI wanted to reject because'].join(',')].concat(vetoRows.map(r=>r.map(csvCell).join(','))).join('\n'));
 
   // 4) write output — one merged reject list (off-topic OR not-target-ICP); Reason says which, Reason Explained names the likely ICP
