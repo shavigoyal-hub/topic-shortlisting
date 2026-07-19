@@ -126,6 +126,19 @@ function inOffering(kw, names){
   for(let i=0;i<toks.length-1;i++){ if(hayStr.includes(' '+toks[i]+' '+toks[i+1]+' ')) return true; }   // phrase match (strong)
   return toks.some(t => t.length>=4 && hay.has(t));   // single term — 4 chars matters ("sign","door","wrap","skin","gel")
 }
+// STRONG offering match — used even under SERP: the keyword's HEAD noun (last significant word) or a 2-word phrase
+// is literally in the offering. Protects product keywords ("ceramic tint front WINDSHIELD") while still letting
+// word-sense traps through ("application ROADMAP" — head 'roadmap' isn't theirs; 'application' is incidental).
+function strongOffering(kw, names){
+  if(!names || !names.length) return false;
+  const hayToks = names.join(' ').toLowerCase().replace(/[^a-z0-9]+/g,' ').split(' ').filter(Boolean).map(stem);
+  const hay = ' '+hayToks.join(' ')+' ';
+  const kwToks = String(kw||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').split(' ').filter(Boolean).map(stem);
+  for(let i=0;i<kwToks.length-1;i++){ if(kwToks[i].length>=3 && kwToks[i+1].length>=3 && hay.includes(' '+kwToks[i]+' '+kwToks[i+1]+' ')) return true; }   // phrase
+  const content = kwToks.filter(t=>t.length>=5 && !GENERIC.has(t));
+  const head = content[content.length-1];   // English head noun ≈ last significant word
+  return !!(head && hay.includes(' '+head+' '));
+}
 /* CATEGORY GUARD — applies EVEN with SERP on. A keyword containing a distinctive word from the client's own
    BUSINESS CATEGORY (admissions, consultants, signage, windshield…) is their field by definition, so SERP must
    not reject it (that was the residual failure: 'stanford admissions', 'study abroad consultants in <city>').
@@ -398,7 +411,7 @@ async function main(){
       let reason='', rexp='';
       if(hit){ reason=hit.reason; rexp=hit.reason; }                                             // rule junk
       else if(o.off===true && inCategory(row[0], f.category)){ catVetoed++; }   // client's OWN category term — never reject, even with SERP
-      else if(o.off===true && !(serps[idx]&&serps[idx].titles.length) && inOffering(row[0], f.names)){ vetoed++; vetoRows.push([f.domain, row[0], row[1], o.reason||'']); }   // offering guard only where SERP gave no evidence
+      else if(o.off===true && ((serps[idx]&&serps[idx].titles.length) ? strongOffering(row[0], f.names) : inOffering(row[0], f.names))){ vetoed++; vetoRows.push([f.domain, row[0], row[1], o.reason||'']); }   // under SERP: protect head-noun/phrase offering matches; no-SERP: full offering guard
       else if(o.off===true){ reason='Off-topic (different product)'; rexp=o.reason||''; }         // different product/industry
       else if(!f.anyBusiness && o.icpFit===false){ reason='Not our target ICP'; rexp=''; }        // outside ICP only
       if(reason){
