@@ -405,7 +405,12 @@ async function main(){
   console.log('Accounts to audit: '+domains.length);
 
   await mbLogin(); const db = await mbDbId(); const C = await mbClusterCols(db);
-  const urlExpr = C.url ? ('c.'+C.url) : (C.slug ? "('https://' || p.root_domain || '/' || COALESCE(c."+C.slug+",''))" : 'NULL');
+  // Real live page URL = feed base (canonical_url — may be a /feeds path OR a feeds.* subdomain) + '/' + page_type + '/' + slug.
+  // The clusters table stores no URL, so we reconstruct it; never fall back to root_domain/slug (that drops the feed path and 404s).
+  const feedBase = "COALESCE(NULLIF(RTRIM(p.canonical_url,'/'),''), 'https://' || p.root_domain || '/feeds')";
+  const urlExpr = C.url ? ('c.'+C.url)
+    : (C.slug ? "("+feedBase+" || '/' || LOWER(COALESCE(c."+(C.pt||"NULL")+",'service')) || '/' || COALESCE(c."+C.slug+",''))"
+    : 'NULL');
   console.log('Metabase columns:', JSON.stringify(C));
 
   // 1) fetch PUBLISHED pages + ground the offering in the client's real website + derive target ICP (parallel)
