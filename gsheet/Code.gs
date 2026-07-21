@@ -658,7 +658,8 @@ function importAkrSilent(){
     var key=(kw+'|'+topic).toLowerCase(); if(seen[key]) continue; seen[key]=1;
     var pt=(ci.pt>=0?String(a[ci.pt]||'').trim():'')||'Blog';   // keep the original Page Type (Category stays Category)
     var vol=ci.vol>=0?(parseInt(String(a[ci.vol]||'').replace(/[^0-9]/g,''),10)||0):0;
-    var row=[kw, pt, topic, ci.sec>=0?String(a[ci.sec]||'').trim():'', vol, ci.rel>=0?a[ci.rel]:'', '','','','','','','','','','','','',''];   // 19 cols (…Confidence, Profession)
+    var row=[kw, pt, topic, ci.sec>=0?String(a[ci.sec]||'').trim():'', vol, ci.rel>=0?a[ci.rel]:''];
+    while(row.length<NCOL) row.push('');   // pad to the header width (…Confidence, Profession, Matched Services) — never drifts if columns change
     var p=prev[kw.toLowerCase()];
     if(p){ keep.forEach(function(c){ row[c-1]=p[c-1]; }); }   // carry over enrichment + pick for a keyword that still exists
     out.push(row);
