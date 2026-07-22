@@ -78,6 +78,9 @@ const norm = s => (s==null?'':String(s)).toLowerCase();
 const INFO_RX=/\b(how to|how-to|what is|what's|meaning|definition|define|youtube|you ?tube|video|videos|pdf|template|reddit|wiki|free download|guide|tutorial|at home|diy|recording|app|login|download|coupon|reviews?|quotes?|images?|examples?)\b/;
 const JOBS_RX=/\b(jobs?|salary|salaries|hiring|career|careers|certification|certified|certificate|course|courses|degree|class schedule|teacher training|become a|how to become|exam|syllabus)\b/;
 const FORMAT_RX=/\b(login|sign in|apk|download|coupon|promo code|discount code|cracked|torrent|free pdf)\b/;
+// JUNK / wrong-intent words that reject BY DEFAULT — unless the word is genuinely part of the client's own
+// offering/category (guarded), so "insurance quotes", "image printing", "video production" survive for those clients.
+const JUNK_RX=/\b(news|quotes?|images?|videos?|movies?|wiki|wikis|www|login|log ?in|trends?|trending)\b/;
 const BOFU_RX=/\b(buy|buying|purchase|purchasing|order|ordering|reorder|for sale|price|prices|pricing|cost|costs|how much|cheap|cheapest|affordable|discount|quote|quotation|estimate|near me|nearby|supplier|suppliers|wholesale|bulk|vendor|vendors|manufacturer|manufacturers|distributor|distributors|compan(y|ies)|service|services|shop|store|online|hire|rent|rental|custom|customi(z|s)ed?|personali(z|s)ed?|monogram|monogrammed|engraved|branded|promotional|made to order|best|top)\b/;
 const ORG_RX=/\b(institutes?|academ(y|ies)|society|societies|foundations?|associations?|ashram|sangha|vihara|monastery|university|college|ll[cp]|gmbh|pvt|dhamma|goenka|chopra|mindvalley|headspace|deepak|sadhguru|isha)\b/;
 const BIG_BRANDS_RX=/\b(nvidia|google|apple|microsoft|amazon|meta|tesla|samsung|intel|ibm|oracle|salesforce|adobe|cisco|netflix|spotify|uber|airbnb|openai|nike|adidas|disney|coca[- ]?cola|pepsi|ces|wwdc|davos|web summit)\b/;
@@ -317,8 +320,16 @@ function loadAkr(file){
     const rule = evalRules({kw:it.kw, pageType:it.pageType}, cfg);
     // guards: a keyword in the client's own category (or, without SERP, its offering) can never be rejected
     const guarded = inCategory(it.kw, cfg.category) || (!USE_SERP && inOffering(it.kw, names));
+    // JUNK words reject by default — UNLESS that exact word is part of the client's own offering/category
+    // (so "insurance quotes" / "video production" survive, but "customer service quotes/news/trends" don't).
+    const junkM = norm(it.kw).match(JUNK_RX);
+    const junkWord = junkM ? junkM[0].replace(/\s+/g,'') : '';
+    const junkStem = junkWord.length>5 ? junkWord.replace(/s$/,'') : junkWord;
+    const offeringText = ' '+names.join(' ').toLowerCase()+' '+String(cfg.category||'').toLowerCase()+' ';
+    const junk = !!junkWord && !(junkStem && offeringText.includes(junkStem));
     let status='', reason='', explained='', layer='';
     if(rule){ status='0'; reason=rule.reason; explained=rule.reason; layer='Rule'; }
+    else if(junk){ status='0'; reason='Wrong intent/format ("'+junkWord+'")'; explained=reason; layer='Rule'; }
     else if(c.off && c.conf!=='low' && !guarded){ status='0'; reason=c.reason||'Off-topic (different product)'; explained=c.reason||''; layer='AI'; }
     else if(c.off && c.conf==='low' && !guarded){ status=''; explained=c.reason||''; layer='review'; }   // borderline reject → leave for human
     else { status='1'; reason='In-field'; layer=guarded?'Guard':'AI'; }
