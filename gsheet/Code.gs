@@ -646,7 +646,9 @@ function importAkrSilent(){
   var rows=src.getDataRange().getValues(); if(rows.length<2) return 0;
   var head=rows[0].map(function(h){return norm(h).trim();});
   var find=function(){ for(var a=0;a<arguments.length;a++){ for(var i=0;i<head.length;i++){ if(head[i].indexOf(arguments[a])>=0) return i; } } return -1; };
+  var findExact=function(){ for(var a=0;a<arguments.length;a++){ for(var i=0;i<head.length;i++){ if(head[i]===arguments[a]) return i; } } return -1; };
   var ci={ kw:find('primary keyword','keyword'), pt:find('page type','type'), topic:find('topic'), sec:find('secondary'), vol:find('search volume','volume','msv'), rel:find('relevance','score') };
+  if(ci.vol<0) ci.vol=findExact('sv','vol','total sv','search vol','sv.');   // "SV" = search volume (exact match, so a short token can't false-match another column)
   if(ci.kw<0) ci.kw=0;
   // snapshot existing rows by keyword so carried-over keywords keep their picks + enrichment
   var prev={};
