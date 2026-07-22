@@ -1,0 +1,22 @@
+{
+  "name": "IT Customer Service Training",
+  "category": "customer-service and soft-skills training for IT / help-desk / support teams",
+  "offering": "Services",
+  "website": "",
+  "services": [
+    "Online Customer Service Training for IT Professionals",
+    "Customer Service Secrets of Successful IT Pros",
+    "IT soft skills training",
+    "Help desk / service desk skills training",
+    "Communication, active-listening and emotional-intelligence training"
+  ],
+  "products": [],
+  "industries": [],
+  "competitors": [],
+  "locations": ["US"],
+  "target_professions": [
+    "IT Manager","Customer Service Manager","Technical Support Specialist",
+    "Help Desk Manager","IT Trainer","Service Desk Analyst","Customer Experience Manager"
+  ],
+  "rule_format": true
+}
