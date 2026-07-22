@@ -18,10 +18,11 @@ var COL = { KW:1, PT:2, TOPIC:3, SEC:4, VOL:5, REL:6, AUD:7, PROF:8, TYPE:9, MOD
 var TOPIC_HEADERS = ['Keyword','Page Type','Topic','Secondary','Volume','Relevance','Audience','Profession','Type','Modifier','BOFU','Status','Reason','Reason Explained','Confidence','Layer','_domains','Review','Review Reason','Matched Services'];
 var NCOL = TOPIC_HEADERS.length;
 var BUILD = '2026-07-10b';   // bumped on each push so the audit alert shows which version is actually running
-var BATCH = 100;     // Topics rows enriched per processBatch call
-var AI_BATCH = 30;   // keywords per OpenAI call
+var BATCH = 20;      // Topics rows enriched + WRITTEN per processBatch call — keep small so results save often (visible progress,
+                     // and a single batch always finishes well under the 6-min limit; a killed pass loses at most this many rows)
+var AI_BATCH = 20;   // keywords per OpenAI call (<= BATCH so each batch is one AI round-trip)
 var MB_AI_BATCH = 50;   // audit classifies more pages per OpenAI call (fewer round-trips → more accounts per run)
-var FG_BUDGET_MS = 4.5*60*1000;   // foreground enrichment time budget (stay under the 6-min limit)
+var FG_BUDGET_MS = 4*60*1000;   // foreground enrichment time budget (stay safely under the 6-min limit)
 
 /* --------------------------- RULE LEXICON ------------------------- */
 function norm(s){ return (s==null?'':String(s)).toLowerCase(); }
