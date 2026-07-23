@@ -773,11 +773,15 @@ function serperFetchAll(keywords, gl){
   return out;
 }
 function cleanDom_(w){ return String(w||'').trim().toLowerCase().replace(/^https?:\/\//,'').replace(/^www\./,'').replace(/\/.*$/,'').replace(/\s+/g,''); }
+// strip qualifier words for the site: search so recall hits product pages, not showroom/display pages
+// ("kitchen faucet commercial style" -> "kitchen faucet"); the AI confirm still judges the FULL keyword.
+var SITE_STRIP_={commercial:1,industrial:1,residential:1,professional:1,modern:1,rustic:1,farmhouse:1,traditional:1,contemporary:1,sleek:1,luxury:1,premium:1,budget:1,cheap:1,affordable:1,best:1,top:1,style:1,styles:1,styled:1,finish:1,finished:1,matte:1,polished:1,brushed:1,stainless:1,surface:1,mount:1,mounted:1,freestanding:1,undermount:1,single:1,double:1,triple:1,small:1,large:1,wide:1,narrow:1,tall:1,short:1,mini:1,compact:1,big:1,custom:1,customized:1,decorative:1,euro:1,european:1,classic:1,vintage:1,black:1,white:1,grey:1,gray:1,copper:1,brass:1,chrome:1,gold:1,golden:1,bronze:1,nickel:1,silver:1,beige:1,cream:1,ivory:1,pewter:1,cognac:1,champagne:1,emerald:1,rose:1,blue:1,green:1,red:1,pink:1,the:1,'for':1,'with':1,and:1,near:1,me:1,inch:1,inches:1};
+function coreQuery_(kw){ var toks=String(kw||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').split(' ').filter(Boolean); var core=toks.filter(function(t){return !SITE_STRIP_[t];}); return core.length?core.join(' '):String(kw||''); }
 /* OWN-SITE COVERAGE CHECK (ported from bulk) — for keywords the AI rejected, run `site:domain kw`; if the client's
    OWN genuine (non-/feeds) pages show they actually sell it, override to KEEP. Returns { kwLower: url } for confirmed. */
 function siteCheck_(dom, kws, gl){
   var key=prop('SERPER_KEY'); if(!key || !dom || !kws.length) return {};
-  var reqs=kws.map(function(kw){ return { url:'https://google.serper.dev/search', method:'post', headers:{'X-API-KEY':key}, contentType:'application/json', muteHttpExceptions:true, payload:JSON.stringify({q:'site:'+dom+' '+kw, gl:gl||'us', num:10}) }; });
+  var reqs=kws.map(function(kw){ return { url:'https://google.serper.dev/search', method:'post', headers:{'X-API-KEY':key}, contentType:'application/json', muteHttpExceptions:true, payload:JSON.stringify({q:'site:'+dom+' '+coreQuery_(kw), gl:gl||'us', num:10}) }; });
   var genuineByKw={}, haveAny=[];
   for(var i=0;i<reqs.length;i+=20){
     var resp=UrlFetchApp.fetchAll(reqs.slice(i,i+20));

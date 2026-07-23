@@ -71,6 +71,15 @@ async function serper(kw, gl, key) {
   return [];
 }
 const cleanDomain = d => String(d || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '').replace(/\s+/g, '');
+// For the site: search, strip qualifier words (styles/materials/colors/sizes/positions) that derail recall toward
+// showroom/display pages — "kitchen faucet commercial style" -> "kitchen faucet". The AI still confirms against the
+// FULL keyword, so broadening the search only improves recall; it can't cause a false keep.
+const SITE_STRIP = new Set(['commercial','industrial','residential','professional','modern','rustic','farmhouse','traditional','contemporary','sleek','luxury','premium','budget','cheap','affordable','best','top','style','styles','styled','finish','finished','matte','polished','brushed','stainless','surface','mount','mounted','freestanding','undermount','single','double','triple','small','large','wide','narrow','tall','short','mini','compact','big','custom','customized','decorative','euro','european','classic','vintage','black','white','grey','gray','copper','brass','chrome','gold','golden','bronze','nickel','silver','beige','cream','ivory','pewter','cognac','champagne','emerald','rose','blue','green','red','pink','the','for','with','and','near','me','inch','inches']);
+function coreQuery(kw) {
+  const toks = String(kw || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter(Boolean);
+  const core = toks.filter(t => !SITE_STRIP.has(t));
+  return core.length ? core.join(' ') : String(kw || '');
+}
 // OWN-SITE COVERAGE: site:domain kw -> genuine (non-/feeds) pages that show they sell it
 async function serperLinks(q, gl, key) {
   if (!key) return [];
@@ -140,7 +149,7 @@ module.exports = async (req, res) => {
       const cands = dec.filter(d => d.aiReject);
       const withPages = [];
       await Promise.all(cands.map(async d => {
-        const hits = await serperLinks('site:' + domain + ' ' + d.it.kw, gl, skey);
+        const hits = await serperLinks('site:' + domain + ' ' + coreQuery(d.it.kw), gl, skey);
         const genuine = hits.filter(h => { const u = h.link.toLowerCase(); return !/\/feeds?(\/|$)/.test(u) && !/\/(blog|feeds)\//.test(u); }).slice(0, 3);
         if (genuine.length) withPages.push({ d, genuine });
       }));
