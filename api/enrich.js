@@ -70,6 +70,16 @@ async function serper(kw, gl, key) {
   }
   return [];
 }
+const cleanDomain = d => String(d || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '').replace(/\s+/g, '');
+// OWN-SITE COVERAGE: site:domain kw -> genuine (non-/feeds) pages that show they sell it
+async function serperLinks(q, gl, key) {
+  if (!key) return [];
+  try {
+    const r = await fetch('https://google.serper.dev/search', { method: 'POST', headers: { 'X-API-KEY': key, 'Content-Type': 'application/json' }, body: JSON.stringify({ q, gl: gl || 'us', num: 10 }) });
+    if (!r.ok) return [];
+    return ((await r.json()).organic || []).map(o => ({ link: o.link || '', title: o.title || '', snippet: o.snippet || '' })).filter(o => o.link);
+  } catch (e) { return []; }
+}
 async function openai(messages, key) {
   const resp = await fetch('https://api.openai.com/v1/chat/completions', { method: 'POST', headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'gpt-4o', temperature: 0, response_format: { type: 'json_object' }, messages }) });
   if (!resp.ok) throw new Error('OpenAI ' + resp.status + ': ' + (await resp.text()).slice(0, 200));
@@ -104,9 +114,10 @@ module.exports = async (req, res) => {
     const j = await openai([{ role: 'system', content: CLASSIFY_SYS(cfg) }, { role: 'user', content: 'Classify these:\n' + payload.map(p => JSON.stringify(p)).join('\n') }], okey);
     const byId = parseClassify(j);
 
-    // 3) rules + guards + status + ICP explainer
+    // 3) preliminary decision per item
     const offeringText = ' ' + names.join(' ').toLowerCase() + ' ' + String(cfg.category || '').toLowerCase() + ' ';
-    const rows = items.map((it, idx) => {
+    const domain = cleanDomain(cfg.domain);
+    const dec = items.map((it, idx) => {
       const c = byId[String(idx)] || { off: false, conf: 'low', reason: '', audience: 'General', type: '', profession: '', icp: '', icpFit: true, services: [] };
       const t = norm(it.kw);
       const guarded = inCategory(it.kw, cfg.category) || (!useSerp && inOffering(it.kw, names));
@@ -114,14 +125,45 @@ module.exports = async (req, res) => {
       const junkWord = junkM ? junkM[0].replace(/\s+/g, '') : '';
       const junkStem = junkWord.length > 5 ? junkWord.replace(/s$/, '') : junkWord;
       const junk = !!junkWord && !(junkStem && offeringText.includes(junkStem));
-      let status = '', reason = '', explained = '';
+      let status = '', reason = '', explained = '', aiReject = false;
       if (FORMAT_RX.test(t)) { status = '0'; reason = 'Wrong-format / login/app intent'; explained = reason; }
       else if (junk) { status = '0'; reason = 'Wrong intent/format ("' + junkWord + '")'; explained = reason; }
-      else if (c.off && c.conf !== 'low' && !guarded) { status = '0'; reason = c.reason || 'Off-topic (different product)'; explained = c.reason || ''; }
+      else if (c.off && c.conf !== 'low' && !guarded) { status = '0'; reason = c.reason || 'Off-topic (different product)'; explained = c.reason || ''; aiReject = true; }
       else if (c.off && c.conf === 'low' && !guarded) { status = ''; explained = c.reason || ''; }
       else { status = '1'; reason = 'In-field'; }
-      if (status === '0' && c.icp) explained = (explained ? explained + ' — ' : '') + 'people searching this are most likely ' + c.icp + (c.icpFit === false ? ", which is NOT the client's target ICP" : '');
-      return { id: it.id, status, confidence: status === '' ? '' : c.conf, reason, explained, audience: c.audience || '', profession: c.profession || '', type: c.type || '', modifier: modifiersOf(it.kw, cfg), bofu: isBofu(it.kw) ? 'Yes' : 'No', services: (c.services || []).join(', '), icp: c.icp || '', icpFit: c.icpFit === false ? 'no' : 'yes' };
+      return { it, idx, c, status, reason, explained, aiReject };
+    });
+
+    // 3b) OWN-SITE COVERAGE CHECK — for AI rejects, run site:domain kw; if the client's own (non-/feeds) pages
+    // show they actually sell it, override to KEEP. This is what catches e.g. a cabinet site that also sells faucets.
+    if (domain && skey) {
+      const cands = dec.filter(d => d.aiReject);
+      const withPages = [];
+      await Promise.all(cands.map(async d => {
+        const hits = await serperLinks('site:' + domain + ' ' + d.it.kw, gl, skey);
+        const genuine = hits.filter(h => { const u = h.link.toLowerCase(); return !/\/feeds?(\/|$)/.test(u) && !/\/(blog|feeds)\//.test(u); }).slice(0, 3);
+        if (genuine.length) withPages.push({ d, genuine });
+      }));
+      if (withPages.length) {
+        let verdict = {};
+        try {
+          const j = await openai([
+            { role: 'system', content: 'A client sells home products. For each keyword, their OWN website (excluding auto-generated /feeds SEO pages) has these pages. Decide if those pages show the client actually SELLS / OFFERS that product or service (a product or product-category page = yes; a mere blog mention = no). Return ONLY JSON: {"results":[{"id":<id>,"offers":true|false}]}.' },
+            { role: 'user', content: withPages.map((w, i) => JSON.stringify({ id: i, keyword: w.d.it.kw, pages: w.genuine.map(g => g.title + ' — ' + g.link) })).join('\n') }
+          ], okey);
+          (j.results || []).forEach(o => { verdict[String(o.id)] = o.offers === true; });
+        } catch (e) {}
+        withPages.forEach((w, i) => {
+          if (verdict[String(i)]) { w.d.status = '1'; w.d.reason = 'Sold on client’s own site'; w.d.explained = 'Own site sells it: ' + (w.genuine[0] ? w.genuine[0].link : ''); w.d.aiReject = false; }
+        });
+      }
+    }
+
+    // 3c) finalize rows (+ ICP explainer on remaining rejects)
+    const rows = dec.map(d => {
+      const c = d.c; let explained = d.explained;
+      if (d.status === '0' && c.icp) explained = (explained ? explained + ' — ' : '') + 'people searching this are most likely ' + c.icp + (c.icpFit === false ? ", which is NOT the client's target ICP" : '');
+      return { id: d.it.id, status: d.status, confidence: d.status === '' ? '' : c.conf, reason: d.reason, explained, audience: c.audience || '', profession: c.profession || '', type: c.type || '', modifier: modifiersOf(d.it.kw, cfg), bofu: isBofu(d.it.kw) ? 'Yes' : 'No', services: (c.services || []).join(', '), icp: c.icp || '', icpFit: c.icpFit === false ? 'no' : 'yes' };
     });
     res.statusCode = 200;
     res.end(JSON.stringify({ rows }));

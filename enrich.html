@@ -277,7 +277,7 @@ $('services').addEventListener('input', refreshRun);
 $('run').addEventListener('click', async () => {
   if(!akrItems.length) return;
   if(!derived && $('domain').value.trim()) { await analyze(); }   // ensure profile derived (backend), no separate button
-  const config = { services: toList($('services').value), products: [], category: profile.category, industries: profile.industries, serpGl: glFromDomain($('domain').value), useSerp: true };
+  const config = { services: toList($('services').value), products: [], category: profile.category, industries: profile.industries, serpGl: glFromDomain($('domain').value), useSerp: true, domain: $('domain').value.trim() };
   $('run').disabled = true;
   $('progressCard').classList.remove('hidden');
   $('download').classList.add('hidden');
