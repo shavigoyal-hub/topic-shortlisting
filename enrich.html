@@ -3,90 +3,136 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AKR Enricher — Topic Selection</title>
+<title>AKR Enricher — Gushwork</title>
 <style>
-  :root { --bg:#0f1115; --card:#171a21; --line:#2a2f3a; --fg:#e7e9ee; --muted:#9aa3b2; --accent:#4c8bf5; --ok:#2ec17a; --bad:#e05656; }
+  :root { --bg:#f6f8fb; --card:#ffffff; --line:#e5e7eb; --fg:#0f172a; --muted:#64748b; --accent:#2563eb; --accent-d:#1d4ed8;
+          --nav:#0d1526; --nav-active:#1c2740; --nav-fg:#e7ebf3; --nav-muted:#8a93a6; --yellow:#f5c518; --ok:#16a34a; --bad:#dc2626; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
-  .wrap { max-width:640px; margin:0 auto; padding:32px 20px 80px; }
-  h1 { font-size:22px; margin:0 0 4px; }
-  p.sub { color:var(--muted); margin:0 0 24px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:20px; margin-bottom:16px; }
-  label { display:block; font-weight:600; margin:0 0 6px; font-size:13px; }
+  html,body { margin:0; height:100%; }
+  body { background:var(--bg); color:var(--fg); font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; display:flex; }
+  /* sidebar */
+  aside { width:240px; min-width:240px; background:var(--nav); color:var(--nav-fg); min-height:100vh; padding:26px 16px; display:flex; flex-direction:column; }
+  .brand { font-size:20px; font-weight:800; letter-spacing:-.2px; }
+  .brand small { display:block; font-size:12px; font-weight:500; color:var(--nav-muted); margin-top:2px; letter-spacing:.3px; }
+  nav { margin-top:30px; display:flex; flex-direction:column; gap:4px; }
+  nav a { color:var(--nav-fg); text-decoration:none; padding:10px 14px; border-radius:8px; font-weight:600; font-size:14px; cursor:pointer; }
+  nav a:hover { background:#151f36; }
+  nav a.active { background:var(--nav-active); }
+  .ver { margin-top:auto; color:#3b465f; font-size:11px; }
+  /* main */
+  main { flex:1; padding:40px 44px; max-width:820px; }
+  h1 { font-size:26px; margin:0 0 4px; letter-spacing:-.4px; }
+  p.sub { color:var(--muted); margin:0 0 26px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:22px; margin-bottom:16px; box-shadow:0 1px 2px rgba(16,24,40,.04); }
+  label { display:block; font-weight:650; margin:0 0 6px; font-size:13px; }
   .hint { color:var(--muted); font-weight:400; font-size:12px; }
-  input[type=text], textarea, select { width:100%; background:#0e1117; border:1px solid var(--line); color:var(--fg); border-radius:8px; padding:10px 12px; font:inherit; }
-  textarea { resize:vertical; min-height:84px; }
-  .row { display:flex; gap:12px; }
-  .row > div { flex:1; }
-  input[type=file] { color:var(--muted); }
-  .field { margin-bottom:16px; }
-  .field:last-child { margin-bottom:0; }
-  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:12px 18px; font:inherit; font-weight:600; cursor:pointer; }
-  button:disabled { opacity:.5; cursor:not-allowed; }
-  button.ghost { background:transparent; border:1px solid var(--line); color:var(--fg); }
-  .bar { height:8px; background:#0e1117; border-radius:6px; overflow:hidden; margin:14px 0 6px; }
-  .bar > i { display:block; height:100%; width:0; background:var(--accent); transition:width .2s; }
+  input[type=text], textarea { width:100%; background:#fff; border:1px solid var(--line); color:var(--fg); border-radius:9px; padding:11px 13px; font:inherit; }
+  input[type=text]:focus, textarea:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(37,99,235,.12); }
+  textarea { resize:vertical; min-height:96px; }
+  .field { margin-bottom:18px; } .field:last-child { margin-bottom:0; }
+  .rowflex { display:flex; gap:10px; align-items:stretch; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:9px; padding:11px 18px; font:inherit; font-weight:650; cursor:pointer; }
+  button:hover { background:var(--accent-d); }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  button.ghost { background:#fff; border:1px solid var(--line); color:var(--fg); }
+  button.ghost:hover { background:#f3f5f9; }
+  button.big { width:100%; padding:14px; font-size:15px; }
+  input[type=file] { color:var(--muted); font-size:13px; }
+  .bar { height:8px; background:#eef1f6; border-radius:6px; overflow:hidden; margin:14px 0 8px; }
+  .bar > i { display:block; height:100%; width:0; background:var(--accent); transition:width .25s; }
   .stat { color:var(--muted); font-size:13px; }
   .stat b.ok { color:var(--ok); } .stat b.bad { color:var(--bad); }
   .hidden { display:none; }
-  .toggle { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); }
-  .toggle input { width:auto; }
-  code { background:#0e1117; padding:1px 5px; border-radius:4px; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .chip { background:#eef2ff; color:#3730a3; border:1px solid #e0e7ff; border-radius:999px; padding:3px 10px; font-size:12px; }
+  .chip.cat { background:#fef9e7; color:#8a6d0b; border-color:#faedb8; }
+  .derived { background:#f8fafc; border:1px dashed var(--line); border-radius:10px; padding:12px 14px; margin-top:12px; font-size:13px; }
+  .derived .lbl { color:var(--muted); font-weight:600; }
+  .spin { display:inline-block; width:14px; height:14px; border:2px solid #c7d2fe; border-top-color:var(--accent); border-radius:50%; animation:sp .7s linear infinite; vertical-align:-2px; margin-right:6px; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:600; }
+  .note { color:var(--muted); font-size:12px; margin-top:6px; }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>AKR Enricher</h1>
-  <p class="sub">Upload an AKR, set the client, download the enriched CSV. Runs the current engine (SERP + word-sense + junk filter).</p>
+<aside>
+  <div class="brand">Gushwork<small>SEO REPORTING</small></div>
+  <nav>
+    <a id="navEnrich" class="active" onclick="show('enrich')">AKR Enricher</a>
+    <a id="navHistory" onclick="show('history')">History</a>
+  </nav>
+  <div class="ver">akr-enrich</div>
+</aside>
 
-  <div class="card">
-    <div class="field">
-      <label>1 · AKR file <span class="hint">CSV with Primary Keyword, Page Type, Topic, Secondary, SV/Volume</span></label>
-      <input type="file" id="akr" accept=".csv,text/csv">
-      <div class="stat" id="akrInfo"></div>
-    </div>
-  </div>
+<main>
+  <!-- ENRICH VIEW -->
+  <section id="view-enrich">
+    <h1>AKR Enricher</h1>
+    <p class="sub">Enter the client domain and upload the AKR. We derive what they sell, then keep / reject each topic and give you an enriched CSV.</p>
 
-  <div class="card">
-    <div class="field">
-      <label>2 · What the client sells <span class="hint">one service/product per line</span></label>
-      <textarea id="services" placeholder="Online customer service training for IT teams&#10;Help desk skills training&#10;Soft skills coaching"></textarea>
-    </div>
-    <div class="field">
-      <label>3 · Business category <span class="hint">short & distinctive — e.g. "commercial signage", "automotive glass"</span></label>
-      <input type="text" id="category" placeholder="customer-service &amp; soft-skills training for IT teams">
-    </div>
-    <div class="field">
-      <label>Target customers / ICP <span class="hint">optional, comma-separated — blank = serves anyone</span></label>
-      <input type="text" id="icp" placeholder="IT teams, help desk managers, MSPs">
-    </div>
-    <div class="row">
-      <div class="field" style="max-width:130px">
-        <label>Geo</label>
-        <select id="geo"><option value="us">US</option><option value="in">India</option><option value="gb">UK</option><option value="au">Australia</option><option value="ca">Canada</option></select>
+    <div class="card">
+      <div class="field">
+        <label>Client domain</label>
+        <div class="rowflex">
+          <input type="text" id="domain" placeholder="example.com" autocomplete="off">
+          <button id="analyze" class="ghost" style="white-space:nowrap">Analyze site</button>
+        </div>
+        <div class="stat" id="domainInfo" style="margin-top:8px"></div>
       </div>
-      <div class="field" style="display:flex;align-items:flex-end;">
-        <label class="toggle"><input type="checkbox" id="useSerp" checked> Use Google SERP (accurate; slower)</label>
+      <div class="field">
+        <label>Products / services <span class="hint">auto-filled from the site — edit if needed</span></label>
+        <textarea id="services" placeholder="Click “Analyze site” to auto-fill, or type one per line"></textarea>
+        <div class="derived hidden" id="derivedBox">
+          <div><span class="lbl">Category:</span> <span id="dCat">—</span></div>
+          <div style="margin-top:4px"><span class="lbl">Serves (ICP):</span> <span id="dIcp">—</span></div>
+        </div>
+      </div>
+      <div class="field">
+        <label>AKR file <span class="hint">CSV — Primary Keyword, Page Type, Topic, Secondary, SV/Volume</span></label>
+        <input type="file" id="akr" accept=".csv,text/csv">
+        <div class="stat" id="akrInfo" style="margin-top:8px"></div>
       </div>
     </div>
-  </div>
 
-  <button id="run" disabled>Enrich &amp; download CSV</button>
+    <button id="run" class="big" disabled>Enrich &amp; download CSV</button>
 
-  <div class="card hidden" id="progressCard" style="margin-top:16px">
-    <div class="stat" id="phase">Starting…</div>
-    <div class="bar"><i id="barFill"></i></div>
-    <div class="stat" id="counts"></div>
-    <button class="ghost hidden" id="download" style="margin-top:12px">⬇ Download enriched.csv</button>
-  </div>
-</div>
+    <div class="card hidden" id="progressCard" style="margin-top:16px">
+      <div class="stat" id="phase">Starting…</div>
+      <div class="bar"><i id="barFill"></i></div>
+      <div class="stat" id="counts"></div>
+      <button class="ghost hidden" id="download" style="margin-top:12px">⬇ Download enriched.csv</button>
+    </div>
+  </section>
+
+  <!-- HISTORY VIEW -->
+  <section id="view-history" class="hidden">
+    <h1>History</h1>
+    <p class="sub">Your recent runs (kept in this browser). Click a row to download its CSV again.</p>
+    <div class="card">
+      <table><thead><tr><th>When</th><th>Domain</th><th>Keywords</th><th>Keep</th><th>Reject</th><th>Review</th><th></th></tr></thead>
+      <tbody id="histBody"><tr><td colspan="7" class="stat">No runs yet.</td></tr></tbody></table>
+    </div>
+    <div class="note">History is stored locally in your browser (last 25 runs). It never leaves your machine.</div>
+  </section>
+</main>
 
 <script>
 const $ = id => document.getElementById(id);
 const OUT_HDR = ['Primary Keyword','Page Type','Topic','Secondary Keywords','Total Search Volume','Relevance','Status','Confidence','Reason','Reason Explained','Audience','Profession','Type','Modifier','BOFU','Matched Services','ICP (keyword)','ICP fit'];
-let akrItems = [], enrichedRows = [];
+let akrItems = [], enrichedRows = [], profile = { services:[], category:'', industries:[], anyBusiness:true };
 
-/* ---- CSV parse ---- */
+/* ---------- nav ---------- */
+function show(v){
+  $('view-enrich').classList.toggle('hidden', v!=='enrich');
+  $('view-history').classList.toggle('hidden', v!=='history');
+  $('navEnrich').classList.toggle('active', v==='enrich');
+  $('navHistory').classList.toggle('active', v==='history');
+  if(v==='history') renderHistory();
+}
+
+/* ---------- CSV ---------- */
 function parseCSV(text){
   const rows=[]; let row=[], cur='', q=false;
   for(let i=0;i<text.length;i++){ const c=text[i];
@@ -96,8 +142,32 @@ function parseCSV(text){
   if(cur.length||row.length){ row.push(cur); rows.push(row); }
   return rows.filter(r=>r.length>1 || (r[0]&&r[0].trim()));
 }
-function csvCell(v){ v=(v==null?'':String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
+const csvCell = v => { v=(v==null?'':String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };
+const toList = s => String(s||'').split(/[\n,;]+/).map(x=>x.trim()).filter(Boolean);
+const glFromDomain = d => { d=String(d||'').toLowerCase(); if(/\.in$|\.co\.in$/.test(d))return'in'; if(/\.co\.uk$|\.uk$/.test(d))return'gb'; if(/\.com\.au$|\.au$/.test(d))return'au'; if(/\.ca$/.test(d))return'ca'; return 'us'; };
 
+/* ---------- derive profile from domain ---------- */
+async function analyze(){
+  const d = $('domain').value.trim(); if(!d){ $('domainInfo').textContent='Enter a domain first.'; return; }
+  $('analyze').disabled=true; $('domainInfo').innerHTML='<span class="spin"></span>Reading the site…';
+  try{
+    const r = await fetch('/api/profile', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({domain:d}) });
+    const p = await r.json();
+    if(p.error){ $('domainInfo').innerHTML='<span style="color:var(--bad)">'+p.error+'</span>'; $('analyze').disabled=false; return; }
+    profile = { services:p.services||[], category:p.category||'', industries:p.industries||[], anyBusiness:!!p.anyBusiness };
+    $('services').value = (p.services||[]).join('\n');
+    $('dCat').innerHTML = p.category ? '<span class="chip cat">'+p.category+'</span>' : '—';
+    $('dIcp').innerHTML = (p.industries&&p.industries.length) ? p.industries.map(x=>'<span class="chip">'+x+'</span>').join(' ') : '<span class="stat">serves anyone (horizontal)</span>';
+    $('derivedBox').classList.remove('hidden');
+    $('domainInfo').innerHTML = p.siteUnreachable ? '<span style="color:var(--bad)">Site unreachable — type the products/services manually below.</span>' : '✓ Derived '+(p.services||[]).length+' service(s) from '+p.website;
+    refreshRun();
+  }catch(e){ $('domainInfo').innerHTML='<span style="color:var(--bad)">Could not analyze: '+e+'</span>'; }
+  $('analyze').disabled=false;
+}
+$('analyze').addEventListener('click', analyze);
+$('domain').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); analyze(); } });
+
+/* ---------- AKR upload ---------- */
 $('akr').addEventListener('change', e => {
   const f = e.target.files[0]; if(!f) return;
   const rd = new FileReader();
@@ -119,56 +189,62 @@ $('akr').addEventListener('change', e => {
         rel:      ci.rel>=0?String(r[ci.rel]||'').trim():'' });
     }
     $('akrInfo').innerHTML = '✓ <b>'+akrItems.length+'</b> keywords loaded'+(ci.vol<0?' <span style="color:var(--bad)">(no volume column found)</span>':'');
-    $('run').disabled = akrItems.length===0;
+    refreshRun();
   };
   rd.readAsText(f);
 });
 
-/* ---- run ---- */
-const toList = s => String(s||'').split(/[\n,;]+/).map(x=>x.trim()).filter(Boolean);
+function refreshRun(){ $('run').disabled = !(akrItems.length && (toList($('services').value).length || profile.category)); }
+$('services').addEventListener('input', refreshRun);
+
+/* ---------- run ---------- */
 $('run').addEventListener('click', async () => {
   if(!akrItems.length) return;
-  const config = {
-    services: toList($('services').value),
-    products: [],
-    category: $('category').value.trim(),
-    industries: toList($('icp').value),
-    serpGl: $('geo').value,
-    useSerp: $('useSerp').checked,
-  };
+  const config = { services: toList($('services').value), products: [], category: profile.category, industries: profile.industries, serpGl: glFromDomain($('domain').value), useSerp: true };
   $('run').disabled = true;
   $('progressCard').classList.remove('hidden');
   $('download').classList.add('hidden');
   const byId = {}; enrichedRows = [];
-  const CHUNK = $('useSerp').checked ? 12 : 25;
+  const CHUNK = 12;
   const chunks = []; for(let i=0;i<akrItems.length;i+=CHUNK) chunks.push(akrItems.slice(i,i+CHUNK));
   let done=0, keep=0, reject=0, review=0, failed=0;
-  $('phase').textContent = 'Enriching '+akrItems.length+' keywords'+(config.useSerp?' with SERP…':'…');
+  $('phase').textContent = 'Enriching '+akrItems.length+' keywords with SERP…';
   for(const chunk of chunks){
     try{
       const resp = await fetch('/api/enrich', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ items:chunk, config }) });
       const data = await resp.json();
       if(data.rows){ data.rows.forEach(r=>{ byId[r.id]=r; if(r.status==='1')keep++; else if(r.status==='0')reject++; else review++; }); }
-      else { failed += chunk.length; }
+      else failed += chunk.length;
     }catch(e){ failed += chunk.length; }
     done += chunk.length;
     $('barFill').style.width = Math.round(done/akrItems.length*100)+'%';
     $('counts').innerHTML = done+' / '+akrItems.length+' &nbsp;·&nbsp; keep <b class="ok">'+keep+'</b> &nbsp; reject <b class="bad">'+reject+'</b> &nbsp; review '+review+(failed?' &nbsp;·&nbsp; failed '+failed:'');
   }
-  // build output rows in original AKR order
   enrichedRows = akrItems.map(it=>{ const r=byId[it.id]||{}; return [ it.kw, it.pageType, it.topic, it.sec, it.vol, it.rel,
     r.status||'', r.confidence||'', r.reason||'', r.explained||'', r.audience||'', r.profession||'', r.type||'', r.modifier||'', r.bofu||'', r.services||'', r.icp||'', r.icpFit||'' ]; });
   $('phase').textContent = '✓ Done — '+akrItems.length+' enriched'+(failed?' ('+failed+' failed)':'');
   $('download').classList.remove('hidden');
   $('run').disabled = false;
+  saveHistory({ when:new Date().toLocaleString(), domain:$('domain').value.trim()||'(no domain)', total:akrItems.length, keep, reject, review, csv:buildCSV() });
 });
 
-$('download').addEventListener('click', () => {
-  const csv = [OUT_HDR].concat(enrichedRows).map(r=>r.map(csvCell).join(',')).join('\n')+'\n';
-  const blob = new Blob([csv], {type:'text/csv'});
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'enriched.csv'; a.click();
-  URL.revokeObjectURL(a.href);
-});
+function buildCSV(){ return [OUT_HDR].concat(enrichedRows).map(r=>r.map(csvCell).join(',')).join('\n')+'\n'; }
+function downloadCSV(csv, name){ const blob=new Blob([csv],{type:'text/csv'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name||'enriched.csv'; a.click(); URL.revokeObjectURL(a.href); }
+$('download').addEventListener('click', ()=>downloadCSV(buildCSV(), 'enriched.csv'));
+
+/* ---------- history (localStorage) ---------- */
+function loadHist(){ try{ return JSON.parse(localStorage.getItem('akrHistory')||'[]'); }catch(e){ return []; } }
+function saveHistory(entry){ const h=loadHist(); h.unshift(entry); localStorage.setItem('akrHistory', JSON.stringify(h.slice(0,25))); }
+function renderHistory(){
+  const h=loadHist(), body=$('histBody');
+  if(!h.length){ body.innerHTML='<tr><td colspan="7" class="stat">No runs yet.</td></tr>'; return; }
+  body.innerHTML='';
+  h.forEach((e,i)=>{ const tr=document.createElement('tr');
+    tr.innerHTML='<td>'+e.when+'</td><td>'+e.domain+'</td><td>'+e.total+'</td><td><b class="ok">'+e.keep+'</b></td><td><b class="bad">'+e.reject+'</b></td><td>'+e.review+'</td><td><button class="ghost" data-i="'+i+'">⬇ CSV</button></td>';
+    body.appendChild(tr);
+  });
+  body.querySelectorAll('button[data-i]').forEach(b=>b.addEventListener('click',()=>{ const e=loadHist()[+b.dataset.i]; if(e&&e.csv) downloadCSV(e.csv, (e.domain||'enriched').replace(/[^a-z0-9]+/gi,'_')+'.csv'); }));
+}
 </script>
 </body>
 </html>
