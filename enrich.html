@@ -4,12 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AKR Enricher — Gushwork</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root { --bg:#f6f8fb; --card:#ffffff; --line:#e5e7eb; --fg:#0f172a; --muted:#64748b; --accent:#2563eb; --accent-d:#1d4ed8;
           --nav:#0d1526; --nav-active:#1c2740; --nav-fg:#e7ebf3; --nav-muted:#8a93a6; --yellow:#f5c518; --ok:#16a34a; --bad:#dc2626; }
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; }
-  body { background:var(--bg); color:var(--fg); font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; display:flex; }
+  body { background:var(--bg); color:var(--fg); font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  .app { display:flex; min-height:100vh; }
   /* sidebar */
   aside { width:240px; min-width:240px; background:var(--nav); color:var(--nav-fg); min-height:100vh; padding:26px 16px; display:flex; flex-direction:column; }
   .brand { font-size:20px; font-weight:800; letter-spacing:-.2px; }
@@ -18,7 +20,12 @@
   nav a { color:var(--nav-fg); text-decoration:none; padding:10px 14px; border-radius:8px; font-weight:600; font-size:14px; cursor:pointer; }
   nav a:hover { background:#151f36; }
   nav a.active { background:var(--nav-active); }
-  .ver { margin-top:auto; color:#3b465f; font-size:11px; }
+  .admin-box { margin-top:auto; background:#0a111f; border:1px solid #1c2740; border-radius:10px; padding:12px; }
+  .admin-box .t { font-size:12px; font-weight:700; color:var(--yellow); display:flex; align-items:center; gap:6px; }
+  .admin-box input { width:100%; margin-top:8px; background:#0f1a2e; border:1px solid #24314c; color:#fff; border-radius:7px; padding:8px 10px; font:inherit; font-size:13px; }
+  .admin-box button { width:100%; margin-top:8px; background:var(--yellow); color:#1a1300; border:0; border-radius:7px; padding:9px; font-weight:700; cursor:pointer; font-size:13px; }
+  .admin-box .signed { color:var(--ok); font-size:12px; }
+  .ver { color:#3b465f; font-size:11px; margin-top:10px; }
   /* main */
   main { flex:1; padding:40px 44px; max-width:820px; }
   h1 { font-size:26px; margin:0 0 4px; letter-spacing:-.4px; }
@@ -30,11 +37,10 @@
   input[type=text]:focus, textarea:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(37,99,235,.12); }
   textarea { resize:vertical; min-height:96px; }
   .field { margin-bottom:18px; } .field:last-child { margin-bottom:0; }
-  .rowflex { display:flex; gap:10px; align-items:stretch; }
-  button { background:var(--accent); color:#fff; border:0; border-radius:9px; padding:11px 18px; font:inherit; font-weight:650; cursor:pointer; }
-  button:hover { background:var(--accent-d); }
-  button:disabled { opacity:.45; cursor:not-allowed; }
-  button.ghost { background:#fff; border:1px solid var(--line); color:var(--fg); }
+  button.primary { background:var(--accent); color:#fff; border:0; border-radius:9px; padding:11px 18px; font:inherit; font-weight:650; cursor:pointer; }
+  button.primary:hover { background:var(--accent-d); }
+  button.primary:disabled { opacity:.45; cursor:not-allowed; }
+  button.ghost { background:#fff; border:1px solid var(--line); color:var(--fg); border-radius:9px; padding:11px 18px; font:inherit; font-weight:650; cursor:pointer; }
   button.ghost:hover { background:#f3f5f9; }
   button.big { width:100%; padding:14px; font-size:15px; }
   input[type=file] { color:var(--muted); font-size:13px; }
@@ -42,9 +48,8 @@
   .bar > i { display:block; height:100%; width:0; background:var(--accent); transition:width .25s; }
   .stat { color:var(--muted); font-size:13px; }
   .stat b.ok { color:var(--ok); } .stat b.bad { color:var(--bad); }
-  .hidden { display:none; }
-  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
-  .chip { background:#eef2ff; color:#3730a3; border:1px solid #e0e7ff; border-radius:999px; padding:3px 10px; font-size:12px; }
+  .hidden { display:none !important; }
+  .chip { display:inline-block; background:#eef2ff; color:#3730a3; border:1px solid #e0e7ff; border-radius:999px; padding:3px 10px; font-size:12px; margin:2px 2px 0 0; }
   .chip.cat { background:#fef9e7; color:#8a6d0b; border-color:#faedb8; }
   .derived { background:#f8fafc; border:1px dashed var(--line); border-radius:10px; padding:12px 14px; margin-top:12px; font-size:13px; }
   .derived .lbl { color:var(--muted); font-weight:600; }
@@ -54,49 +59,85 @@
   th,td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); }
   th { color:var(--muted); font-weight:600; }
   .note { color:var(--muted); font-size:12px; margin-top:6px; }
+  /* login gate */
+  .gate { position:fixed; inset:0; background:#0d1526; display:flex; align-items:center; justify-content:center; z-index:50; }
+  .gate-card { background:#fff; border-radius:16px; padding:34px 30px; width:340px; text-align:center; box-shadow:0 20px 60px rgba(0,0,0,.35); }
+  .gate-card .g-brand { font-size:22px; font-weight:800; }
+  .gate-card .g-sub { color:var(--muted); font-size:13px; margin:2px 0 20px; }
+  .gate-card input { width:100%; border:1px solid var(--line); border-radius:9px; padding:12px; font:inherit; margin-bottom:10px; }
+  .gate-card button { width:100%; background:var(--accent); color:#fff; border:0; border-radius:9px; padding:12px; font-weight:700; cursor:pointer; }
+  .gate-card .err { color:var(--bad); font-size:12px; min-height:16px; margin-top:8px; }
+  .gate-card .foot { margin-top:14px; font-size:12px; color:var(--muted); }
+  .gate-card .foot a { color:var(--accent); cursor:pointer; text-decoration:underline; }
 </style>
 </head>
 <body>
+
+<!-- LOGIN GATE -->
+<div class="gate" id="gate">
+  <div class="gate-card">
+    <div class="g-brand">Gushwork</div>
+    <div class="g-sub">AKR Enricher · internal tool</div>
+    <form id="gateForm">
+      <input type="password" id="gatePw" placeholder="Password" autocomplete="current-password" autofocus>
+      <button type="submit">Sign in</button>
+    </form>
+    <div class="err" id="gateErr"></div>
+  </div>
+</div>
+
+<div class="app hidden" id="app">
 <aside>
   <div class="brand">Gushwork<small>SEO REPORTING</small></div>
   <nav>
     <a id="navEnrich" class="active" onclick="show('enrich')">AKR Enricher</a>
     <a id="navHistory" onclick="show('history')">History</a>
   </nav>
-  <div class="ver">akr-enrich</div>
+
+  <div class="admin-box">
+    <div class="t">🔒 Admin</div>
+    <div id="adminLocked">
+      <input type="password" id="adminPw" placeholder="Admin password">
+      <button id="adminUnlock">Unlock</button>
+      <div class="stat" id="adminErr" style="color:#f78; font-size:11px; margin-top:6px"></div>
+    </div>
+    <div id="adminPanel" class="hidden">
+      <div class="signed">✓ Admin unlocked</div>
+      <button id="clearHist" style="background:#24314c;color:#fff;margin-top:8px">Clear all history</button>
+      <button id="signOut" style="background:#24314c;color:#fff;margin-top:6px">Sign out</button>
+    </div>
+  </div>
+  <div class="ver">akr-enrich · v2</div>
 </aside>
 
 <main>
   <!-- ENRICH VIEW -->
   <section id="view-enrich">
     <h1>AKR Enricher</h1>
-    <p class="sub">Enter the client domain and upload the AKR. We derive what they sell, then keep / reject each topic and give you an enriched CSV.</p>
+    <p class="sub">Upload the AKR, enter the client domain — we derive what they sell, keep / reject each topic, and give you an enriched CSV.</p>
 
     <div class="card">
       <div class="field">
-        <label>Client domain</label>
-        <div class="rowflex">
-          <input type="text" id="domain" placeholder="example.com" autocomplete="off">
-          <button id="analyze" class="ghost" style="white-space:nowrap">Analyze site</button>
-        </div>
+        <label>1 · AKR file <span class="hint">CSV or Excel — Primary Keyword, Page Type, Topic, Secondary, SV/Volume</span></label>
+        <input type="file" id="akr" accept=".csv,.xlsx,.xls,text/csv">
+        <div class="stat" id="akrInfo" style="margin-top:8px"></div>
+      </div>
+      <div class="field">
+        <label>2 · Client domain <span class="hint">we read the site automatically to learn what they sell</span></label>
+        <input type="text" id="domain" placeholder="example.com" autocomplete="off">
         <div class="stat" id="domainInfo" style="margin-top:8px"></div>
       </div>
       <div class="field">
         <label>Products / services <span class="hint">auto-filled from the site — edit if needed</span></label>
-        <textarea id="services" placeholder="Click “Analyze site” to auto-fill, or type one per line"></textarea>
+        <textarea id="services" placeholder="Auto-fills once you enter the domain — or type one per line"></textarea>
         <div class="derived hidden" id="derivedBox">
           <div><span class="lbl">Category:</span> <span id="dCat">—</span></div>
           <div style="margin-top:4px"><span class="lbl">Serves (ICP):</span> <span id="dIcp">—</span></div>
         </div>
       </div>
-      <div class="field">
-        <label>AKR file <span class="hint">CSV — Primary Keyword, Page Type, Topic, Secondary, SV/Volume</span></label>
-        <input type="file" id="akr" accept=".csv,text/csv">
-        <div class="stat" id="akrInfo" style="margin-top:8px"></div>
-      </div>
     </div>
 
-    <button id="run" class="big" disabled>Enrich &amp; download CSV</button>
+    <button id="run" class="primary big" disabled>Enrich &amp; download CSV</button>
 
     <div class="card hidden" id="progressCard" style="margin-top:16px">
       <div class="stat" id="phase">Starting…</div>
@@ -117,13 +158,35 @@
     <div class="note">History is stored locally in your browser (last 25 runs). It never leaves your machine.</div>
   </section>
 </main>
+</div>
 
 <script>
 const $ = id => document.getElementById(id);
 const OUT_HDR = ['Primary Keyword','Page Type','Topic','Secondary Keywords','Total Search Volume','Relevance','Status','Confidence','Reason','Reason Explained','Audience','Profession','Type','Modifier','BOFU','Matched Services','ICP (keyword)','ICP fit'];
-let akrItems = [], enrichedRows = [], profile = { services:[], category:'', industries:[], anyBusiness:true };
+let akrItems = [], enrichedRows = [], profile = { services:[], category:'', industries:[], anyBusiness:true }, derived=false;
 
-/* ---------- nav ---------- */
+/* ============================ AUTH ============================ */
+const AUTH_KEY='akrEnrich.auth', ADMIN_KEY='akrEnrich.admin';
+const PW_HASH='c9699377682bce3db76fb3e3b4ebcb4c590a0e910644b8e7bb01f20dbe5ab41e';    // sha-256("gushwork")
+const ADMIN_HASH='6d30e0d04948b9f06cc89c880e0819603d2b59e4433c22a22a909ee663f04ce7'; // sha-256(admin pw)
+async function sha256(s){ const b=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)); return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
+function openApp(){ $('gate').classList.add('hidden'); $('app').classList.remove('hidden'); if(localStorage.getItem(ADMIN_KEY)==='1') showAdmin(); }
+function initAuth(){
+  if(localStorage.getItem(AUTH_KEY)==='1'){ openApp(); }
+  $('gateForm').onsubmit = async e => { e.preventDefault();
+    try{ if(await sha256($('gatePw').value)===PW_HASH){ localStorage.setItem(AUTH_KEY,'1'); openApp(); } else { $('gateErr').textContent='Incorrect password'; $('gatePw').select(); } }
+    catch(_){ $('gateErr').textContent='This browser blocks secure crypto — open over https.'; }
+  };
+}
+function showAdmin(){ $('adminLocked').classList.add('hidden'); $('adminPanel').classList.remove('hidden'); }
+$('adminUnlock').onclick = async () => {
+  try{ if(await sha256($('adminPw').value)===ADMIN_HASH){ localStorage.setItem(ADMIN_KEY,'1'); showAdmin(); } else { $('adminErr').textContent='Wrong admin password'; } }catch(_){ $('adminErr').textContent='crypto blocked'; }
+};
+$('clearHist').onclick = () => { if(confirm('Clear all saved history on this browser?')){ localStorage.removeItem('akrHistory'); renderHistory(); alert('History cleared.'); } };
+$('signOut').onclick = () => { localStorage.removeItem(AUTH_KEY); localStorage.removeItem(ADMIN_KEY); location.reload(); };
+initAuth();
+
+/* ============================ nav ============================ */
 function show(v){
   $('view-enrich').classList.toggle('hidden', v!=='enrich');
   $('view-history').classList.toggle('hidden', v!=='history');
@@ -132,74 +195,88 @@ function show(v){
   if(v==='history') renderHistory();
 }
 
-/* ---------- CSV ---------- */
-function parseCSV(text){
+/* ============================ helpers ============================ */
+const csvCell = v => { v=(v==null?'':String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };
+const toList = s => String(s||'').split(/[\n,;]+/).map(x=>x.trim()).filter(Boolean);
+const glFromDomain = d => { d=String(d||'').toLowerCase(); if(/\.in$|\.co\.in$/.test(d))return'in'; if(/\.co\.uk$|\.uk$/.test(d))return'gb'; if(/\.com\.au$|\.au$/.test(d))return'au'; if(/\.ca$/.test(d))return'ca'; return 'us'; };
+function rowsToItems(rows){
+  if(rows.length<2) return { items:[], noVol:false };
+  const head = rows[0].map(h=>String(h==null?'':h).toLowerCase().trim());
+  const find = (...subs)=>{ for(const s of subs){ for(let i=0;i<head.length;i++) if(head[i].includes(s)) return i; } return -1; };
+  const exact = (...v)=>{ for(const x of v){ for(let i=0;i<head.length;i++) if(head[i]===x) return i; } return -1; };
+  const ci = { kw:find('primary keyword','keyword'), pt:find('page type','type'), topic:find('topic'), sec:find('secondary'), vol:find('search volume','volume','msv'), rel:find('relevance','score') };
+  if(ci.vol<0) ci.vol = exact('sv','vol','total sv','search vol');
+  if(ci.kw<0) ci.kw = 0;
+  const items=[];
+  for(let i=1;i<rows.length;i++){ const r=rows[i]; const kw=String(r[ci.kw]==null?'':r[ci.kw]).trim(); if(!kw) continue;
+    items.push({ id:String(i), kw,
+      pageType: ci.pt>=0?String(r[ci.pt]==null?'':r[ci.pt]).trim():'',
+      topic:    ci.topic>=0?String(r[ci.topic]==null?'':r[ci.topic]).trim():'',
+      sec:      ci.sec>=0?String(r[ci.sec]==null?'':r[ci.sec]).trim():'',
+      vol:      ci.vol>=0?(parseInt(String(r[ci.vol]==null?'':r[ci.vol]).replace(/[^0-9]/g,''),10)||0):0,
+      rel:      ci.rel>=0?String(r[ci.rel]==null?'':r[ci.rel]).trim():'' });
+  }
+  return { items, noVol: ci.vol<0 };
+}
+
+/* ============================ AKR upload (CSV or Excel) ============================ */
+$('akr').addEventListener('change', e => {
+  const f = e.target.files[0]; if(!f) return;
+  const isExcel = /\.(xlsx|xls)$/i.test(f.name);
+  const rd = new FileReader();
+  rd.onload = () => {
+    let rows;
+    try{
+      if(isExcel){ const wb = XLSX.read(rd.result, {type:'array'}); const ws = wb.Sheets[wb.SheetNames[0]]; rows = XLSX.utils.sheet_to_json(ws, {header:1, blankrows:false, defval:''}); }
+      else { rows = parseCSVtext(rd.result); }
+    }catch(err){ $('akrInfo').innerHTML='<span style="color:var(--bad)">Could not read file: '+err+'</span>'; return; }
+    const { items, noVol } = rowsToItems(rows);
+    if(!items.length){ $('akrInfo').innerHTML='<span style="color:var(--bad)">No keyword rows found.</span>'; return; }
+    akrItems = items;
+    $('akrInfo').innerHTML = '✓ <b>'+akrItems.length+'</b> keywords loaded'+(noVol?' <span style="color:var(--bad)">(no volume column found)</span>':'');
+    refreshRun();
+  };
+  if(isExcel) rd.readAsArrayBuffer(f); else rd.readAsText(f);
+});
+function parseCSVtext(text){
   const rows=[]; let row=[], cur='', q=false;
   for(let i=0;i<text.length;i++){ const c=text[i];
     if(q){ if(c==='"'){ if(text[i+1]==='"'){ cur+='"'; i++; } else q=false; } else cur+=c; }
     else { if(c==='"') q=true; else if(c===','){ row.push(cur); cur=''; } else if(c==='\n'){ row.push(cur); rows.push(row); row=[]; cur=''; } else if(c==='\r'){} else cur+=c; }
   }
   if(cur.length||row.length){ row.push(cur); rows.push(row); }
-  return rows.filter(r=>r.length>1 || (r[0]&&r[0].trim()));
+  return rows.filter(r=>r.length>1 || (r[0]&&String(r[0]).trim()));
 }
-const csvCell = v => { v=(v==null?'':String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };
-const toList = s => String(s||'').split(/[\n,;]+/).map(x=>x.trim()).filter(Boolean);
-const glFromDomain = d => { d=String(d||'').toLowerCase(); if(/\.in$|\.co\.in$/.test(d))return'in'; if(/\.co\.uk$|\.uk$/.test(d))return'gb'; if(/\.com\.au$|\.au$/.test(d))return'au'; if(/\.ca$/.test(d))return'ca'; return 'us'; };
 
-/* ---------- derive profile from domain ---------- */
+/* ============================ derive profile (auto, on blur) ============================ */
 async function analyze(){
-  const d = $('domain').value.trim(); if(!d){ $('domainInfo').textContent='Enter a domain first.'; return; }
-  $('analyze').disabled=true; $('domainInfo').innerHTML='<span class="spin"></span>Reading the site…';
+  const d = $('domain').value.trim(); if(!d || !d.includes('.')){ return; }
+  if(derived && profile._for===d) return;   // already derived for this domain
+  $('domainInfo').innerHTML='<span class="spin"></span>Reading the site…';
   try{
     const r = await fetch('/api/profile', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({domain:d}) });
     const p = await r.json();
-    if(p.error){ $('domainInfo').innerHTML='<span style="color:var(--bad)">'+p.error+'</span>'; $('analyze').disabled=false; return; }
-    profile = { services:p.services||[], category:p.category||'', industries:p.industries||[], anyBusiness:!!p.anyBusiness };
-    $('services').value = (p.services||[]).join('\n');
+    if(p.error){ $('domainInfo').innerHTML='<span style="color:var(--bad)">'+p.error+'</span>'; return; }
+    profile = { services:p.services||[], category:p.category||'', industries:p.industries||[], anyBusiness:!!p.anyBusiness, _for:d };
+    derived=true;
+    if(!$('services').value.trim()) $('services').value = (p.services||[]).join('\n');
     $('dCat').innerHTML = p.category ? '<span class="chip cat">'+p.category+'</span>' : '—';
-    $('dIcp').innerHTML = (p.industries&&p.industries.length) ? p.industries.map(x=>'<span class="chip">'+x+'</span>').join(' ') : '<span class="stat">serves anyone (horizontal)</span>';
+    $('dIcp').innerHTML = (p.industries&&p.industries.length) ? p.industries.map(x=>'<span class="chip">'+x+'</span>').join('') : '<span class="stat">serves anyone (horizontal)</span>';
     $('derivedBox').classList.remove('hidden');
-    $('domainInfo').innerHTML = p.siteUnreachable ? '<span style="color:var(--bad)">Site unreachable — type the products/services manually below.</span>' : '✓ Derived '+(p.services||[]).length+' service(s) from '+p.website;
+    $('domainInfo').innerHTML = p.siteUnreachable ? '<span style="color:var(--bad)">Site unreachable — type the products/services below manually.</span>' : '✓ Derived '+(p.services||[]).length+' service(s) from '+p.website;
     refreshRun();
   }catch(e){ $('domainInfo').innerHTML='<span style="color:var(--bad)">Could not analyze: '+e+'</span>'; }
-  $('analyze').disabled=false;
 }
-$('analyze').addEventListener('click', analyze);
+$('domain').addEventListener('blur', analyze);
 $('domain').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); analyze(); } });
-
-/* ---------- AKR upload ---------- */
-$('akr').addEventListener('change', e => {
-  const f = e.target.files[0]; if(!f) return;
-  const rd = new FileReader();
-  rd.onload = () => {
-    const rows = parseCSV(rd.result); if(rows.length<2){ $('akrInfo').textContent='No data rows found.'; return; }
-    const head = rows[0].map(h=>String(h).toLowerCase().trim());
-    const find = (...subs)=>{ for(const s of subs){ for(let i=0;i<head.length;i++) if(head[i].includes(s)) return i; } return -1; };
-    const exact = (...v)=>{ for(const x of v){ for(let i=0;i<head.length;i++) if(head[i]===x) return i; } return -1; };
-    const ci = { kw:find('primary keyword','keyword'), pt:find('page type','type'), topic:find('topic'), sec:find('secondary'), vol:find('search volume','volume','msv'), rel:find('relevance','score') };
-    if(ci.vol<0) ci.vol = exact('sv','vol','total sv','search vol');
-    if(ci.kw<0) ci.kw = 0;
-    akrItems = [];
-    for(let i=1;i<rows.length;i++){ const r=rows[i]; const kw=String(r[ci.kw]||'').trim(); if(!kw) continue;
-      akrItems.push({ id:String(i), kw,
-        pageType: ci.pt>=0?String(r[ci.pt]||'').trim():'',
-        topic:    ci.topic>=0?String(r[ci.topic]||'').trim():'',
-        sec:      ci.sec>=0?String(r[ci.sec]||'').trim():'',
-        vol:      ci.vol>=0?(parseInt(String(r[ci.vol]||'').replace(/[^0-9]/g,''),10)||0):0,
-        rel:      ci.rel>=0?String(r[ci.rel]||'').trim():'' });
-    }
-    $('akrInfo').innerHTML = '✓ <b>'+akrItems.length+'</b> keywords loaded'+(ci.vol<0?' <span style="color:var(--bad)">(no volume column found)</span>':'');
-    refreshRun();
-  };
-  rd.readAsText(f);
-});
 
 function refreshRun(){ $('run').disabled = !(akrItems.length && (toList($('services').value).length || profile.category)); }
 $('services').addEventListener('input', refreshRun);
 
-/* ---------- run ---------- */
+/* ============================ run ============================ */
 $('run').addEventListener('click', async () => {
   if(!akrItems.length) return;
+  if(!derived && $('domain').value.trim()) { await analyze(); }   // ensure profile derived (backend), no separate button
   const config = { services: toList($('services').value), products: [], category: profile.category, industries: profile.industries, serpGl: glFromDomain($('domain').value), useSerp: true };
   $('run').disabled = true;
   $('progressCard').classList.remove('hidden');
@@ -232,7 +309,7 @@ function buildCSV(){ return [OUT_HDR].concat(enrichedRows).map(r=>r.map(csvCell)
 function downloadCSV(csv, name){ const blob=new Blob([csv],{type:'text/csv'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name||'enriched.csv'; a.click(); URL.revokeObjectURL(a.href); }
 $('download').addEventListener('click', ()=>downloadCSV(buildCSV(), 'enriched.csv'));
 
-/* ---------- history (localStorage) ---------- */
+/* ============================ history ============================ */
 function loadHist(){ try{ return JSON.parse(localStorage.getItem('akrHistory')||'[]'); }catch(e){ return []; } }
 function saveHistory(entry){ const h=loadHist(); h.unshift(entry); localStorage.setItem('akrHistory', JSON.stringify(h.slice(0,25))); }
 function renderHistory(){
