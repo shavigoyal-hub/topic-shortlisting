@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AKR Enricher — Topic Selection</title>
+<style>
+  :root { --bg:#0f1115; --card:#171a21; --line:#2a2f3a; --fg:#e7e9ee; --muted:#9aa3b2; --accent:#4c8bf5; --ok:#2ec17a; --bad:#e05656; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:640px; margin:0 auto; padding:32px 20px 80px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  p.sub { color:var(--muted); margin:0 0 24px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:20px; margin-bottom:16px; }
+  label { display:block; font-weight:600; margin:0 0 6px; font-size:13px; }
+  .hint { color:var(--muted); font-weight:400; font-size:12px; }
+  input[type=text], textarea, select { width:100%; background:#0e1117; border:1px solid var(--line); color:var(--fg); border-radius:8px; padding:10px 12px; font:inherit; }
+  textarea { resize:vertical; min-height:84px; }
+  .row { display:flex; gap:12px; }
+  .row > div { flex:1; }
+  input[type=file] { color:var(--muted); }
+  .field { margin-bottom:16px; }
+  .field:last-child { margin-bottom:0; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:12px 18px; font:inherit; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--fg); }
+  .bar { height:8px; background:#0e1117; border-radius:6px; overflow:hidden; margin:14px 0 6px; }
+  .bar > i { display:block; height:100%; width:0; background:var(--accent); transition:width .2s; }
+  .stat { color:var(--muted); font-size:13px; }
+  .stat b.ok { color:var(--ok); } .stat b.bad { color:var(--bad); }
+  .hidden { display:none; }
+  .toggle { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); }
+  .toggle input { width:auto; }
+  code { background:#0e1117; padding:1px 5px; border-radius:4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>AKR Enricher</h1>
+  <p class="sub">Upload an AKR, set the client, download the enriched CSV. Runs the current engine (SERP + word-sense + junk filter).</p>
+
+  <div class="card">
+    <div class="field">
+      <label>1 · AKR file <span class="hint">CSV with Primary Keyword, Page Type, Topic, Secondary, SV/Volume</span></label>
+      <input type="file" id="akr" accept=".csv,text/csv">
+      <div class="stat" id="akrInfo"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="field">
+      <label>2 · What the client sells <span class="hint">one service/product per line</span></label>
+      <textarea id="services" placeholder="Online customer service training for IT teams&#10;Help desk skills training&#10;Soft skills coaching"></textarea>
+    </div>
+    <div class="field">
+      <label>3 · Business category <span class="hint">short & distinctive — e.g. "commercial signage", "automotive glass"</span></label>
+      <input type="text" id="category" placeholder="customer-service &amp; soft-skills training for IT teams">
+    </div>
+    <div class="field">
+      <label>Target customers / ICP <span class="hint">optional, comma-separated — blank = serves anyone</span></label>
+      <input type="text" id="icp" placeholder="IT teams, help desk managers, MSPs">
+    </div>
+    <div class="row">
+      <div class="field" style="max-width:130px">
+        <label>Geo</label>
+        <select id="geo"><option value="us">US</option><option value="in">India</option><option value="gb">UK</option><option value="au">Australia</option><option value="ca">Canada</option></select>
+      </div>
+      <div class="field" style="display:flex;align-items:flex-end;">
+        <label class="toggle"><input type="checkbox" id="useSerp" checked> Use Google SERP (accurate; slower)</label>
+      </div>
+    </div>
+  </div>
+
+  <button id="run" disabled>Enrich &amp; download CSV</button>
+
+  <div class="card hidden" id="progressCard" style="margin-top:16px">
+    <div class="stat" id="phase">Starting…</div>
+    <div class="bar"><i id="barFill"></i></div>
+    <div class="stat" id="counts"></div>
+    <button class="ghost hidden" id="download" style="margin-top:12px">⬇ Download enriched.csv</button>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const OUT_HDR = ['Primary Keyword','Page Type','Topic','Secondary Keywords','Total Search Volume','Relevance','Status','Confidence','Reason','Reason Explained','Audience','Profession','Type','Modifier','BOFU','Matched Services','ICP (keyword)','ICP fit'];
+let akrItems = [], enrichedRows = [];
+
+/* ---- CSV parse ---- */
+function parseCSV(text){
+  const rows=[]; let row=[], cur='', q=false;
+  for(let i=0;i<text.length;i++){ const c=text[i];
+    if(q){ if(c==='"'){ if(text[i+1]==='"'){ cur+='"'; i++; } else q=false; } else cur+=c; }
+    else { if(c==='"') q=true; else if(c===','){ row.push(cur); cur=''; } else if(c==='\n'){ row.push(cur); rows.push(row); row=[]; cur=''; } else if(c==='\r'){} else cur+=c; }
+  }
+  if(cur.length||row.length){ row.push(cur); rows.push(row); }
+  return rows.filter(r=>r.length>1 || (r[0]&&r[0].trim()));
+}
+function csvCell(v){ v=(v==null?'':String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
+
+$('akr').addEventListener('change', e => {
+  const f = e.target.files[0]; if(!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    const rows = parseCSV(rd.result); if(rows.length<2){ $('akrInfo').textContent='No data rows found.'; return; }
+    const head = rows[0].map(h=>String(h).toLowerCase().trim());
+    const find = (...subs)=>{ for(const s of subs){ for(let i=0;i<head.length;i++) if(head[i].includes(s)) return i; } return -1; };
+    const exact = (...v)=>{ for(const x of v){ for(let i=0;i<head.length;i++) if(head[i]===x) return i; } return -1; };
+    const ci = { kw:find('primary keyword','keyword'), pt:find('page type','type'), topic:find('topic'), sec:find('secondary'), vol:find('search volume','volume','msv'), rel:find('relevance','score') };
+    if(ci.vol<0) ci.vol = exact('sv','vol','total sv','search vol');
+    if(ci.kw<0) ci.kw = 0;
+    akrItems = [];
+    for(let i=1;i<rows.length;i++){ const r=rows[i]; const kw=String(r[ci.kw]||'').trim(); if(!kw) continue;
+      akrItems.push({ id:String(i), kw,
+        pageType: ci.pt>=0?String(r[ci.pt]||'').trim():'',
+        topic:    ci.topic>=0?String(r[ci.topic]||'').trim():'',
+        sec:      ci.sec>=0?String(r[ci.sec]||'').trim():'',
+        vol:      ci.vol>=0?(parseInt(String(r[ci.vol]||'').replace(/[^0-9]/g,''),10)||0):0,
+        rel:      ci.rel>=0?String(r[ci.rel]||'').trim():'' });
+    }
+    $('akrInfo').innerHTML = '✓ <b>'+akrItems.length+'</b> keywords loaded'+(ci.vol<0?' <span style="color:var(--bad)">(no volume column found)</span>':'');
+    $('run').disabled = akrItems.length===0;
+  };
+  rd.readAsText(f);
+});
+
+/* ---- run ---- */
+const toList = s => String(s||'').split(/[\n,;]+/).map(x=>x.trim()).filter(Boolean);
+$('run').addEventListener('click', async () => {
+  if(!akrItems.length) return;
+  const config = {
+    services: toList($('services').value),
+    products: [],
+    category: $('category').value.trim(),
+    industries: toList($('icp').value),
+    serpGl: $('geo').value,
+    useSerp: $('useSerp').checked,
+  };
+  $('run').disabled = true;
+  $('progressCard').classList.remove('hidden');
+  $('download').classList.add('hidden');
+  const byId = {}; enrichedRows = [];
+  const CHUNK = $('useSerp').checked ? 12 : 25;
+  const chunks = []; for(let i=0;i<akrItems.length;i+=CHUNK) chunks.push(akrItems.slice(i,i+CHUNK));
+  let done=0, keep=0, reject=0, review=0, failed=0;
+  $('phase').textContent = 'Enriching '+akrItems.length+' keywords'+(config.useSerp?' with SERP…':'…');
+  for(const chunk of chunks){
+    try{
+      const resp = await fetch('/api/enrich', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ items:chunk, config }) });
+      const data = await resp.json();
+      if(data.rows){ data.rows.forEach(r=>{ byId[r.id]=r; if(r.status==='1')keep++; else if(r.status==='0')reject++; else review++; }); }
+      else { failed += chunk.length; }
+    }catch(e){ failed += chunk.length; }
+    done += chunk.length;
+    $('barFill').style.width = Math.round(done/akrItems.length*100)+'%';
+    $('counts').innerHTML = done+' / '+akrItems.length+' &nbsp;·&nbsp; keep <b class="ok">'+keep+'</b> &nbsp; reject <b class="bad">'+reject+'</b> &nbsp; review '+review+(failed?' &nbsp;·&nbsp; failed '+failed:'');
+  }
+  // build output rows in original AKR order
+  enrichedRows = akrItems.map(it=>{ const r=byId[it.id]||{}; return [ it.kw, it.pageType, it.topic, it.sec, it.vol, it.rel,
+    r.status||'', r.confidence||'', r.reason||'', r.explained||'', r.audience||'', r.profession||'', r.type||'', r.modifier||'', r.bofu||'', r.services||'', r.icp||'', r.icpFit||'' ]; });
+  $('phase').textContent = '✓ Done — '+akrItems.length+' enriched'+(failed?' ('+failed+' failed)':'');
+  $('download').classList.remove('hidden');
+  $('run').disabled = false;
+});
+
+$('download').addEventListener('click', () => {
+  const csv = [OUT_HDR].concat(enrichedRows).map(r=>r.map(csvCell).join(',')).join('\n')+'\n';
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'enriched.csv'; a.click();
+  URL.revokeObjectURL(a.href);
+});
+</script>
+</body>
+</html>
