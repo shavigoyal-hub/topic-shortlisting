@@ -772,6 +772,27 @@ function serperFetchAll(keywords, gl){
   }
   return out;
 }
+function cleanDom_(w){ return String(w||'').trim().toLowerCase().replace(/^https?:\/\//,'').replace(/^www\./,'').replace(/\/.*$/,'').replace(/\s+/g,''); }
+/* OWN-SITE COVERAGE CHECK (ported from bulk) — for keywords the AI rejected, run `site:domain kw`; if the client's
+   OWN genuine (non-/feeds) pages show they actually sell it, override to KEEP. Returns { kwLower: url } for confirmed. */
+function siteCheck_(dom, kws, gl){
+  var key=prop('SERPER_KEY'); if(!key || !dom || !kws.length) return {};
+  var reqs=kws.map(function(kw){ return { url:'https://google.serper.dev/search', method:'post', headers:{'X-API-KEY':key}, contentType:'application/json', muteHttpExceptions:true, payload:JSON.stringify({q:'site:'+dom+' '+kw, gl:gl||'us', num:10}) }; });
+  var genuineByKw={}, haveAny=[];
+  for(var i=0;i<reqs.length;i+=20){
+    var resp=UrlFetchApp.fetchAll(reqs.slice(i,i+20));
+    for(var j=0;j<resp.length;j++){ var kw=kws[i+j], genuine=[];
+      try{ var data=JSON.parse(resp[j].getContentText()); (data.organic||[]).forEach(function(o){ var u=String(o.link||'').toLowerCase().replace(/\/$/,''); if(u && !/\/feeds?(\/|$)/.test(u) && u.indexOf('/blog/')<0) genuine.push({link:o.link,title:o.title||'',snippet:o.snippet||''}); }); }catch(e){}
+      if(genuine.length){ genuineByKw[kw]=genuine.slice(0,3); haveAny.push(kw); }
+    }
+  }
+  if(!haveAny.length) return {};
+  var payload=haveAny.map(function(kw,idx){ return JSON.stringify({id:idx, keyword:kw, pages:genuineByKw[kw].map(function(g){return g.title+' — '+g.link;})}); }).join('\n');
+  var sys='A client sells products/services. For each keyword, their OWN website (excluding auto-generated /feeds SEO pages) has these pages. Decide if those pages show the client actually SELLS / OFFERS that product or service (a product or product-category page = yes; a mere blog mention or unrelated page = no). Return ONLY JSON: {"results":[{"id":<id>,"offers":true|false}]}.';
+  var out={};
+  try{ var j=openai([{role:'system',content:sys},{role:'user',content:payload}]); (j.results||[]).forEach(function(o){ if(o.offers===true){ var kw=haveAny[Number(o.id)]; if(kw) out[String(kw).toLowerCase()]=genuineByKw[kw][0].link; } }); }catch(e){}
+  return out;
+}
 var AUDIENCES=['B2B / Corporate','Healthcare / Clinical','Aspiring Practitioner','Athlete / Sports','Local Seeker','Individual / Consumer','Researcher / Student','General'];
 var REJECT_REASONS=['Job-seeker intent','Researcher/student intent','Branded query','Off-ICP audience','No commercial intent'];
 function openai(messages){
@@ -906,6 +927,15 @@ function processBatch(phase){
       if(v[COL.STATUS-1]==='0' && c.icp) v[COL.REXP-1]=(v[COL.REXP-1]?v[COL.REXP-1]+' — ':'')+'people searching this are most likely '+c.icp+(c.icpFit===false?", which is NOT the client's target ICP":'');
     }
   });
+  // OWN-SITE COVERAGE CHECK — rescue AI rejects the client actually sells (site:domain kw, ignore /feeds).
+  // Cached per keyword in _Cache (siteChecked flag) so re-runs never re-hit Serper for the same keyword.
+  var dom=cleanDom_(cfg.website);
+  if(dom && prop('SERPER_KEY')){
+    var rej=[], need=[];
+    todo.forEach(function(i){ var v=vals[i]; if(String(v[COL.LAYER-1])==='AI' && String(v[COL.STATUS-1])==='0'){ var lk=String(v[COL.KW-1]).toLowerCase(); rej.push({i:i, kw:v[COL.KW-1], lk:lk}); if(!cache[lk] || cache[lk].siteChecked!==true) need.push(v[COL.KW-1]); } });
+    if(need.length){ var found=siteCheck_(dom, need, cfg.serpGl); need.forEach(function(kw){ var lk=String(kw).toLowerCase(); if(!cache[lk]) cache[lk]={}; cache[lk].siteChecked=true; cache[lk].siteKeepUrl=found[lk]||''; }); }
+    rej.forEach(function(x){ var u=cache[x.lk] && cache[x.lk].siteKeepUrl; if(u){ var v=vals[x.i]; v[COL.STATUS-1]='1'; v[COL.REASON-1]='Sold on client\'s own site'; v[COL.REXP-1]='Own site sells it: '+u; v[COL.LAYER-1]='SiteKeep'; } });
+  }
   t.getRange(2,COL.STATUS,n,1).setNumberFormat('@');   // keep 0/1 as text
   rng.setValues(vals); saveCache(cache);
   return todo.length;
