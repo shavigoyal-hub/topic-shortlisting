@@ -107,7 +107,7 @@
       <button id="signOut" style="background:#24314c;color:#fff;margin-top:6px">Sign out</button>
     </div>
   </div>
-  <div class="ver">akr-enrich · v2</div>
+  <div class="ver" id="ver">akr-enrich</div>
 </aside>
 
 <main>
@@ -185,6 +185,7 @@ $('adminUnlock').onclick = async () => {
 $('clearHist').onclick = () => { if(confirm('Clear all saved history on this browser?')){ localStorage.removeItem('akrHistory'); renderHistory(); alert('History cleared.'); } };
 $('signOut').onclick = () => { localStorage.removeItem(AUTH_KEY); localStorage.removeItem(ADMIN_KEY); location.reload(); };
 initAuth();
+fetch('/api/version').then(function(r){return r.json();}).then(function(v){ if(v&&v.sha) $('ver').textContent='akr-enrich · '+v.sha; }).catch(function(){});
 
 /* ============================ nav ============================ */
 function show(v){
