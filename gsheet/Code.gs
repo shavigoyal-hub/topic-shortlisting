@@ -585,7 +585,9 @@ function mbAuditCfg_(names){ return { offering:'Both', website:'', services:name
 // (page_status GENERATED or null) — a separate cursor + output sheet so the two runs never collide.
 function mbAuditPublished(mode){
   var draft=(mode==='draft');
-  var statusSql = draft ? "(c.page_status IS NULL OR UPPER(c.page_status)='DRAFT')" : "c.page_status='PUBLISHED'";   // draft = null/DRAFT only (NOT 'GENERATED')
+  // c.d_at IS NULL excludes SOFT-DELETED rows (without it, draft returns thousands of stale/deleted clusters —
+  // micro-ant: 4843 vs the real 21). draft = "Yet to be Generated" = page_status null & not deleted.
+  var statusSql = (draft ? "c.page_status IS NULL" : "c.page_status='PUBLISHED'") + " AND c.d_at IS NULL";
   var CK = draft ? 'MB3' : 'MB2';   // cursor/signature property prefix (independent per mode)
   var outName = draft ? 'Draft – Rejected' : 'Published – Rejected';
   var ui=SpreadsheetApp.getUi(), props=PropertiesService.getScriptProperties();

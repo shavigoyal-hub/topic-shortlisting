@@ -29,8 +29,10 @@ loadEnv(path.dirname(fileURLToPath(import.meta.url)));
 function arg(name, def){ const i=process.argv.indexOf('--'+name); return i>=0 ? process.argv[i+1] : def; }
 const KB_FILE   = arg('kb', 'Client Knowledge Bases.csv');
 const ACC_FILE  = arg('accounts', 'domains.txt');
-const STATUS    = String(arg('status', 'published')).toLowerCase();   // 'published' (page_status=PUBLISHED) | 'draft' (null or DRAFT, not GENERATED)
-const STATUS_SQL = STATUS==='draft' ? "(c.page_status IS NULL OR UPPER(c.page_status)='DRAFT')" : "c.page_status='PUBLISHED'";
+const STATUS    = String(arg('status', 'published')).toLowerCase();   // 'published' (page_status=PUBLISHED) | 'draft' ("Yet to be Generated" = page_status null)
+// c.d_at IS NULL excludes SOFT-DELETED rows — without it, 'draft' returns thousands of stale/deleted clusters
+// (micro-ant: 4843 vs the real 21). This matches the dashboard's Published / Generated / Yet-to-be-Generated counts.
+const STATUS_SQL = (STATUS==='draft' ? "c.page_status IS NULL" : "c.page_status='PUBLISHED'") + " AND c.d_at IS NULL";
 const OUT_FILE  = arg('out', STATUS==='draft' ? 'rejected_draft.csv' : 'rejected.csv');
 const CONC      = Number(arg('concurrency', 6));
 const AI_BATCH  = Number(arg('batch', 50));
