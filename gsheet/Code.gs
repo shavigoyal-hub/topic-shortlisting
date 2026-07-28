@@ -98,6 +98,7 @@ function buildMenu(ui){
     .addItem('1. Show accounts to review (Onboarding tracker + csms)', 'act6')
     .addItem('2. Fill website products/services into Client Knowledge Bases', 'act7')
     .addItem('3. Audit published → rejects (run / continue)', 'act5')
+    .addItem('3b. Audit uploaded (not-yet-published) → rejects (run / continue)', 'act8')
     .addSeparator()
     .addItem('Check Metabase schema & status', 'act3')
     .addItem('Fetch published URLs only (no audit)', 'act4');
@@ -516,20 +517,26 @@ function kbFillWebsiteOffering(){
 // blunt rules (free/jobs/org) over-reject whole client types (training/certification/education/recruiting/professional bodies) — let the client-aware AI judge intent; keep only the truly-junk 'format' rule
 function mbAuditCfg_(names){ return { offering:'Both', website:'', services:names||[], products:[], industries:[], targetProfessions:[], competitors:[], locations:[], negatives:[], geoMode:'all', serpGl:'us',
   rules:{zero:false,free:false,nearme:false,competitor:false,location:false,info:false,jobs:false,format:true,org:false,lowrel:false}, lowRel:1 }; }
-// STEP 3 — per account: pull PUBLISHED pages, run the shortlisting logic (rules + AI, NO SERP), output only the REJECTED (status 0) rows
-function mbAuditPublished(){
+// STEP 3 — per account: pull pages, run the shortlisting logic (rules + AI, NO SERP), output only the REJECTED (status 0) rows.
+// mode 'published' (default) audits page_status='PUBLISHED'; mode 'draft' audits the UPLOADED / not-yet-published pages
+// (page_status GENERATED or null) — a separate cursor + output sheet so the two runs never collide.
+function mbAuditPublished(mode){
+  var draft=(mode==='draft');
+  var statusSql = draft ? "COALESCE(c.page_status,'') <> 'PUBLISHED'" : "c.page_status='PUBLISHED'";
+  var CK = draft ? 'MB3' : 'MB2';   // cursor/signature property prefix (independent per mode)
+  var outName = draft ? 'Uploaded – Rejected' : 'Published – Rejected';
   var ui=SpreadsheetApp.getUi(), props=PropertiesService.getScriptProperties();
   var accounts=mbAccounts_();
   if(!accounts.length){ ui.alert('No accounts to review.\n\nAccounts are derived automatically: the "Onboarding tracker" tab (Domain Name + CS Name) filtered to CSMs marked "yes" in the "csms" tab (Review Requried). Check those two tabs, then run again.'); return; }
   if(!prop('OPENAI_API_KEY')){ ui.alert('Set OPENAI_API_KEY first.'); return; }
   var HDR=['client','primaryKeyword','pageType','topic','volume','publishedUrl','Audience','Profession','Type','Modifier','BOFU','Status','Reason','Reason Explained','Confidence'], NC=HDR.length;
-  var out=ss().getSheetByName('Published – Rejected')||ss().insertSheet('Published – Rejected');
+  var out=ss().getSheetByName(outName)||ss().insertSheet(outName);
   if(out.getLastRow()===0){ out.getRange(1,1,1,NC).setValues([HDR]).setFontWeight('bold'); out.setFrozenRows(1); }
   // restart from the top whenever the account list changes, OR after a completed pass (a fresh click = run again)
   var sig=accounts.length+'|'+accounts[0].domain+'|'+accounts[accounts.length-1].domain;
-  var cursor=Number(props.getProperty('MB2_CURSOR')||0), pageOff=Number(props.getProperty('MB2_PAGE')||0);
-  if(props.getProperty('MB2_SIG')!==sig || cursor>=accounts.length){
-    props.setProperty('MB2_SIG',sig); cursor=0; pageOff=0; props.setProperty('MB2_CURSOR','0'); props.deleteProperty('MB2_PAGE');
+  var cursor=Number(props.getProperty(CK+'_CURSOR')||0), pageOff=Number(props.getProperty(CK+'_PAGE')||0);
+  if(props.getProperty(CK+'_SIG')!==sig || cursor>=accounts.length){
+    props.setProperty(CK+'_SIG',sig); cursor=0; pageOff=0; props.setProperty(CK+'_CURSOR','0'); props.deleteProperty(CK+'_PAGE');
     if(out.getLastRow()>1) out.getRange(2,1,out.getLastRow()-1,NC).clearContent();   // clear old results for a clean pass
   }
   var kbCount=Object.keys(mbKbLookup_()).length;
@@ -540,7 +547,7 @@ function mbAuditPublished(){
     while(cursor<accounts.length && !timeUp){
       var acc=accounts[cursor];
       var sql='SELECT '+(C.pk?'c.'+C.pk:'NULL')+' AS kw, '+(C.topic?'c.'+C.topic:'NULL')+' AS topic, '+(C.pt?'c.'+C.pt:'NULL')+' AS pt, '+(C.vol?'c.'+C.vol:'NULL')+' AS vol, '+urlExpr+' AS url'
-        +" FROM public.clusters c JOIN public.projects p ON p.id=c.p_id WHERE LOWER(p.root_domain)='"+mbEsc_(acc.domain)+"' AND c.page_status='PUBLISHED'"+(C.vol?' ORDER BY c.'+C.vol+' DESC NULLS LAST':'');
+        +" FROM public.clusters c JOIN public.projects p ON p.id=c.p_id WHERE LOWER(p.root_domain)='"+mbEsc_(acc.domain)+"' AND ("+statusSql+')'+(C.vol?' ORDER BY c.'+C.vol+' DESC NULLS LAST':'');
       var rows=mbRunSql_(s,db,sql).rows, cfg=mbAuditCfg_(acc.names), i=pageOff, outRows=[];
       while(i<rows.length){
         if(Date.now()-start>=FG_BUDGET_MS){ timeUp=true; break; }
@@ -561,12 +568,13 @@ function mbAuditPublished(){
       summary.push('• '+acc.domain+' — '+rows.length+' pages, '+outRows.length+' rejected  '+(acc.names.length?'['+acc.names.slice(0,4).join(', ')+']':'[⚠ NO KB match]')+(done?'':' (paused)'));
       if(done){ cursor++; pageOff=0; } else { pageOff=i; break; }
     }
-    props.setProperty('MB2_CURSOR', String(cursor)); props.setProperty('MB2_PAGE', String(pageOff));
+    props.setProperty(CK+'_CURSOR', String(cursor)); props.setProperty(CK+'_PAGE', String(pageOff));
     var allDone=cursor>=accounts.length;
-    ui.alert('Audit v'+BUILD+'   |   KB entries loaded: '+kbCount+'   |   audited '+summary.length+' account(s) this run, '+totalRej+' rejected rows.\n\n'+summary.join('\n')+'\n\n'+(allDone?'✅ All '+accounts.length+' accounts done.':'▶ Run again to continue ('+cursor+'/'+accounts.length+' done).'));
+    ui.alert('Audit v'+BUILD+' ('+(draft?'UPLOADED / not-yet-published':'PUBLISHED')+' pages)   |   KB entries loaded: '+kbCount+'   |   audited '+summary.length+' account(s) this run, '+totalRej+' rejected rows → "'+outName+'" tab.\n\n'+summary.join('\n')+'\n\n'+(allDone?'✅ All '+accounts.length+' accounts done.':'▶ Run again to continue ('+cursor+'/'+accounts.length+' done).'));
   }catch(e){ ui.alert('Metabase: '+e.message); }
 }
-function act5(){ return mbAuditPublished(); }
+function act5(){ return mbAuditPublished('published'); }
+function act8(){ return mbAuditPublished('draft'); }   // audit UPLOADED / not-yet-published pages (page_status GENERATED or null)
 
 function setApiKeys(){
   var ui=SpreadsheetApp.getUi(), props=PropertiesService.getScriptProperties();
