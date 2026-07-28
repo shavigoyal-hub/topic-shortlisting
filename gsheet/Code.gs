@@ -95,7 +95,8 @@ function buildMenu(ui){
   menu.addToUi();
   // FLOW 2 — bulk-audit many accounts' PUBLISHED pages from Metabase
   var mb=ui.createMenu('Bulk Account Audit')
-    .addItem('1. Show accounts to review (Onboarding tracker + csms)', 'act6')
+    .addItem('0. Set accounts to audit (paste domains)', 'act9')
+    .addItem('1. Show accounts to review (uploaded list, or Onboarding tracker + csms)', 'act6')
     .addItem('2. Fill website products/services into Client Knowledge Bases', 'act7')
     .addItem('3. Audit published → rejects (run / continue)', 'act5')
     .addItem('3b. Audit uploaded (not-yet-published) → rejects (run / continue)', 'act8')
@@ -448,9 +449,44 @@ function mbReviewCsms_(){
     if(e && String(v[r][rc]||'').trim().toLowerCase()==='yes') set[e]=1; }
   return set;
 }
-// accounts to audit = "Onboarding tracker" rows whose CS Name is a csm flagged review=yes in the "csms" tab.
-// (No manual Accounts tab — this is derived so it stays in sync.) Offering always comes from Client Knowledge Bases.
+// "Audit Accounts" input tab — paste specific domains to audit (one per row). While it has domains, the audit
+// runs ONLY those; empty it to fall back to the Onboarding tracker + csms derivation.
+function mbAuditListSheet_(){ return mbSheetLike_(['audit accounts','accounts to audit','audit list']); }
+function mbUploadedAccounts_(){
+  var sh=mbAuditListSheet_(); if(!sh||sh.getLastRow()<1) return [];
+  var v=sh.getDataRange().getValues(), out=[], seen={};
+  for(var i=0;i<v.length;i++){ var raw=v[i][0], d=mbNormDomain_(raw);
+    if(!d || d.indexOf('.')<0 || seen[d]) continue;   // skip header/blank/dupes
+    seen[d]=1; out.push({raw:raw, d:d}); }
+  return out;
+}
+// offering for a domain: Client Knowledge Bases match, else fetch the site and extract it (cached per domain).
+function mbWebsiteOffering_(domain){
+  var props=PropertiesService.getScriptProperties(), key='SITE_OFF_'+domain, cached=props.getProperty(key);
+  if(cached){ try{ var a=JSON.parse(cached); if(a && a.length) return a; }catch(e){} }
+  var off=[]; try{ off=deriveOffering_(fetchSiteText_(domain))||[]; }catch(e){}
+  props.setProperty(key, JSON.stringify(off));
+  return off;
+}
+// create/open the "Audit Accounts" tab so the user can paste the accounts to audit
+function mbSetAuditList(){
+  var ui=SpreadsheetApp.getUi(), sh=mbAuditListSheet_();
+  if(!sh){ sh=ss().insertSheet('Audit Accounts'); sh.getRange(1,1).setValue('Domain (one per row — paste the accounts to audit; leave empty to use the Onboarding tracker + csms list)').setFontWeight('bold').setBackground('#e8f0e8'); sh.setColumnWidth(1,560); sh.setFrozenRows(1); }
+  ss().setActiveSheet(sh);
+  ui.alert('Paste the domains to audit into the "'+sh.getName()+'" tab (one per row).\n\nWhile this tab has domains, the audit runs ONLY those. Offering is pulled from Client Knowledge Bases, or fetched from the client\'s site if it\'s not in the KB. Empty the tab to go back to the auto-derived (Onboarding + csms) list.');
+}
+function act9(){ return mbSetAuditList(); }
+// accounts to audit = uploaded "Audit Accounts" list if present; else "Onboarding tracker" rows whose CS Name is a
+// csm flagged review=yes in the "csms" tab. Offering comes from Client Knowledge Bases (site-fetched at audit time if missing).
 function mbAccounts_(){
+  var up=mbUploadedAccounts_();
+  if(up.length){
+    var kbU=mbKbLookup_(), outU=[], seenU={};
+    up.forEach(function(x){ if(seenU[x.d]) return; seenU[x.d]=1;
+      var nm=mbBestKb_(mbCore_(x.raw), kbU);
+      outU.push({domain:x.d, names:nm, matched:!!nm.length, csm:'(uploaded)', uploaded:true}); });
+    return outU;
+  }
   var sh=mbSheetLike_(['onboarding']); if(!sh||sh.getLastRow()<2) return [];
   var v=sh.getDataRange().getValues(), head=v[0].map(function(h){return String(h).toLowerCase();});
   var hf=function(){ var subs=arguments; for(var i=0;i<head.length;i++){ for(var j=0;j<subs.length;j++){ if(head[i].indexOf(subs[j])>=0) return i; } } return -1; };
@@ -470,9 +506,10 @@ function mbAccounts_(){
 // show which accounts will be audited (and under which CSM) before running
 function mbShowAccounts(){
   var ui=SpreadsheetApp.getUi(), a=mbAccounts_(), review=mbReviewCsms_();
-  if(!a.length){ ui.alert('No accounts found.\n\nExpected an "Onboarding tracker" tab (with Domain Name + CS Name) and a "csms" tab (csm + Review Requried = yes).'); return; }
-  var lines=a.map(function(x){ return '• '+x.domain+(x.matched?'':'  [⚠ no KB offering]')+'   — '+(x.csm||'?'); });
-  ui.alert(a.length+' account(s) to review  (CSMs flagged yes: '+Object.keys(review).length+')\n\n'+lines.join('\n')+'\n\nRun "Audit published → rejects" to process them.');
+  if(!a.length){ ui.alert('No accounts found.\n\nEither paste domains into an "Audit Accounts" tab (menu item 0), or provide an "Onboarding tracker" tab (Domain Name + CS Name) and a "csms" tab (csm + Review Requried = yes).'); return; }
+  var uploaded=a.length && a[0].uploaded;
+  var lines=a.map(function(x){ return '• '+x.domain+(x.matched?'':'  [⚠ no KB offering — will fetch from site at audit time]')+(uploaded?'':'   — '+(x.csm||'?')); });
+  ui.alert(a.length+' account(s) to audit  ('+(uploaded?'from your "Audit Accounts" list':'derived — CSMs flagged yes: '+Object.keys(review).length)+')\n\n'+lines.join('\n')+'\n\nRun "Audit published → rejects" (or "3b. uploaded") to process them.');
 }
 /* ---- Fill "Website Products / Services" in Client Knowledge Bases, straight from each client's site ----
    Adds a row for any review account missing from the KB, then fetches its site and writes the extracted
@@ -548,6 +585,7 @@ function mbAuditPublished(mode){
       var acc=accounts[cursor];
       var sql='SELECT '+(C.pk?'c.'+C.pk:'NULL')+' AS kw, '+(C.topic?'c.'+C.topic:'NULL')+' AS topic, '+(C.pt?'c.'+C.pt:'NULL')+' AS pt, '+(C.vol?'c.'+C.vol:'NULL')+' AS vol, '+urlExpr+' AS url'
         +" FROM public.clusters c JOIN public.projects p ON p.id=c.p_id WHERE LOWER(p.root_domain)='"+mbEsc_(acc.domain)+"' AND ("+statusSql+')'+(C.vol?' ORDER BY c.'+C.vol+' DESC NULLS LAST':'');
+      if(!acc.names || !acc.names.length){ acc.names=mbWebsiteOffering_(acc.domain); }   // no KB match → fetch offering from the client's site (cached)
       var rows=mbRunSql_(s,db,sql).rows, cfg=mbAuditCfg_(acc.names), i=pageOff, outRows=[];
       while(i<rows.length){
         if(Date.now()-start>=FG_BUDGET_MS){ timeUp=true; break; }
