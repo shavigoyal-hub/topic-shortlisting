@@ -522,7 +522,7 @@ function mbAuditCfg_(names){ return { offering:'Both', website:'', services:name
 // (page_status GENERATED or null) — a separate cursor + output sheet so the two runs never collide.
 function mbAuditPublished(mode){
   var draft=(mode==='draft');
-  var statusSql = draft ? "COALESCE(c.page_status,'') <> 'PUBLISHED'" : "c.page_status='PUBLISHED'";
+  var statusSql = draft ? "(c.page_status IS NULL OR UPPER(c.page_status)='DRAFT')" : "c.page_status='PUBLISHED'";   // draft = null/DRAFT only (NOT 'GENERATED')
   var CK = draft ? 'MB3' : 'MB2';   // cursor/signature property prefix (independent per mode)
   var outName = draft ? 'Uploaded – Rejected' : 'Published – Rejected';
   var ui=SpreadsheetApp.getUi(), props=PropertiesService.getScriptProperties();
