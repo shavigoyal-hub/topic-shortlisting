@@ -29,7 +29,9 @@ loadEnv(path.dirname(fileURLToPath(import.meta.url)));
 function arg(name, def){ const i=process.argv.indexOf('--'+name); return i>=0 ? process.argv[i+1] : def; }
 const KB_FILE   = arg('kb', 'Client Knowledge Bases.csv');
 const ACC_FILE  = arg('accounts', 'domains.txt');
-const OUT_FILE  = arg('out', 'rejected.csv');
+const STATUS    = String(arg('status', 'published')).toLowerCase();   // 'published' (page_status=PUBLISHED) | 'draft' (null or DRAFT, not GENERATED)
+const STATUS_SQL = STATUS==='draft' ? "(c.page_status IS NULL OR UPPER(c.page_status)='DRAFT')" : "c.page_status='PUBLISHED'";
+const OUT_FILE  = arg('out', STATUS==='draft' ? 'rejected_draft.csv' : 'rejected.csv');
 const CONC      = Number(arg('concurrency', 6));
 const AI_BATCH  = Number(arg('batch', 50));
 const USE_SITE  = arg('site', 'true') !== 'false';
@@ -424,7 +426,7 @@ async function main(){
   console.log('Metabase company_info: geo for '+nGeo+'/'+domains.length+' domains, real ICP for '+nIcp+'/'+domains.length+' (AI-derived ICP only as fallback)');
   const fetched = await mapLimit(domains, CONC, async (d)=>{
     const sql = 'SELECT '+(C.pk?'c.'+C.pk:'NULL')+' AS kw, '+(C.topic?'c.'+C.topic:'NULL')+' AS topic, '+(C.pt?'c.'+C.pt:'NULL')+' AS pt, '+(C.vol?'c.'+C.vol:'NULL')+' AS vol, '+urlExpr+' AS url'
-      +" FROM public.clusters c JOIN public.projects p ON p.id=c.p_id WHERE LOWER(p.root_domain)='"+mbEsc(d.domain)+"' AND c.page_status='PUBLISHED'"+(C.vol?' ORDER BY c.'+C.vol+' DESC NULLS LAST':'');
+      +" FROM public.clusters c JOIN public.projects p ON p.id=c.p_id WHERE LOWER(p.root_domain)='"+mbEsc(d.domain)+"' AND ("+STATUS_SQL+')'+(C.vol?' ORDER BY c.'+C.vol+' DESC NULLS LAST':'');
     const rows = (await mbRunSql(db, sql)).rows;
     const kbNames = bestKb(mbCore(d.raw), kb);
     let siteNames = [];
@@ -465,7 +467,7 @@ async function main(){
     for(let i=0;i<f.rows.length;i+=AI_BATCH) tasks.push({ f, slice:f.rows.slice(i,i+AI_BATCH) });
   }
   const totalPages = fetched.reduce((n,f)=>n+((f&&f.rows)?f.rows.length:0),0);
-  console.log('Total PUBLISHED pages: '+totalPages+' across '+fetched.length+' accounts, '+tasks.length+' AI batches\n');
+  console.log('Total '+STATUS.toUpperCase()+' pages: '+totalPages+' across '+fetched.length+' accounts, '+tasks.length+' AI batches\n');
 
   // 3) classify + apply rules (parallel); flag OFF-TOPIC and (separately) NOT-TARGET-ICP
   let doneBatches=0, vetoed=0, catVetoed=0, siteVetoed=0, serpFetched=0; const vetoRows=[]; const serpCache = USE_SERP ? loadSerpCache(dir) : {};
