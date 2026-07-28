@@ -100,7 +100,7 @@ function buildMenu(ui){
     .addItem('2. Fill website products/services into Client Knowledge Bases', 'act7')
     .addItem('2b. Pre-fetch offerings for the audit list (site → cache)', 'act10')
     .addItem('3. Audit published → rejects (run / continue)', 'act5')
-    .addItem('3b. Audit uploaded (not-yet-published) → rejects (run / continue)', 'act8')
+    .addItem('3b. Audit draft / unpublished → rejects (run / continue)', 'act8')
     .addSeparator()
     .addItem('Check Metabase schema & status', 'act3')
     .addItem('Fetch published URLs only (no audit)', 'act4');
@@ -535,7 +535,7 @@ function mbShowAccounts(){
   if(!a.length){ ui.alert('No accounts found.\n\nEither paste domains into an "Audit Accounts" tab (menu item 0), or provide an "Onboarding tracker" tab (Domain Name + CS Name) and a "csms" tab (csm + Review Requried = yes).'); return; }
   var uploaded=a.length && a[0].uploaded;
   var lines=a.map(function(x){ return '• '+x.domain+(x.matched?'':'  [⚠ no KB offering — will fetch from site at audit time]')+(uploaded?'':'   — '+(x.csm||'?')); });
-  ui.alert(a.length+' account(s) to audit  ('+(uploaded?'from your "Audit Accounts" list':'derived — CSMs flagged yes: '+Object.keys(review).length)+')\n\n'+lines.join('\n')+'\n\nRun "Audit published → rejects" (or "3b. uploaded") to process them.');
+  ui.alert(a.length+' account(s) to audit  ('+(uploaded?'from your "Audit Accounts" list':'derived — CSMs flagged yes: '+Object.keys(review).length)+')\n\n'+lines.join('\n')+'\n\nRun "3. Audit published" or "3b. Audit draft/unpublished" to process them.');
 }
 /* ---- Fill "Website Products / Services" in Client Knowledge Bases, straight from each client's site ----
    Adds a row for any review account missing from the KB, then fetches its site and writes the extracted
@@ -587,7 +587,7 @@ function mbAuditPublished(mode){
   var draft=(mode==='draft');
   var statusSql = draft ? "(c.page_status IS NULL OR UPPER(c.page_status)='DRAFT')" : "c.page_status='PUBLISHED'";   // draft = null/DRAFT only (NOT 'GENERATED')
   var CK = draft ? 'MB3' : 'MB2';   // cursor/signature property prefix (independent per mode)
-  var outName = draft ? 'Uploaded – Rejected' : 'Published – Rejected';
+  var outName = draft ? 'Draft – Rejected' : 'Published – Rejected';
   var ui=SpreadsheetApp.getUi(), props=PropertiesService.getScriptProperties();
   var accounts=mbAccounts_();
   if(!accounts.length){ ui.alert('No accounts to review.\n\nAccounts are derived automatically: the "Onboarding tracker" tab (Domain Name + CS Name) filtered to CSMs marked "yes" in the "csms" tab (Review Requried). Check those two tabs, then run again.'); return; }
@@ -634,11 +634,11 @@ function mbAuditPublished(mode){
     }
     props.setProperty(CK+'_CURSOR', String(cursor)); props.setProperty(CK+'_PAGE', String(pageOff));
     var allDone=cursor>=accounts.length;
-    ui.alert('Audit v'+BUILD+' ('+(draft?'UPLOADED / not-yet-published':'PUBLISHED')+' pages)   |   KB entries loaded: '+kbCount+'   |   audited '+summary.length+' account(s) this run, '+totalRej+' rejected rows → "'+outName+'" tab.\n\n'+summary.join('\n')+'\n\n'+(allDone?'✅ All '+accounts.length+' accounts done.':'▶ Run again to continue ('+cursor+'/'+accounts.length+' done).'));
+    ui.alert('Audit v'+BUILD+' ('+(draft?'DRAFT / not-yet-published':'PUBLISHED')+' pages)   |   KB entries loaded: '+kbCount+'   |   audited '+summary.length+' account(s) this run, '+totalRej+' rejected rows → "'+outName+'" tab.\n\n'+summary.join('\n')+'\n\n'+(allDone?'✅ All '+accounts.length+' accounts done.':'▶ Run again to continue ('+cursor+'/'+accounts.length+' done).'));
   }catch(e){ ui.alert('Metabase: '+e.message); }
 }
 function act5(){ return mbAuditPublished('published'); }
-function act8(){ return mbAuditPublished('draft'); }   // audit UPLOADED / not-yet-published pages (page_status GENERATED or null)
+function act8(){ return mbAuditPublished('draft'); }   // audit DRAFT / not-yet-published pages (page_status null or DRAFT)
 
 function setApiKeys(){
   var ui=SpreadsheetApp.getUi(), props=PropertiesService.getScriptProperties();
