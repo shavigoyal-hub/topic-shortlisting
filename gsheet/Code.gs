@@ -98,6 +98,7 @@ function buildMenu(ui){
     .addItem('0. Set accounts to audit (paste domains)', 'act9')
     .addItem('1. Show accounts to review (uploaded list, or Onboarding tracker + csms)', 'act6')
     .addItem('2. Fill website products/services into Client Knowledge Bases', 'act7')
+    .addItem('2b. Pre-fetch offerings for the audit list (site → cache)', 'act10')
     .addItem('3. Audit published → rejects (run / continue)', 'act5')
     .addItem('3b. Audit uploaded (not-yet-published) → rejects (run / continue)', 'act8')
     .addSeparator()
@@ -476,6 +477,31 @@ function mbSetAuditList(){
   ui.alert('Paste the domains to audit into the "'+sh.getName()+'" tab (one per row).\n\nWhile this tab has domains, the audit runs ONLY those. Offering is pulled from Client Knowledge Bases, or fetched from the client\'s site if it\'s not in the KB. Empty the tab to go back to the auto-derived (Onboarding + csms) list.');
 }
 function act9(){ return mbSetAuditList(); }
+// Pre-fetch + cache the website offering for every audit-list domain that has no KB match, so the audit itself
+// does no mid-run site fetching. Chunked (FG budget) — run again to continue.
+function mbPrefetchOfferings(){
+  var ui=SpreadsheetApp.getUi(), props=PropertiesService.getScriptProperties();
+  if(!prop('OPENAI_API_KEY')){ ui.alert('Set OPENAI_API_KEY first.'); return; }
+  var accounts=mbAccounts_();
+  if(!accounts.length){ ui.alert('No accounts. Paste domains into "Audit Accounts" (item 0), or set up the Onboarding + csms tabs.'); return; }
+  var need=accounts.filter(function(a){ return !a.names || !a.names.length; });   // only domains without a KB offering
+  if(!need.length){ ui.alert('All '+accounts.length+' account(s) already have a Knowledge Base offering — nothing to pre-fetch.'); return; }
+  var sig=accounts.length+'|'+accounts[0].domain;
+  var cur=Number(props.getProperty('MB4_CURSOR')||0);
+  if(props.getProperty('MB4_SIG')!==sig || cur>=need.length){ props.setProperty('MB4_SIG',sig); cur=0; }
+  var start=Date.now(), done=0, got=0, lines=[];
+  while(cur<need.length){
+    if(Date.now()-start>=FG_BUDGET_MS) break;
+    var a=need[cur], off=mbWebsiteOffering_(a.domain);   // fetches + caches (returns cache if present)
+    lines.push('• '+a.domain+' — '+(off.length?off.length+' service(s)':'⚠ site unreachable / blocked'));
+    if(off.length) got++;
+    cur++; done++;
+  }
+  props.setProperty('MB4_CURSOR', String(cur));
+  var allDone=cur>=need.length;
+  ui.alert('Pre-fetched offerings for '+done+' domain(s) this run ('+got+' with an offering).\n\n'+lines.join('\n')+'\n\n'+(allDone?'✅ All '+need.length+' un-matched domain(s) cached — the audit will use the cache (no mid-run fetching).':'▶ Run again to continue ('+cur+'/'+need.length+').')+(need.length<accounts.length?'\n\n('+(accounts.length-need.length)+' already had a KB offering — skipped.)':''));
+}
+function act10(){ return mbPrefetchOfferings(); }
 // accounts to audit = uploaded "Audit Accounts" list if present; else "Onboarding tracker" rows whose CS Name is a
 // csm flagged review=yes in the "csms" tab. Offering comes from Client Knowledge Bases (site-fetched at audit time if missing).
 function mbAccounts_(){
