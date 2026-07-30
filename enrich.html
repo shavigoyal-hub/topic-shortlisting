@@ -283,24 +283,29 @@ $('run').addEventListener('click', async () => {
   $('progressCard').classList.remove('hidden');
   $('download').classList.add('hidden');
   const byId = {}; enrichedRows = [];
+  const serpCache = loadSerpCache(); const gl = config.serpGl; let cacheHits = 0;
   const CHUNK = 12;
   const chunks = []; for(let i=0;i<akrItems.length;i+=CHUNK) chunks.push(akrItems.slice(i,i+CHUNK));
   let done=0, keep=0, reject=0, review=0, failed=0;
   $('phase').textContent = 'Enriching '+akrItems.length+' keywords with SERP…';
   for(const chunk of chunks){
+    // attach cached SERP titles so the server skips re-fetching those keywords
+    const sendItems = chunk.map(it=>{ const c=serpCache[gl+'|'+it.kw.toLowerCase()]; if(c){ cacheHits++; return {...it, titles:c}; } return it; });
     try{
-      const resp = await fetch('/api/enrich', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ items:chunk, config }) });
+      const resp = await fetch('/api/enrich', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ items:sendItems, config }) });
       const data = await resp.json();
-      if(data.rows){ data.rows.forEach(r=>{ byId[r.id]=r; if(r.status==='1')keep++; else if(r.status==='0')reject++; else review++; }); }
+      if(data.rows){ data.rows.forEach(r=>{ byId[r.id]=r; if(r.status==='1')keep++; else if(r.status==='0')reject++; else review++;
+        if(r.titles && r.titles.length){ const it=chunk.find(x=>x.id===r.id); if(it) serpCache[gl+'|'+it.kw.toLowerCase()]=r.titles; } }); }
       else failed += chunk.length;
     }catch(e){ failed += chunk.length; }
     done += chunk.length;
     $('barFill').style.width = Math.round(done/akrItems.length*100)+'%';
     $('counts').innerHTML = done+' / '+akrItems.length+' &nbsp;·&nbsp; keep <b class="ok">'+keep+'</b> &nbsp; reject <b class="bad">'+reject+'</b> &nbsp; review '+review+(failed?' &nbsp;·&nbsp; failed '+failed:'');
   }
+  saveSerpCache(serpCache);
   enrichedRows = akrItems.map(it=>{ const r=byId[it.id]||{}; return [ it.kw, it.pageType, it.topic, it.sec, it.vol, it.rel,
     r.status||'', r.confidence||'', r.reason||'', r.explained||'', r.audience||'', r.profession||'', r.type||'', r.modifier||'', r.bofu||'', r.services||'', r.icp||'', r.icpFit||'' ]; });
-  $('phase').textContent = '✓ Done — '+akrItems.length+' enriched'+(failed?' ('+failed+' failed)':'');
+  $('phase').textContent = '✓ Done — '+akrItems.length+' enriched'+(failed?' ('+failed+' failed)':'')+(cacheHits?' · '+cacheHits+' from SERP cache':'');
   $('download').classList.remove('hidden');
   $('run').disabled = false;
   saveHistory({ when:new Date().toLocaleString(), domain:$('domain').value.trim()||'(no domain)', total:akrItems.length, keep, reject, review, csv:buildCSV() });
@@ -309,6 +314,16 @@ $('run').addEventListener('click', async () => {
 function buildCSV(){ return [OUT_HDR].concat(enrichedRows).map(r=>r.map(csvCell).join(',')).join('\n')+'\n'; }
 function downloadCSV(csv, name){ const blob=new Blob([csv],{type:'text/csv'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name||'enriched.csv'; a.click(); URL.revokeObjectURL(a.href); }
 $('download').addEventListener('click', ()=>downloadCSV(buildCSV(), 'enriched.csv'));
+
+/* ============================ SERP cache (browser) ============================ */
+function loadSerpCache(){ try{ return JSON.parse(localStorage.getItem('akrSerpCache')||'{}'); }catch(e){ return {}; } }
+function saveSerpCache(c){
+  try{
+    var keys=Object.keys(c);
+    if(keys.length>4000){ var trimmed={}; keys.slice(keys.length-4000).forEach(function(k){ trimmed[k]=c[k]; }); c=trimmed; }   // cap size (~keep newest 4000)
+    localStorage.setItem('akrSerpCache', JSON.stringify(c));
+  }catch(e){ try{ localStorage.removeItem('akrSerpCache'); }catch(_){} }   // quota exceeded → drop cache rather than error
+}
 
 /* ============================ history ============================ */
 function loadHist(){ try{ return JSON.parse(localStorage.getItem('akrHistory')||'[]'); }catch(e){ return []; } }

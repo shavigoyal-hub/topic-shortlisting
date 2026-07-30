@@ -111,12 +111,14 @@ module.exports = async (req, res) => {
   const names = cfg.services.concat(cfg.products);
 
   try {
-    // 1) SERP per keyword (limited concurrency)
+    // 1) SERP per keyword (limited concurrency). Skip any item whose titles the client already cached (browser SERP cache).
     if (useSerp) {
       let i = 0;
-      const worker = async () => { while (i < items.length) { const it = items[i++]; it.titles = await serper(it.kw, gl, skey); } };
+      const worker = async () => { while (i < items.length) { const it = items[i++];
+        if (Array.isArray(it.titles) && it.titles.length) continue;   // client-supplied from its cache → don't re-fetch
+        it.titles = await serper(it.kw, gl, skey); } };
       await Promise.all(Array.from({ length: Math.min(5, items.length) }, worker));
-    } else { items.forEach(it => it.titles = []); }
+    } else { items.forEach(it => { if (!Array.isArray(it.titles)) it.titles = []; }); }
 
     // 2) classify (one call for the chunk)
     const payload = items.map((it, idx) => ({ id: String(idx), keyword: it.kw, page_title: it.topic || '', ranking_titles: (it.titles || []).slice(0, 6).join(' | ') }));
@@ -173,7 +175,7 @@ module.exports = async (req, res) => {
     const rows = dec.map(d => {
       const c = d.c; let explained = d.explained;
       if (d.status === '0' && c.icp) explained = (explained ? explained + ' — ' : '') + 'people searching this are most likely ' + c.icp + (c.icpFit === false ? ", which is NOT the client's target ICP" : '');
-      return { id: d.it.id, status: d.status, confidence: d.status === '' ? '' : c.conf, reason: d.reason, explained, audience: c.audience || '', profession: c.profession || '', type: c.type || '', modifier: modifiersOf(d.it.kw, cfg), bofu: isBofu(d.it.kw) ? 'Yes' : 'No', services: (c.services || []).join(', '), icp: c.icp || '', icpFit: c.icpFit === false ? 'no' : 'yes' };
+      return { id: d.it.id, status: d.status, confidence: d.status === '' ? '' : c.conf, reason: d.reason, explained, audience: c.audience || '', profession: c.profession || '', type: c.type || '', modifier: modifiersOf(d.it.kw, cfg), bofu: isBofu(d.it.kw) ? 'Yes' : 'No', services: (c.services || []).join(', '), icp: c.icp || '', icpFit: c.icpFit === false ? 'no' : 'yes', titles: Array.isArray(d.it.titles) ? d.it.titles : [] };
     });
     res.statusCode = 200;
     res.end(JSON.stringify({ rows }));
