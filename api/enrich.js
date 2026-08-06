@@ -64,7 +64,8 @@ async function serper(kw, gl, key) {
       if (r.status === 429 || r.status >= 500) { await sleep(900 * (a + 1)); continue; }
       if (!r.ok) return [];
       const j = await r.json(), titles = [];
-      for (const o of (j.organic || []).slice(0, 10)) { const h = hostOf(o.link || ''); if (h && !IGNORE_DOMAINS.test(h)) titles.push(((o.title || '') + ' ' + (o.snippet || '')).trim()); }
+      // capture ranking DOMAIN + title + snippet(meta) — the domain shows WHO ranks (competitors/industry), a strong field signal
+      for (const o of (j.organic || []).slice(0, 10)) { const h = hostOf(o.link || ''); if (h && !IGNORE_DOMAINS.test(h)) titles.push((h + ' — ' + ((o.title || '') + ' ' + (o.snippet || '')).trim()).slice(0, 300)); }
       return titles;
     } catch (e) { await sleep(600); }
   }
