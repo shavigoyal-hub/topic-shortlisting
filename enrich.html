@@ -348,13 +348,25 @@ function saveSerpCache(c){
 
 /* ============================ history ============================ */
 function loadHist(){ try{ return JSON.parse(localStorage.getItem('akrHistory')||'[]'); }catch(e){ return []; } }
-function saveHistory(entry){ const h=loadHist(); h.unshift(entry); localStorage.setItem('akrHistory', JSON.stringify(h.slice(0,25))); }
+// Robust save: full CSVs are big, so 25 of them + the SERP cache can blow the ~5MB localStorage quota — which was
+// silently dropping new runs. Now we keep the newest entry and evict oldest CSVs / entries until it fits.
+function saveHistory(entry){
+  var h=loadHist(); h.unshift(entry); h=h.slice(0,50);
+  for(var guard=0; guard<200; guard++){
+    try{ localStorage.setItem('akrHistory', JSON.stringify(h)); return; }
+    catch(e){
+      var dropped=false;
+      for(var i=h.length-1;i>=1;i--){ if(h[i].csv){ h[i].csv=''; dropped=true; break; } }   // drop oldest entry's CSV first (keep its summary)
+      if(!dropped){ if(h.length>1) h.pop(); else { try{ localStorage.removeItem('akrSerpCache'); }catch(_){ } try{ localStorage.setItem('akrHistory', JSON.stringify(h)); }catch(__){} return; } }
+    }
+  }
+}
 function renderHistory(){
   const h=loadHist(), body=$('histBody');
   if(!h.length){ body.innerHTML='<tr><td colspan="7" class="stat">No runs yet.</td></tr>'; return; }
   body.innerHTML='';
   h.forEach((e,i)=>{ const tr=document.createElement('tr');
-    tr.innerHTML='<td>'+e.when+'</td><td>'+e.domain+'</td><td>'+e.total+'</td><td><b class="ok">'+e.keep+'</b></td><td><b class="bad">'+e.reject+'</b></td><td>'+e.review+'</td><td><button class="ghost" data-i="'+i+'">⬇ CSV</button></td>';
+    tr.innerHTML='<td>'+e.when+'</td><td>'+e.domain+'</td><td>'+e.total+'</td><td><b class="ok">'+e.keep+'</b></td><td><b class="bad">'+e.reject+'</b></td><td>'+e.review+'</td><td>'+(e.csv?'<button class="ghost" data-i="'+i+'">⬇ CSV</button>':'<span class="stat">—</span>')+'</td>';
     body.appendChild(tr);
   });
   body.querySelectorAll('button[data-i]').forEach(b=>b.addEventListener('click',()=>{ const e=loadHist()[+b.dataset.i]; if(e&&e.csv) downloadCSV(e.csv, (e.domain||'enriched').replace(/[^a-z0-9]+/gi,'_')+'.csv'); }));
