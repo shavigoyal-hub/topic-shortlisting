@@ -128,6 +128,24 @@
         <div class="stat" id="domainInfo" style="margin-top:8px"></div>
       </div>
       <div class="field">
+        <label>SERP location <span class="hint">country Google reads the top-10 from — auto-set from the domain, change if the market differs</span></label>
+        <select id="geo" style="max-width:260px">
+          <option value="us">United States</option>
+          <option value="in">India</option>
+          <option value="gb">United Kingdom</option>
+          <option value="au">Australia</option>
+          <option value="ca">Canada</option>
+          <option value="ae">United Arab Emirates</option>
+          <option value="sg">Singapore</option>
+          <option value="de">Germany</option>
+          <option value="fr">France</option>
+          <option value="nl">Netherlands</option>
+          <option value="za">South Africa</option>
+          <option value="nz">New Zealand</option>
+          <option value="ie">Ireland</option>
+        </select>
+      </div>
+      <div class="field">
         <label>Products / services <span class="hint">auto-filled from the site — edit if needed</span></label>
         <textarea id="services" placeholder="Auto-fills once you enter the domain — or type one per line"></textarea>
         <div class="derived hidden" id="derivedBox">
@@ -163,7 +181,7 @@
 <script>
 const $ = id => document.getElementById(id);
 const OUT_HDR = ['Primary Keyword','Page Type','Topic','Secondary Keywords','Total Search Volume','Relevance','Status','Confidence','Reason','Reason Explained','Audience','Profession','Type','Modifier','BOFU','Matched Services','ICP (keyword)','ICP fit'];
-let akrItems = [], enrichedRows = [], profile = { services:[], category:'', industries:[], anyBusiness:true }, derived=false;
+let akrItems = [], enrichedRows = [], profile = { services:[], category:'', industries:[], anyBusiness:true }, derived=false, geoTouched=false;
 
 /* ============================ AUTH ============================ */
 const AUTH_KEY='akrEnrich.auth', ADMIN_KEY='akrEnrich.admin';
@@ -252,6 +270,8 @@ function parseCSVtext(text){
 /* ============================ derive profile (auto, on blur) ============================ */
 async function analyze(){
   const d = $('domain').value.trim(); if(!d || !d.includes('.')){ return; }
+  // auto-set SERP location from the TLD (unless the user picked one manually)
+  if(!geoTouched){ var g=glFromDomain(d); if([...$('geo').options].some(o=>o.value===g)) $('geo').value=g; }
   if(derived && profile._for===d) return;   // already derived for this domain
   $('domainInfo').innerHTML='<span class="spin"></span>Reading the site…';
   try{
@@ -268,6 +288,7 @@ async function analyze(){
     refreshRun();
   }catch(e){ $('domainInfo').innerHTML='<span style="color:var(--bad)">Could not analyze: '+e+'</span>'; }
 }
+$('geo').addEventListener('change', ()=>{ geoTouched=true; });
 $('domain').addEventListener('blur', analyze);
 $('domain').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); analyze(); } });
 
@@ -278,7 +299,7 @@ $('services').addEventListener('input', refreshRun);
 $('run').addEventListener('click', async () => {
   if(!akrItems.length) return;
   if(!derived && $('domain').value.trim()) { await analyze(); }   // ensure profile derived (backend), no separate button
-  const config = { services: toList($('services').value), products: [], category: profile.category, industries: profile.industries, serpGl: glFromDomain($('domain').value), useSerp: true, domain: $('domain').value.trim() };
+  const config = { services: toList($('services').value), products: [], category: profile.category, industries: profile.industries, serpGl: $('geo').value || glFromDomain($('domain').value), useSerp: true, domain: $('domain').value.trim() };
   $('run').disabled = true;
   $('progressCard').classList.remove('hidden');
   $('download').classList.add('hidden');
