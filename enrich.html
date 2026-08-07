@@ -118,8 +118,8 @@
 
     <div class="card">
       <div class="field">
-        <label>1 · AKR file <span class="hint">CSV or Excel — Primary Keyword, Page Type, Topic, Secondary, SV/Volume</span></label>
-        <input type="file" id="akr" accept=".csv,.xlsx,.xls,text/csv">
+        <label>1 · AKR file(s) <span class="hint">CSV or Excel — one or many; a combined shortlist is produced with a source column</span></label>
+        <input type="file" id="akr" accept=".csv,.xlsx,.xls,text/csv" multiple>
         <div class="stat" id="akrInfo" style="margin-top:8px"></div>
       </div>
       <div class="field">
@@ -180,7 +180,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const OUT_HDR = ['Primary Keyword','Page Type','Topic','Secondary Keywords','Total Search Volume','Relevance','Status','Confidence','Reason','Reason Explained','Audience','Profession','Type','Modifier','BOFU','Matched Services','Source (product/service)','Buying Readiness (high/med/low)','Readiness — why','ICP (keyword)','ICP fit'];
+const OUT_HDR = ['AKR Source','Primary Keyword','Page Type','Topic','Secondary Keywords','Total Search Volume','Relevance','Status','Confidence','Reason','Reason Explained','Audience','Profession','Type','Modifier','BOFU','Matched Services','Source (product/service)','Buying Readiness (high/med/low)','Readiness — why','ICP (keyword)','ICP fit'];
 let akrItems = [], enrichedRows = [], profile = { services:[], category:'', industries:[], anyBusiness:true }, derived=false, geoTouched=false;
 
 /* ============================ AUTH ============================ */
@@ -239,23 +239,28 @@ function rowsToItems(rows){
 }
 
 /* ============================ AKR upload (CSV or Excel) ============================ */
-$('akr').addEventListener('change', e => {
-  const f = e.target.files[0]; if(!f) return;
-  const isExcel = /\.(xlsx|xls)$/i.test(f.name);
-  const rd = new FileReader();
-  rd.onload = () => {
+const readFile = f => new Promise((res,rej)=>{ const rd=new FileReader(); rd.onload=()=>res(rd.result); rd.onerror=rej;
+  if(/\.(xlsx|xls)$/i.test(f.name)) rd.readAsArrayBuffer(f); else rd.readAsText(f); });
+$('akr').addEventListener('change', async e => {
+  const files = [...e.target.files]; if(!files.length) return;
+  $('akrInfo').innerHTML='<span class="spin"></span>Reading '+files.length+' file(s)…';
+  const combined=[], names=[]; let noVolAny=false, fi=0;
+  for(const f of files){
+    const isExcel = /\.(xlsx|xls)$/i.test(f.name);
     let rows;
-    try{
-      if(isExcel){ const wb = XLSX.read(rd.result, {type:'array'}); const ws = wb.Sheets[wb.SheetNames[0]]; rows = XLSX.utils.sheet_to_json(ws, {header:1, blankrows:false, defval:''}); }
-      else { rows = parseCSVtext(rd.result); }
-    }catch(err){ $('akrInfo').innerHTML='<span style="color:var(--bad)">Could not read file: '+err+'</span>'; return; }
+    try{ const data=await readFile(f);
+      if(isExcel){ const wb=XLSX.read(data,{type:'array'}); rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,blankrows:false,defval:''}); }
+      else { rows=parseCSVtext(data); }
+    }catch(err){ names.push(f.name+' (unreadable)'); fi++; continue; }
     const { items, noVol } = rowsToItems(rows);
-    if(!items.length){ $('akrInfo').innerHTML='<span style="color:var(--bad)">No keyword rows found.</span>'; return; }
-    akrItems = items;
-    $('akrInfo').innerHTML = '✓ <b>'+akrItems.length+'</b> keywords loaded'+(noVol?' <span style="color:var(--bad)">(no volume column found)</span>':'');
-    refreshRun();
-  };
-  if(isExcel) rd.readAsArrayBuffer(f); else rd.readAsText(f);
+    const src = f.name.replace(/\.(csv|xlsx|xls)$/i,'');
+    items.forEach((it,idx)=>{ it.id = fi+'_'+idx; it.source = src; });   // unique id across files + source tag
+    combined.push(...items); if(noVol) noVolAny=true; names.push(f.name+' ('+items.length+')'); fi++;
+  }
+  akrItems = combined;
+  if(!akrItems.length){ $('akrInfo').innerHTML='<span style="color:var(--bad)">No keyword rows found.</span>'; return; }
+  $('akrInfo').innerHTML='✓ <b>'+akrItems.length+'</b> keywords from '+files.length+' file(s): '+names.join(', ')+(noVolAny?' <span style="color:var(--bad)">— a file had no volume column</span>':'');
+  refreshRun();
 });
 function parseCSVtext(text){
   const rows=[]; let row=[], cur='', q=false;
@@ -328,7 +333,7 @@ $('run').addEventListener('click', async () => {
   const websiteSet = new Set((profile.services||[]).map(s=>String(s).toLowerCase().trim()));
   const svcSource = str => { const arr=String(str||'').split(',').map(s=>s.trim()).filter(Boolean); if(!arr.length) return '';
     const w=arr.filter(s=>websiteSet.has(s.toLowerCase())).length; return w===arr.length?'website':(w===0?'CSM-entered':'website + CSM'); };
-  enrichedRows = akrItems.map(it=>{ const r=byId[it.id]||{}; return [ it.kw, it.pageType, it.topic, it.sec, it.vol, it.rel,
+  enrichedRows = akrItems.map(it=>{ const r=byId[it.id]||{}; return [ it.source||'', it.kw, it.pageType, it.topic, it.sec, it.vol, it.rel,
     r.status||'', r.confidence||'', r.reason||'', r.explained||'', r.audience||'', r.profession||'', r.type||'', r.modifier||'', r.bofu||'', r.services||'', svcSource(r.services), r.buyStage||'', r.buyWhy||'', r.icp||'', r.icpFit||'' ]; });
   $('phase').textContent = '✓ Done — '+akrItems.length+' enriched'+(failed?' ('+failed+' failed)':'')+(cacheHits?' · '+cacheHits+' from SERP cache':'');
   $('download').classList.remove('hidden');
