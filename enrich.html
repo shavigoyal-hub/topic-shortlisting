@@ -289,7 +289,7 @@ async function analyze(){
     $('dCat').innerHTML = p.category ? '<span class="chip cat">'+p.category+'</span>' : '—';
     $('dIcp').innerHTML = (p.industries&&p.industries.length) ? p.industries.map(x=>'<span class="chip">'+x+'</span>').join('') : '<span class="stat">serves anyone (horizontal)</span>';
     $('derivedBox').classList.remove('hidden');
-    $('domainInfo').innerHTML = p.siteUnreachable ? '<span style="color:var(--bad)">Site unreachable — type the products/services below manually.</span>' : '✓ Derived '+(p.services||[]).length+' service(s) from '+p.website;
+    $('domainInfo').innerHTML = p.siteUnreachable ? '<span style="color:var(--bad)">Site unreachable — running anyway (SERP + own-site check still apply). Add products/services below for sharper accuracy.</span>' : '✓ Derived '+(p.services||[]).length+' service(s) from '+p.website;
     refreshRun();
   }catch(e){ $('domainInfo').innerHTML='<span style="color:var(--bad)">Could not analyze: '+e+'</span>'; }
 }
@@ -297,8 +297,10 @@ $('geo').addEventListener('change', ()=>{ geoTouched=true; });
 $('domain').addEventListener('blur', analyze);
 $('domain').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); analyze(); } });
 
-function refreshRun(){ $('run').disabled = !(akrItems.length && (toList($('services').value).length || profile.category)); }
+// Run is allowed as long as there's an AKR and a domain (or typed services) — an unreachable site no longer blocks it.
+function refreshRun(){ $('run').disabled = !(akrItems.length && ($('domain').value.trim() || toList($('services').value).length || profile.category)); }
 $('services').addEventListener('input', refreshRun);
+$('domain').addEventListener('input', refreshRun);
 
 /* ============================ run ============================ */
 $('run').addEventListener('click', async () => {
