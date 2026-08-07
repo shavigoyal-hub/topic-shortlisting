@@ -5,14 +5,23 @@ module.exports.config = { maxDuration: 60 };
 
 const cleanDomain = d => String(d || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '').replace(/\s+/g, '');
 function htmlToText(html) { return String(html).replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&[a-z#0-9]+;/gi, ' ').replace(/\s+/g, ' ').trim(); }
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+async function getHtml(url) {
+  try { const r = await fetch(url, { headers: { 'User-Agent': BROWSER_UA, 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Accept-Language': 'en-US,en;q=0.9' }, redirect: 'follow', signal: AbortSignal.timeout(13000) });
+    if (r.ok) return await r.text(); } catch (e) {}
+  return '';
+}
 async function fetchSiteText(domain) {
-  const paths = ['', 'services', 'solutions', 'products', 'what-we-do', 'offerings', 'about'];
-  let text = '';
-  for (const p of paths) { if (text.length > 9000) break;
-    try {
-      const r = await fetch('https://' + domain + '/' + p, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AkrEnrich/1.0)' }, redirect: 'follow', signal: AbortSignal.timeout(9000) });
-      if (r.ok) { const t = htmlToText(await r.text()); if (t) text += ' ' + t; }
-    } catch (e) {}
+  // find a base that responds: try www then apex, https then http (some sites only serve one)
+  let base = '', home = '';
+  for (const b of ['https://www.' + domain, 'https://' + domain, 'http://www.' + domain, 'http://' + domain]) {
+    home = await getHtml(b); if (home) { base = b.replace(/\/$/, ''); break; }
+  }
+  if (!base) return '';
+  let text = htmlToText(home);
+  for (const p of ['services', 'solutions', 'products', 'what-we-do', 'offerings', 'shop', 'about']) {
+    if (text.length > 9000) break;
+    const h = await getHtml(base + '/' + p); if (h) { const t = htmlToText(h); if (t) text += ' ' + t; }
   }
   return text.slice(0, 9000);
 }
