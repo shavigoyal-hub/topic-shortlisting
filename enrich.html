@@ -329,6 +329,18 @@ $('run').addEventListener('click', async () => {
     $('counts').innerHTML = done+' / '+akrItems.length+' &nbsp;·&nbsp; keep <b class="ok">'+keep+'</b> &nbsp; reject <b class="bad">'+reject+'</b> &nbsp; review '+review+(failed?' &nbsp;·&nbsp; failed '+failed:'');
   }
   saveSerpCache(serpCache);
+  // consolidate near-duplicate Audience/Profession/Type labels (geneticist/geneticists/genomics researcher -> one)
+  try{
+    $('phase').textContent = 'Consolidating labels…';
+    const distinct = f => { const s=new Set(); Object.values(byId).forEach(r=>{ const v=String(r[f]||'').trim(); if(v) s.add(v); }); return [...s]; };
+    const payload = { audience:distinct('audience'), profession:distinct('profession'), type:distinct('type') };
+    if(payload.audience.length+payload.profession.length+payload.type.length > 0){
+      const cr = await fetch('/api/consolidate', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+      const cm = await cr.json();
+      const apply=(r,f)=>{ const m=cm[f]||{}; const v=String(r[f]||'').trim(); if(v && m[v]) r[f]=m[v]; };
+      Object.values(byId).forEach(r=>{ apply(r,'audience'); apply(r,'profession'); apply(r,'type'); });
+    }
+  }catch(e){}
   // source of each matched product/service: website-derived (from the site) vs CSM-entered (typed/edited in the box)
   const websiteSet = new Set((profile.services||[]).map(s=>String(s).toLowerCase().trim()));
   const svcSource = str => { const arr=String(str||'').split(',').map(s=>s.trim()).filter(Boolean); if(!arr.length) return '';
