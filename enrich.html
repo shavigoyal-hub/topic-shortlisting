@@ -180,7 +180,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const OUT_HDR = ['Primary Keyword','Page Type','Topic','Secondary Keywords','Total Search Volume','Relevance','Status','Confidence','Reason','Reason Explained','Audience','Profession','Type','Modifier','BOFU','Matched Services','Source (product/service)','ICP (keyword)','ICP fit'];
+const OUT_HDR = ['Primary Keyword','Page Type','Topic','Secondary Keywords','Total Search Volume','Relevance','Status','Confidence','Reason','Reason Explained','Audience','Profession','Type','Modifier','BOFU','Matched Services','Source (product/service)','Buying Readiness (high/med/low)','ICP (keyword)','ICP fit'];
 let akrItems = [], enrichedRows = [], profile = { services:[], category:'', industries:[], anyBusiness:true }, derived=false, geoTouched=false;
 
 /* ============================ AUTH ============================ */
@@ -329,7 +329,7 @@ $('run').addEventListener('click', async () => {
   const svcSource = str => { const arr=String(str||'').split(',').map(s=>s.trim()).filter(Boolean); if(!arr.length) return '';
     const w=arr.filter(s=>websiteSet.has(s.toLowerCase())).length; return w===arr.length?'website':(w===0?'CSM-entered':'website + CSM'); };
   enrichedRows = akrItems.map(it=>{ const r=byId[it.id]||{}; return [ it.kw, it.pageType, it.topic, it.sec, it.vol, it.rel,
-    r.status||'', r.confidence||'', r.reason||'', r.explained||'', r.audience||'', r.profession||'', r.type||'', r.modifier||'', r.bofu||'', r.services||'', svcSource(r.services), r.icp||'', r.icpFit||'' ]; });
+    r.status||'', r.confidence||'', r.reason||'', r.explained||'', r.audience||'', r.profession||'', r.type||'', r.modifier||'', r.bofu||'', r.services||'', svcSource(r.services), r.buyStage||'', r.icp||'', r.icpFit||'' ]; });
   $('phase').textContent = '✓ Done — '+akrItems.length+' enriched'+(failed?' ('+failed+' failed)':'')+(cacheHits?' · '+cacheHits+' from SERP cache':'');
   $('download').classList.remove('hidden');
   $('run').disabled = false;
