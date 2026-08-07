@@ -30,6 +30,17 @@ async function openai(messages, key) {
   if (!resp.ok) throw new Error('OpenAI ' + resp.status);
   try { return JSON.parse((await resp.json()).choices[0].message.content); } catch (e) { return {}; }
 }
+// Fallback when the site blocks Vercel's server IP: Serper's index already has the site's pages, so read the
+// client's own pages via `site:domain` (titles + snippets) — fetched from Serper's infra, not ours.
+async function serperSiteText(domain) {
+  const key = process.env.SERPER_KEY; if (!key) return '';
+  try {
+    const r = await fetch('https://google.serper.dev/search', { method: 'POST', headers: { 'X-API-KEY': key, 'Content-Type': 'application/json' }, body: JSON.stringify({ q: 'site:' + domain, num: 10 }) });
+    if (!r.ok) return '';
+    const j = await r.json();
+    return (j.organic || []).map(o => ((o.title || '') + ' — ' + (o.snippet || '')).trim()).filter(Boolean).join('\n').slice(0, 8000);
+  } catch (e) { return ''; }
+}
 
 module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
@@ -40,7 +51,11 @@ module.exports = async (req, res) => {
   if (!domain || !domain.includes('.')) { res.statusCode = 400; return res.end(JSON.stringify({ error: 'enter a valid domain' })); }
 
   try {
-    const text = await fetchSiteText(domain);
+    let text = await fetchSiteText(domain), viaSearch = false;
+    if (!text || text.length < 60) {                         // direct fetch blocked (datacenter IP) → read the site via Serper's index
+      const s = await serperSiteText(domain);
+      if (s && s.length >= 60) { text = s; viaSearch = true; }
+    }
     if (!text || text.length < 60) {
       res.statusCode = 200;
       return res.end(JSON.stringify({ domain, website: domain, name: domain, services: [], category: '', industries: [], anyBusiness: true, siteUnreachable: true }));
@@ -52,7 +67,7 @@ module.exports = async (req, res) => {
     const services = (Array.isArray(j.services) ? j.services : []).map(s => String(s).trim()).filter(Boolean).slice(0, 20);
     const industries = (Array.isArray(j.industries) ? j.industries : []).map(s => String(s).trim()).filter(Boolean).slice(0, 8);
     res.statusCode = 200;
-    res.end(JSON.stringify({ domain, website: domain, name: String(j.name || domain).slice(0, 80), services, category: String(j.category || '').slice(0, 80), industries, anyBusiness: industries.length ? false : true }));
+    res.end(JSON.stringify({ domain, website: domain, name: String(j.name || domain).slice(0, 80), services, category: String(j.category || '').slice(0, 80), industries, anyBusiness: industries.length ? false : true, viaSearch }));
   } catch (e) {
     res.statusCode = 502;
     res.end(JSON.stringify({ error: String(e && e.message || e) }));

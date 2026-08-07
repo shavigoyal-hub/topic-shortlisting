@@ -289,7 +289,7 @@ async function analyze(){
     $('dCat').innerHTML = p.category ? '<span class="chip cat">'+p.category+'</span>' : '—';
     $('dIcp').innerHTML = (p.industries&&p.industries.length) ? p.industries.map(x=>'<span class="chip">'+x+'</span>').join('') : '<span class="stat">serves anyone (horizontal)</span>';
     $('derivedBox').classList.remove('hidden');
-    $('domainInfo').innerHTML = p.siteUnreachable ? '<span style="color:var(--bad)">Site unreachable — running anyway (SERP + own-site check still apply). Add products/services below for sharper accuracy.</span>' : '✓ Derived '+(p.services||[]).length+' service(s) from '+p.website;
+    $('domainInfo').innerHTML = p.siteUnreachable ? '<span style="color:var(--bad)">Site unreachable — running anyway (SERP + own-site check still apply). Add products/services below for sharper accuracy.</span>' : '✓ Derived '+(p.services||[]).length+' service(s) '+(p.viaSearch?'from the search index (site blocked direct fetch)':'from '+p.website);
     refreshRun();
   }catch(e){ $('domainInfo').innerHTML='<span style="color:var(--bad)">Could not analyze: '+e+'</span>'; }
 }
