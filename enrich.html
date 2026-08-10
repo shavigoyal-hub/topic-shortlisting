@@ -123,6 +123,11 @@
         <div class="stat" id="akrInfo" style="margin-top:8px"></div>
       </div>
       <div class="field">
+        <label>Already-uploaded topics <span class="hint">optional — CSV/Excel of keywords already live; exact matches are removed from the AKR</span></label>
+        <input type="file" id="exclude" accept=".csv,.xlsx,.xls,text/csv" multiple>
+        <div class="stat" id="excludeInfo" style="margin-top:8px"></div>
+      </div>
+      <div class="field">
         <label>2 · Client domain <span class="hint">we read the site automatically to learn what they sell</span></label>
         <input type="text" id="domain" placeholder="example.com" autocomplete="off">
         <div class="stat" id="domainInfo" style="margin-top:8px"></div>
@@ -181,7 +186,15 @@
 <script>
 const $ = id => document.getElementById(id);
 const OUT_HDR = ['AKR Source','Primary Keyword','Page Type','Topic','Secondary Keywords','Total Search Volume','Relevance','Status','Confidence','Reason','Reason Explained','Audience','Profession','Type','Modifier','BOFU','Matched Services','Source (product/service)','Buying Readiness (high/med/low)','Readiness — why','ICP (keyword)','ICP fit'];
-let akrItems = [], enrichedRows = [], profile = { services:[], category:'', industries:[], anyBusiness:true }, derived=false, geoTouched=false;
+let akrItems = [], rawAkrItems = [], excludeSet = null, enrichedRows = [], profile = { services:[], category:'', industries:[], anyBusiness:true }, derived=false, geoTouched=false;
+const normKw = k => String(k||'').toLowerCase().replace(/\s+/g,' ').trim();
+function applyExclusion(){
+  let removed=0;
+  akrItems = rawAkrItems.filter(it=>{ if(excludeSet && excludeSet.has(normKw(it.kw))){ removed++; return false; } return true; });
+  const files = new Set(rawAkrItems.map(it=>it.source)).size;
+  $('akrInfo').innerHTML = '✓ <b>'+akrItems.length+'</b> keywords'+(files>1?' from '+files+' file(s)':'')+(removed?' <span class="stat">('+removed+' removed — already uploaded)</span>':'');
+  refreshRun();
+}
 
 /* ============================ AUTH ============================ */
 const AUTH_KEY='akrEnrich.auth', ADMIN_KEY='akrEnrich.admin';
@@ -257,10 +270,23 @@ $('akr').addEventListener('change', async e => {
     items.forEach((it,idx)=>{ it.id = fi+'_'+idx; it.source = src; });   // unique id across files + source tag
     combined.push(...items); if(noVol) noVolAny=true; names.push(f.name+' ('+items.length+')'); fi++;
   }
-  akrItems = combined;
-  if(!akrItems.length){ $('akrInfo').innerHTML='<span style="color:var(--bad)">No keyword rows found.</span>'; return; }
-  $('akrInfo').innerHTML='✓ <b>'+akrItems.length+'</b> keywords from '+files.length+' file(s): '+names.join(', ')+(noVolAny?' <span style="color:var(--bad)">— a file had no volume column</span>':'');
-  refreshRun();
+  rawAkrItems = combined;
+  if(!rawAkrItems.length){ $('akrInfo').innerHTML='<span style="color:var(--bad)">No keyword rows found.</span>'; return; }
+  applyExclusion();
+});
+// optional: upload keywords already live -> remove those exact keywords from the AKR
+$('exclude').addEventListener('change', async e => {
+  const files=[...e.target.files]; if(!files.length){ excludeSet=null; applyExclusion(); return; }
+  $('excludeInfo').innerHTML='<span class="spin"></span>Reading exclusion list…';
+  const set=new Set();
+  for(const f of files){ try{ const data=await readFile(f); let rows;
+    if(/\.(xlsx|xls)$/i.test(f.name)){ const wb=XLSX.read(data,{type:'array'}); rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,blankrows:false,defval:''}); }
+    else rows=parseCSVtext(data);
+    rowsToItems(rows).items.forEach(it=>{ const k=normKw(it.kw); if(k) set.add(k); });
+  }catch(err){} }
+  excludeSet = set.size?set:null;
+  $('excludeInfo').innerHTML = set.size ? '✓ <b>'+set.size+'</b> already-uploaded keyword(s) will be excluded' : '<span style="color:var(--bad)">No keywords found in the exclusion file.</span>';
+  applyExclusion();
 });
 function parseCSVtext(text){
   const rows=[]; let row=[], cur='', q=false;
