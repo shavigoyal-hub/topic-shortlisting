@@ -45,18 +45,21 @@ async function serper(kw, gl) {
   } catch (e) { return []; }
 }
 
-/* ---- GSC (refresh-token) ---- */
-async function gscToken() {
-  const id = process.env.GSC_CLIENT_ID, sec = process.env.GSC_CLIENT_SECRET, rt = process.env.GSC_REFRESH_TOKEN;
-  if (!id || !sec || !rt) return null;
-  const r = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: id, client_secret: sec, refresh_token: rt, grant_type: 'refresh_token' }) });
-  if (!r.ok) return null;
-  return (await r.json()).access_token;
-}
-async function gscQuery(token, site, body) {
-  const r = await fetch('https://www.googleapis.com/webmasters/v3/sites/' + encodeURIComponent(site) + '/searchAnalytics/query', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (!r.ok) return { rows: [] };
-  return await r.json();
+/* ---- GSC via Composio (reuses the connected Search Console account) ---- */
+// arguments use the Composio tool's snake_case schema (site_url, start_date, ...)
+async function gscComposio(args) {
+  const key = process.env.COMPOSIO_API_KEY, acct = process.env.COMPOSIO_GSC_ACCOUNT_ID;
+  if (!key || !acct) return { rows: [] };
+  try {
+    const r = await fetch('https://backend.composio.dev/api/v3/tools/execute/GOOGLE_SEARCH_CONSOLE_SEARCH_ANALYTICS_QUERY', {
+      method: 'POST', headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ connected_account_id: acct, arguments: args })
+    });
+    if (!r.ok) return { rows: [] };
+    const j = await r.json();
+    const data = (j && j.data) || {};
+    return { rows: data.rows || [] };
+  } catch (e) { return { rows: [] }; }
 }
 
 module.exports = async (req, res) => {
@@ -82,13 +85,13 @@ module.exports = async (req, res) => {
       res.statusCode = 200; return res.end(JSON.stringify({ feedBase: base, pages: Object.values(byKw) }));
     }
     if (step === 'gsc') {
-      const token = await gscToken();
-      if (!token) { res.statusCode = 200; return res.end(JSON.stringify({ available: false })); }
+      if (!process.env.COMPOSIO_API_KEY || !process.env.COMPOSIO_GSC_ACCOUNT_ID) { res.statusCode = 200; return res.end(JSON.stringify({ available: false })); }
       const site = 'sc-domain:' + domain;
       const now = new Date(Date.now() - 3 * 864e5), start = new Date(Date.now() - 480 * 864e5);
       const dt = d => d.toISOString().slice(0, 10);
-      const feedR = await gscQuery(token, site, { startDate: dt(start), endDate: dt(now), dimensions: ['page'], rowLimit: 25000, dataState: 'final', dimensionFilterGroups: [{ filters: [{ dimension: 'page', operator: 'contains', expression: '/feeds/' }] }] });
-      const nfR = await gscQuery(token, site, { startDate: dt(start), endDate: dt(now), dimensions: ['page', 'query'], rowLimit: 25000, dataState: 'final', dimensionFilterGroups: [{ filters: [{ dimension: 'page', operator: 'notContains', expression: '/feeds/' }] }] });
+      const feedR = await gscComposio({ site_url: site, start_date: dt(start), end_date: dt(now), dimensions: ['page'], row_limit: 25000, data_state: 'final', dimension_filter_groups: [{ filters: [{ dimension: 'page', operator: 'contains', expression: '/feeds/' }] }] });
+      const nfR = await gscComposio({ site_url: site, start_date: dt(start), end_date: dt(now), dimensions: ['page', 'query'], row_limit: 25000, data_state: 'final', dimension_filter_groups: [{ filters: [{ dimension: 'page', operator: 'notContains', expression: '/feeds/' }] }] });
+      if (!feedR.rows.length && !nfR.rows.length) { res.statusCode = 200; return res.end(JSON.stringify({ available: false, note: 'Composio returned no GSC rows — check COMPOSIO_GSC_ACCOUNT_ID has access to ' + site })); }
       const feed = {};
       (feedR.rows || []).forEach(r => { feed[norm(r.keys[0])] = { impr: r.impressions, pos: Math.round(r.position * 10) / 10 }; });
       const BRAND = new RegExp(domain.replace(/\..*/, '') + '|site:', 'i');
