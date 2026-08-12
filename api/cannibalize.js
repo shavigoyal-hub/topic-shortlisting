@@ -36,12 +36,13 @@ async function mbSql(sid, db, sql) {
 const esc = s => String(s).replace(/'/g, "''");
 
 /* ---- Serper ---- */
-async function serper(kw, gl) {
+async function serper(kw, gl, num) {
   const key = process.env.SERPER_KEY; if (!key) return [];
+  const n = num || 10;
   try {
-    const r = await fetch('https://google.serper.dev/search', { method: 'POST', headers: { 'X-API-KEY': key, 'Content-Type': 'application/json' }, body: JSON.stringify({ q: kw, gl: gl || 'us', num: 10 }) });
+    const r = await fetch('https://google.serper.dev/search', { method: 'POST', headers: { 'X-API-KEY': key, 'Content-Type': 'application/json' }, body: JSON.stringify({ q: kw, gl: gl || 'us', num: n }) });
     if (!r.ok) return [];
-    return ((await r.json()).organic || []).slice(0, 10).map(o => norm(o.link)).filter(Boolean);
+    return ((await r.json()).organic || []).slice(0, n).map(o => norm(o.link)).filter(Boolean);
   } catch (e) { return []; }
 }
 
@@ -89,8 +90,9 @@ module.exports = async (req, res) => {
   try {
     if (step === 'serp') {
       const items = (body.items || []).slice(0, 30); const gl = (body.gl || 'us').toLowerCase();
+      const num = Number(body.num) || 10;   // 100 for live-rank checks
       const out = {}; let i = 0;
-      const worker = async () => { while (i < items.length) { const it = items[i++]; out[String(it.kw).toLowerCase()] = await serper(it.kw, gl); } };
+      const worker = async () => { while (i < items.length) { const it = items[i++]; out[String(it.kw).toLowerCase()] = await serper(it.kw, gl, num); } };
       await Promise.all(Array.from({ length: Math.min(6, items.length) }, worker));
       res.statusCode = 200; return res.end(JSON.stringify({ serp: out }));
     }
@@ -108,14 +110,19 @@ module.exports = async (req, res) => {
       const site = 'sc-domain:' + domain;
       const now = new Date(Date.now() - 3 * 864e5), start = new Date(Date.now() - 480 * 864e5);
       const dt = d => d.toISOString().slice(0, 10);
-      const feedR = await gscComposio({ site_url: site, start_date: dt(start), end_date: dt(now), dimensions: ['page'], row_limit: 5000, data_state: 'final', dimension_filter_groups: [{ filters: [{ dimension: 'page', operator: 'contains', expression: '/feeds/' }] }] });
-      const nfR = await gscComposio({ site_url: site, start_date: dt(start), end_date: dt(now), dimensions: ['page', 'query'], row_limit: 5000, data_state: 'final', dimension_filter_groups: [{ filters: [{ dimension: 'page', operator: 'notContains', expression: '/feeds/' }] }] });
+      // 'feeds' (not '/feeds/') so path feeds AND subdomain feeds (feeds.<domain>) are both captured
+      const feedR = await gscComposio({ site_url: site, start_date: dt(start), end_date: dt(now), dimensions: ['page', 'query'], row_limit: 5000, data_state: 'final', dimension_filter_groups: [{ filters: [{ dimension: 'page', operator: 'contains', expression: 'feeds' }] }] });
+      const nfR = await gscComposio({ site_url: site, start_date: dt(start), end_date: dt(now), dimensions: ['page', 'query'], row_limit: 5000, data_state: 'final', dimension_filter_groups: [{ filters: [{ dimension: 'page', operator: 'notContains', expression: 'feeds' }] }] });
       if (!feedR.rows.length && !nfR.rows.length) { res.statusCode = 200; return res.end(JSON.stringify({ available: false, note: 'Composio returned no GSC rows — check COMPOSIO_GSC_ACCOUNT_ID has access to ' + site })); }
-      const feed = {};
-      (feedR.rows || []).forEach(r => { feed[norm(r.keys[0])] = { impr: r.impressions, pos: Math.round(r.position * 10) / 10 }; });
       const BRAND = new RegExp(domain.replace(/\..*/, '') + '|site:', 'i');
+      const isJunk = q => BRAND.test(q) || /^[\d\W]+$/.test(q);
+      // feed pages: total impressions + top non-branded query (real query the page earns on)
+      const ftot = {}, fbest = {};
+      (feedR.rows || []).forEach(r => { const pg = norm(r.keys[0]), q = r.keys[1]; ftot[pg] = (ftot[pg] || 0) + r.impressions; if (isJunk(q)) return; const b = fbest[pg]; if (!b || r.impressions > b.impr) fbest[pg] = { query: q, impr: r.impressions, pos: Math.round(r.position * 10) / 10 }; });
+      const feed = {}; Object.keys(ftot).forEach(pg => { feed[pg] = { total_impr: ftot[pg], impr: ftot[pg], top_query: fbest[pg] ? fbest[pg].query : '', tq_impr: fbest[pg] ? fbest[pg].impr : 0, tq_pos: fbest[pg] ? fbest[pg].pos : null }; });
+      // non-feed pages: total impressions + top non-branded query
       const tot = {}, best = {};
-      (nfR.rows || []).forEach(r => { const pg = norm(r.keys[0]), q = r.keys[1]; tot[pg] = (tot[pg] || 0) + r.impressions; if (BRAND.test(q) || /^[\d\W]+$/.test(q)) return; const b = best[pg]; if (!b || r.impressions > b.impr) best[pg] = { query: q, impr: r.impressions, pos: Math.round(r.position * 10) / 10 }; });
+      (nfR.rows || []).forEach(r => { const pg = norm(r.keys[0]), q = r.keys[1]; tot[pg] = (tot[pg] || 0) + r.impressions; if (isJunk(q)) return; const b = best[pg]; if (!b || r.impressions > b.impr) best[pg] = { query: q, impr: r.impressions, pos: Math.round(r.position * 10) / 10 }; });
       const nonfeed = Object.keys(tot).map(pg => ({ url: pg, total_impr: tot[pg], top_query: best[pg] ? best[pg].query : '', top_query_pos: best[pg] ? best[pg].pos : null })).sort((a, b) => b.total_impr - a.total_impr);
       res.statusCode = 200; return res.end(JSON.stringify({ available: true, feed, nonfeed }));
     }
