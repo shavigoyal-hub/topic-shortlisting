@@ -53,8 +53,8 @@ async function gscComposio(args) {
   if (!key || (!acct && !uid)) return { rows: [] };
   try {
     const b = { arguments: args };
-    if (uid) b.user_id = uid;                 // Composio v3 requires a user/entity id
-    if (acct) b.connected_account_id = acct;  // optional — omit to auto-resolve by user_id
+    if (uid) b.user_id = uid;                              // Composio v3 requires a user/entity id
+    if (acct && /^ca_/.test(acct)) b.connected_account_id = acct;  // only if a real id; else auto-resolve by user_id
     const r = await fetch('https://backend.composio.dev/api/v3/tools/execute/GOOGLE_SEARCH_CONSOLE_SEARCH_ANALYTICS_QUERY', {
       method: 'POST', headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
       body: JSON.stringify(b)
