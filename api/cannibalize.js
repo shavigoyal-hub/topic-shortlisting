@@ -48,13 +48,28 @@ async function serper(kw, gl) {
 
 /* ---- GSC via Composio (reuses the connected Search Console account) ---- */
 // arguments use the Composio tool's snake_case schema (site_url, start_date, ...)
+let _gscConn = undefined;   // {id,user} cache
+async function resolveGscConn(key) {
+  if (_gscConn !== undefined) return _gscConn;
+  _gscConn = null;
+  try {
+    const r = await fetch('https://backend.composio.dev/api/v3/connected_accounts?toolkit_slugs=google_search_console', { headers: { 'x-api-key': key } });
+    const o = await r.json(); const items = o.items || o.data || [];
+    const act = items.find(a => a.status === 'ACTIVE');
+    if (act) _gscConn = { id: act.id, user: act.user_id || act.entity_id || 'default' };
+  } catch (e) {}
+  return _gscConn;
+}
 async function gscComposio(args) {
-  const key = process.env.COMPOSIO_API_KEY, acct = process.env.COMPOSIO_GSC_ACCOUNT_ID, uid = process.env.COMPOSIO_USER_ID;
-  if (!key || (!acct && !uid)) return { rows: [] };
+  const key = process.env.COMPOSIO_API_KEY; if (!key) return { rows: [] };
+  const envAcct = process.env.COMPOSIO_GSC_ACCOUNT_ID, envUser = process.env.COMPOSIO_USER_ID;
+  let acct = (envAcct && /^ca_/.test(envAcct)) ? envAcct : null, uid = envUser;
+  if (!acct) { const c = await resolveGscConn(key); if (c) { acct = c.id; uid = uid || c.user; } }  // auto-discover the active connection
+  if (!acct && !uid) return { rows: [] };
   try {
     const b = { arguments: args };
-    if (uid) b.user_id = uid;                              // Composio v3 requires a user/entity id
-    if (acct && /^ca_/.test(acct)) b.connected_account_id = acct;  // only if a real id; else auto-resolve by user_id
+    if (uid) b.user_id = uid;
+    if (acct) b.connected_account_id = acct;
     const r = await fetch('https://backend.composio.dev/api/v3/tools/execute/GOOGLE_SEARCH_CONSOLE_SEARCH_ANALYTICS_QUERY', {
       method: 'POST', headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
       body: JSON.stringify(b)
@@ -90,7 +105,7 @@ module.exports = async (req, res) => {
       res.statusCode = 200; return res.end(JSON.stringify({ feedBase: base, pages: Object.values(byKw) }));
     }
     if (step === 'gsc') {
-      if (!process.env.COMPOSIO_API_KEY || (!process.env.COMPOSIO_GSC_ACCOUNT_ID && !process.env.COMPOSIO_USER_ID)) { res.statusCode = 200; return res.end(JSON.stringify({ available: false })); }
+      if (!process.env.COMPOSIO_API_KEY) { res.statusCode = 200; return res.end(JSON.stringify({ available: false })); }
       const site = 'sc-domain:' + domain;
       const now = new Date(Date.now() - 3 * 864e5), start = new Date(Date.now() - 480 * 864e5);
       const dt = d => d.toISOString().slice(0, 10);
