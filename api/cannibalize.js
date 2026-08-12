@@ -109,7 +109,17 @@ module.exports = async (req, res) => {
       const r = await fetch('https://backend.composio.dev/api/v3/connected_accounts?toolkit_slugs=google_search_console', { headers: { 'x-api-key': key } });
       const txt = await r.text(); let list = [];
       try { const o = JSON.parse(txt); const items = o.items || o.data || (Array.isArray(o) ? o : []); list = items.map(a => ({ id: a.id, user_id: a.user_id || a.entity_id || (a.entity && a.entity.id), status: a.status, toolkit: (a.toolkit && (a.toolkit.slug || a.toolkit)) || a.app_name })); } catch (e) {}
-      res.statusCode = 200; return res.end(JSON.stringify({ httpStatus: r.status, count: list.length, connections: list, raw: list.length ? undefined : txt.slice(0, 500) }));
+      // verify: run a tiny GSC query against the first ACTIVE connection
+      let verify = null; const act = list.find(a => a.status === 'ACTIVE');
+      if (act) {
+        const er = await fetch('https://backend.composio.dev/api/v3/tools/execute/GOOGLE_SEARCH_CONSOLE_SEARCH_ANALYTICS_QUERY', {
+          method: 'POST', headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connected_account_id: act.id, user_id: act.user_id || 'default', arguments: { site_url: 'sc-domain:' + (domain || 'protectt.ai'), start_date: '2026-06-01', end_date: '2026-08-05', dimensions: ['page'], row_limit: 3 } })
+        });
+        const et = await er.text(); let rows = null; try { const ej = JSON.parse(et); rows = (ej.data && ej.data.rows) ? ej.data.rows.length : null; } catch (e) {}
+        verify = { usedId: act.id, usedUser: act.user_id || 'default', status: er.status, rows, body: rows == null ? et.slice(0, 400) : undefined };
+      }
+      res.statusCode = 200; return res.end(JSON.stringify({ httpStatus: r.status, count: list.length, connections: list, verify }));
     }
     if (step === 'gscdebug') {
       const key = process.env.COMPOSIO_API_KEY, acct = process.env.COMPOSIO_GSC_ACCOUNT_ID;
