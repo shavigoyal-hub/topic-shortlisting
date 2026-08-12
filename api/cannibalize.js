@@ -62,7 +62,8 @@ async function gscComposio(args) {
     if (!r.ok) return { rows: [] };
     const j = await r.json();
     const data = (j && j.data) || {};
-    return { rows: data.rows || [] };
+    const rows = (data.response_data && data.response_data.rows) || data.rows || [];   // Composio nests under data.response_data
+    return { rows };
   } catch (e) { return { rows: [] }; }
 }
 
