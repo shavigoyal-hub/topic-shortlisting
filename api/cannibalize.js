@@ -1,5 +1,4 @@
-// redeploy: pick up updated COMPOSIO_API_KEY
-// Vercel serverless — feed cannibalisation data source (server-connected: Metabase + GSC).
+// Vercel serverless — feed cannibalisation data source (server-connected: Metabase + Serper + GSC via Composio).
 // Browser calls this in steps to beat the 60s limit; the heavy overlap/winner compute runs client-side.
 //   POST { step:"pages", domain }           -> { feedBase, pages:[{kw,vol,status,type,slug,url}] }
 //   POST { step:"serp", items:[{kw}], gl }   -> { serp:{ kwLower:[top10 normalized urls] } }
@@ -119,42 +118,6 @@ module.exports = async (req, res) => {
       (nfR.rows || []).forEach(r => { const pg = norm(r.keys[0]), q = r.keys[1]; tot[pg] = (tot[pg] || 0) + r.impressions; if (BRAND.test(q) || /^[\d\W]+$/.test(q)) return; const b = best[pg]; if (!b || r.impressions > b.impr) best[pg] = { query: q, impr: r.impressions, pos: Math.round(r.position * 10) / 10 }; });
       const nonfeed = Object.keys(tot).map(pg => ({ url: pg, total_impr: tot[pg], top_query: best[pg] ? best[pg].query : '', top_query_pos: best[pg] ? best[pg].pos : null })).sort((a, b) => b.total_impr - a.total_impr);
       res.statusCode = 200; return res.end(JSON.stringify({ available: true, feed, nonfeed }));
-    }
-    if (step === 'listconn') {
-      const key = process.env.COMPOSIO_API_KEY; if (!key) { res.statusCode = 200; return res.end(JSON.stringify({ hasKey: false })); }
-      const envAcct = process.env.COMPOSIO_GSC_ACCOUNT_ID || '(unset)', envUser = process.env.COMPOSIO_USER_ID || '(unset)';
-      const r = await fetch('https://backend.composio.dev/api/v3/connected_accounts?toolkit_slugs=google_search_console', { headers: { 'x-api-key': key } });
-      const txt = await r.text(); let list = [];
-      try { const o = JSON.parse(txt); const items = o.items || o.data || (Array.isArray(o) ? o : []); list = items.map(a => ({ id: a.id, user_id: a.user_id || a.entity_id || (a.entity && a.entity.id), status: a.status, toolkit: (a.toolkit && (a.toolkit.slug || a.toolkit)) || a.app_name })); } catch (e) {}
-      // verify: run a tiny GSC query against the first ACTIVE connection
-      let verify = null; const act = list.find(a => a.status === 'ACTIVE');
-      if (act) {
-        const er = await fetch('https://backend.composio.dev/api/v3/tools/execute/GOOGLE_SEARCH_CONSOLE_SEARCH_ANALYTICS_QUERY', {
-          method: 'POST', headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connected_account_id: act.id, user_id: act.user_id || 'default', arguments: { site_url: 'sc-domain:' + (domain || 'protectt.ai'), start_date: '2026-06-01', end_date: '2026-08-05', dimensions: ['page'], row_limit: 3 } })
-        });
-        const et = await er.text(); let rows = null; try { const ej = JSON.parse(et); rows = (ej.data && ej.data.rows) ? ej.data.rows.length : null; } catch (e) {}
-        verify = { usedId: act.id, usedUser: act.user_id || 'default', status: er.status, rows, body: rows == null ? et.slice(0, 400) : undefined };
-      }
-      res.statusCode = 200; return res.end(JSON.stringify({ httpStatus: r.status, count: list.length, connections: list, verify, envAcct, envUser }));
-    }
-    if (step === 'gscdebug') {
-      const key = process.env.COMPOSIO_API_KEY, acct = process.env.COMPOSIO_GSC_ACCOUNT_ID;
-      if (!key || !acct) { res.statusCode = 200; return res.end(JSON.stringify({ hasKey: !!key, hasAcct: !!acct })); }
-      // fetch the connected account to discover its entity/user id
-      const ca = await fetch('https://backend.composio.dev/api/v3/connected_accounts/' + encodeURIComponent(acct), { headers: { 'x-api-key': key } });
-      const caj = await ca.text();
-      let uid = ''; try { const o = JSON.parse(caj); uid = o.user_id || o.entity_id || (o.data && (o.data.user_id || o.data.entity_id)) || ''; } catch (e) {}
-      const attempt = async (uidVal) => {
-        const r = await fetch('https://backend.composio.dev/api/v3/tools/execute/GOOGLE_SEARCH_CONSOLE_SEARCH_ANALYTICS_QUERY', {
-          method: 'POST', headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connected_account_id: acct, user_id: uidVal, arguments: { site_url: 'sc-domain:' + domain, start_date: '2026-06-01', end_date: '2026-08-05', dimensions: ['page'], row_limit: 3 } })
-        });
-        return { uid: uidVal, status: r.status, body: (await r.text()).slice(0, 500) };
-      };
-      const tries = [];
-      for (const u of [uid, 'default'].filter((v, i, a) => v !== undefined && a.indexOf(v) === i)) tries.push(await attempt(u));
-      res.statusCode = 200; return res.end(JSON.stringify({ caStatus: ca.status, discoveredUid: uid, ca: caj.slice(0, 300), tries }));
     }
     res.statusCode = 400; res.end(JSON.stringify({ error: 'unknown step' }));
   } catch (e) { res.statusCode = 502; res.end(JSON.stringify({ error: String(e && e.message || e) })); }
