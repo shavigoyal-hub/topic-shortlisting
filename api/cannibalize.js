@@ -100,6 +100,16 @@ module.exports = async (req, res) => {
       const nonfeed = Object.keys(tot).map(pg => ({ url: pg, total_impr: tot[pg], top_query: best[pg] ? best[pg].query : '', top_query_pos: best[pg] ? best[pg].pos : null })).sort((a, b) => b.total_impr - a.total_impr);
       res.statusCode = 200; return res.end(JSON.stringify({ available: true, feed, nonfeed }));
     }
+    if (step === 'gscdebug') {
+      const key = process.env.COMPOSIO_API_KEY, acct = process.env.COMPOSIO_GSC_ACCOUNT_ID;
+      if (!key || !acct) { res.statusCode = 200; return res.end(JSON.stringify({ hasKey: !!key, hasAcct: !!acct })); }
+      const r = await fetch('https://backend.composio.dev/api/v3/tools/execute/GOOGLE_SEARCH_CONSOLE_SEARCH_ANALYTICS_QUERY', {
+        method: 'POST', headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connected_account_id: acct, arguments: { site_url: 'sc-domain:' + domain, start_date: '2026-06-01', end_date: '2026-08-05', dimensions: ['page'], row_limit: 3 } })
+      });
+      const txt = await r.text();
+      res.statusCode = 200; return res.end(JSON.stringify({ httpStatus: r.status, body: txt.slice(0, 1500) }));
+    }
     res.statusCode = 400; res.end(JSON.stringify({ error: 'unknown step' }));
   } catch (e) { res.statusCode = 502; res.end(JSON.stringify({ error: String(e && e.message || e) })); }
 };
