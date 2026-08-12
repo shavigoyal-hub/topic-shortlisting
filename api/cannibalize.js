@@ -104,12 +104,20 @@ module.exports = async (req, res) => {
     if (step === 'gscdebug') {
       const key = process.env.COMPOSIO_API_KEY, acct = process.env.COMPOSIO_GSC_ACCOUNT_ID;
       if (!key || !acct) { res.statusCode = 200; return res.end(JSON.stringify({ hasKey: !!key, hasAcct: !!acct })); }
-      const r = await fetch('https://backend.composio.dev/api/v3/tools/execute/GOOGLE_SEARCH_CONSOLE_SEARCH_ANALYTICS_QUERY', {
-        method: 'POST', headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connected_account_id: acct, arguments: { site_url: 'sc-domain:' + domain, start_date: '2026-06-01', end_date: '2026-08-05', dimensions: ['page'], row_limit: 3 } })
-      });
-      const txt = await r.text();
-      res.statusCode = 200; return res.end(JSON.stringify({ httpStatus: r.status, body: txt.slice(0, 1500) }));
+      // fetch the connected account to discover its entity/user id
+      const ca = await fetch('https://backend.composio.dev/api/v3/connected_accounts/' + encodeURIComponent(acct), { headers: { 'x-api-key': key } });
+      const caj = await ca.text();
+      let uid = ''; try { const o = JSON.parse(caj); uid = o.user_id || o.entity_id || (o.data && (o.data.user_id || o.data.entity_id)) || ''; } catch (e) {}
+      const attempt = async (uidVal) => {
+        const r = await fetch('https://backend.composio.dev/api/v3/tools/execute/GOOGLE_SEARCH_CONSOLE_SEARCH_ANALYTICS_QUERY', {
+          method: 'POST', headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connected_account_id: acct, user_id: uidVal, arguments: { site_url: 'sc-domain:' + domain, start_date: '2026-06-01', end_date: '2026-08-05', dimensions: ['page'], row_limit: 3 } })
+        });
+        return { uid: uidVal, status: r.status, body: (await r.text()).slice(0, 500) };
+      };
+      const tries = [];
+      for (const u of [uid, 'default'].filter((v, i, a) => v !== undefined && a.indexOf(v) === i)) tries.push(await attempt(u));
+      res.statusCode = 200; return res.end(JSON.stringify({ caStatus: ca.status, discoveredUid: uid, ca: caj.slice(0, 300), tries }));
     }
     res.statusCode = 400; res.end(JSON.stringify({ error: 'unknown step' }));
   } catch (e) { res.statusCode = 502; res.end(JSON.stringify({ error: String(e && e.message || e) })); }
