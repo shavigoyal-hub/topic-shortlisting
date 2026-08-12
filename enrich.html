@@ -91,6 +91,7 @@
   <div class="brand">Gushwork<small>SEO REPORTING</small></div>
   <nav>
     <a id="navEnrich" class="active" onclick="show('enrich')">AKR Enricher</a>
+    <a id="navCann" onclick="show('cann')">Cannibalization</a>
     <a id="navHistory" onclick="show('history')">History</a>
   </nav>
 
@@ -170,6 +171,38 @@
     </div>
   </section>
 
+  <!-- CANNIBALIZATION VIEW -->
+  <section id="view-cann" class="hidden">
+    <h1>Feed Cannibalization</h1>
+    <p class="sub">Pulls a domain's feed pages from Metabase, checks live SERP overlap, and uses 16-month GSC impressions to decide keep vs redirect — two CSVs.</p>
+    <div class="card">
+      <div class="field">
+        <label>Client domain <span class="hint">must exist in Metabase (feed pages under /feeds)</span></label>
+        <input type="text" id="cannDomain" placeholder="protectt.ai" autocomplete="off">
+      </div>
+      <div class="rowflex">
+        <div class="field" style="max-width:220px">
+          <label>SERP location</label>
+          <select id="cannGeo"><option value="us">United States</option><option value="in">India</option><option value="gb">United Kingdom</option><option value="au">Australia</option><option value="ca">Canada</option><option value="ae">UAE</option><option value="sg">Singapore</option></select>
+        </div>
+        <div class="field" style="max-width:160px">
+          <label>Min SERP overlap</label>
+          <select id="cannOverlap"><option value="4">4</option><option value="3">3</option><option value="5">5</option></select>
+        </div>
+      </div>
+    </div>
+    <button id="cannRun" class="primary big">Run cannibalization</button>
+    <div class="card hidden" id="cannProgress" style="margin-top:16px">
+      <div class="stat" id="cannPhase">Starting…</div>
+      <div class="bar"><i id="cannBar"></i></div>
+      <div class="stat" id="cannCounts"></div>
+      <div style="margin-top:12px">
+        <button class="ghost hidden" id="cannDl1">⬇ feed → winner feed (consolidate)</button>
+        <button class="ghost hidden" id="cannDl2" style="margin-left:8px">⬇ feed → existing GSC page</button>
+      </div>
+    </div>
+  </section>
+
   <!-- HISTORY VIEW -->
   <section id="view-history" class="hidden">
     <h1>History</h1>
@@ -221,11 +254,69 @@ fetch('/api/version').then(function(r){return r.json();}).then(function(v){ if(v
 /* ============================ nav ============================ */
 function show(v){
   $('view-enrich').classList.toggle('hidden', v!=='enrich');
+  $('view-cann').classList.toggle('hidden', v!=='cann');
   $('view-history').classList.toggle('hidden', v!=='history');
   $('navEnrich').classList.toggle('active', v==='enrich');
+  $('navCann').classList.toggle('active', v==='cann');
   $('navHistory').classList.toggle('active', v==='history');
   if(v==='history') renderHistory();
 }
+
+/* ============================ cannibalization ============================ */
+const nUrl = u => String(u||'').trim().replace(/^https?:\/\//i,'').replace(/^www\./i,'').replace(/[?#].*$/,'').replace(/\/+$/,'').toLowerCase();
+const nQ = q => String(q||'').toLowerCase().replace(/\s+/g,' ').trim();
+let cann1=[], cann2=[];
+$('cannRun').addEventListener('click', async ()=>{
+  const domain=$('cannDomain').value.trim().toLowerCase().replace(/^https?:\/\//,'').replace(/^www\./,'').replace(/\/.*$/,'');
+  if(!domain){ alert('Enter a domain'); return; }
+  const gl=$('cannGeo').value, OV=Number($('cannOverlap').value);
+  $('cannRun').disabled=true; $('cannProgress').classList.remove('hidden'); $('cannDl1').classList.add('hidden'); $('cannDl2').classList.add('hidden');
+  const api=(step,extra)=>fetch('/api/cannibalize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({step,domain},extra))}).then(r=>r.json());
+  try{
+    $('cannPhase').textContent='Pulling feed pages from Metabase…';
+    const pg=await api('pages',{}); if(pg.error){ throw new Error(pg.error); }
+    const pages=(pg.pages||[]).map(p=>({...p,nurl:nUrl(p.url)}));
+    if(!pages.length){ throw new Error('No feed pages found in Metabase for '+domain); }
+    $('cannPhase').textContent='Fetching top-10 SERP for '+pages.length+' keywords…';
+    const serp={}; const CH=15; let done=0;
+    for(let i=0;i<pages.length;i+=CH){ const chunk=pages.slice(i,i+CH);
+      const r=await api('serp',{items:chunk.map(p=>({kw:p.kw})),gl}); Object.assign(serp,r.serp||{});
+      done+=chunk.length; $('cannBar').style.width=Math.round(done/pages.length*70)+'%'; $('cannCounts').textContent=done+' / '+pages.length+' SERP fetched';
+    }
+    pages.forEach(p=>{ p.serp=(serp[p.kw.toLowerCase()]||[]); p.set=new Set(p.serp); });
+    $('cannPhase').textContent='Pulling 16-month GSC impressions…'; $('cannBar').style.width='82%';
+    const g=await api('gsc',{}); const gscOn=g.available;
+    if(gscOn){ pages.forEach(p=>{ let gg=g.feed[p.nurl]; if(!gg){ const slug=p.nurl.split('/').pop(); const hit=Object.keys(g.feed).find(k=>k.endsWith('/'+slug)); if(hit)gg=g.feed[hit]; } p.impr=gg?gg.impr:0; }); }
+    else pages.forEach(p=>p.impr=0);
+    // non-feed GSC map
+    const nfUrl={}, nfQ={}; (gscOn?g.nonfeed:[]).forEach(n=>{ if(!n.url.startsWith(domain)||n.url.includes('/feeds/'))return; nfUrl[nUrl(n.url)]=n; if(n.top_query)(nfQ[nQ(n.top_query)]=nfQ[nQ(n.top_query)]||[]).push(n); });
+    $('cannPhase').textContent='Computing overlap + winners…'; $('cannBar').style.width='92%';
+    // Layer 1: feed -> existing non-feed GSC page
+    const toGsc={};
+    pages.forEach(p=>{ const nf=p.serp.find(u=>u.startsWith(domain+'/')&&!u.includes('/feeds/')&&!/\/(privacy|terms)/.test(u));
+      if(nf){ const meta=nfUrl[nf]; toGsc[p.nurl]={target:'https://'+nf,tq:meta?meta.top_query:'',why:'non-feed page ranks live for the query'}; return; }
+      const m=nfQ[nQ(p.kw)]; if(m&&m.length){ const b=m.sort((a,b)=>b.total_impr-a.total_impr)[0]; toGsc[p.nurl]={target:'https://'+b.url,tq:b.top_query,why:'existing GSC page owns this exact query'}; } });
+    // feed<->feed overlap
+    const matches={};
+    for(let i=0;i<pages.length;i++)for(let j=i+1;j<pages.length;j++){const A=pages[i],B=pages[j];if(!A.set.size||!B.set.size)continue;let o=0;const s=A.set.size<=B.set.size?A.set:B.set,b=A.set.size<=B.set.size?B.set:A.set;s.forEach(u=>{if(b.has(u))o++;});if(o>=OV){(matches[A.nurl]=matches[A.nurl]||[]).push(B);(matches[B.nurl]=matches[B.nurl]||[]).push(A);}}
+    const isHead=k=>!/^(what|how|why|is |are |can )/i.test(k)&&!/\(/.test(k);
+    const winner=p=>{const c=[p,...(matches[p.nurl]||[])];c.sort((a,b)=>{if(b.impr!==a.impr)return b.impr-a.impr;if(b.vol!==a.vol)return b.vol-a.vol;if(isHead(b.kw)!==isHead(a.kw))return isHead(b.kw)-isHead(a.kw);return a.kw.length-b.kw.length;});return c[0];};
+    cann2=[['Current URL','Redirect To URL','NEW Next Step','feed keyword','GSC page top query','why']];
+    Object.keys(toGsc).forEach(nu=>{ const p=pages.find(x=>x.nurl===nu),t=toGsc[nu]; cann2.push([p.url,t.target,'Redirect to existing GSC page',p.kw,t.tq||'',t.why]); });
+    cann1=[['Current URL','Redirect To URL','Next Step','loser (impr/vol)','winner (impr/vol)','serpOverlap']];
+    pages.forEach(p=>{ if(toGsc[p.nurl])return; const m=matches[p.nurl]; if(!m||!m.length)return; const w=winner(p); if(w.nurl===p.nurl)return;
+      let target=w.url,step='Consolidate to winner feed page'; if(toGsc[w.nurl]){target=toGsc[w.nurl].target;step='Redirect to existing GSC page';}
+      let o=0;p.set.forEach(u=>{if(w.set.has(u))o++;}); cann1.push([p.url,target,step,p.kw+' ('+p.impr+'/'+p.vol+')',w.kw+' ('+w.impr+'/'+w.vol+')',o]); });
+    $('cannBar').style.width='100%';
+    const keeps=pages.filter(p=>!toGsc[p.nurl]&&matches[p.nurl]&&winner(p).nurl===p.nurl).length;
+    $('cannPhase').textContent='✓ Done — '+pages.length+' feed pages'+(gscOn?' (GSC connected)':' (GSC not configured — winner by volume)');
+    $('cannCounts').innerHTML='feed→GSC page: <b>'+(cann2.length-1)+'</b> &nbsp; feed→winner feed: <b>'+(cann1.length-1)+'</b> &nbsp; kept: <b>'+keeps+'</b>';
+    $('cannDl1').classList.remove('hidden'); $('cannDl2').classList.remove('hidden');
+  }catch(e){ $('cannPhase').innerHTML='<span style="color:var(--bad)">'+e.message+'</span>'; }
+  $('cannRun').disabled=false;
+});
+$('cannDl1').addEventListener('click',()=>downloadCSV(cann1.map(r=>r.map(csvCell).join(',')).join('\n')+'\n','feed_to_winner_feed.csv'));
+$('cannDl2').addEventListener('click',()=>downloadCSV(cann2.map(r=>r.map(csvCell).join(',')).join('\n')+'\n','feed_to_gsc_page.csv'));
 
 /* ============================ helpers ============================ */
 const csvCell = v => { v=(v==null?'':String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };

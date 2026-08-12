@@ -1,0 +1,102 @@
+// Vercel serverless — feed cannibalisation data source (server-connected: Metabase + GSC).
+// Browser calls this in steps to beat the 60s limit; the heavy overlap/winner compute runs client-side.
+//   POST { step:"pages", domain }           -> { feedBase, pages:[{kw,vol,status,type,slug,url}] }
+//   POST { step:"serp", items:[{kw}], gl }   -> { serp:{ kwLower:[top10 normalized urls] } }
+//   POST { step:"gsc", domain }              -> { available, feed:{nurl:{impr,pos}}, nonfeed:[{url,total_impr,top_query,top_query_pos}] }
+// Env: METABASE_URL/METABASE_USERNAME/METABASE_PASSWORD/METABASE_DATABASE_ID, SERPER_KEY,
+//      GSC_CLIENT_ID/GSC_CLIENT_SECRET/GSC_REFRESH_TOKEN (GSC optional — falls back to volume if unset).
+module.exports.config = { maxDuration: 60 };
+
+const norm = u => String(u || '').trim().replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
+const normq = q => String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+/* ---- Metabase ---- */
+async function mbSession() {
+  const base = (process.env.METABASE_URL || '').replace(/\/$/, '');
+  const r = await fetch(base + '/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: process.env.METABASE_USERNAME, password: process.env.METABASE_PASSWORD }) });
+  if (!r.ok) throw new Error('Metabase login ' + r.status);
+  return (await r.json()).id;
+}
+async function mbDb(sid) {
+  const raw = (process.env.METABASE_DATABASE_ID || '').trim();
+  if (/^\d+$/.test(raw)) return Number(raw);
+  const base = (process.env.METABASE_URL || '').replace(/\/$/, '');
+  const j = await (await fetch(base + '/api/database', { headers: { 'X-Metabase-Session': sid } })).json();
+  const list = j.data || j || [];
+  const m = list.find(d => (d.name || '').toLowerCase() === raw.toLowerCase());
+  return m ? m.id : (list[0] && list[0].id);
+}
+async function mbSql(sid, db, sql) {
+  const base = (process.env.METABASE_URL || '').replace(/\/$/, '');
+  const r = await fetch(base + '/api/dataset', { method: 'POST', headers: { 'X-Metabase-Session': sid, 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'native', native: { query: sql }, database: db, constraints: { 'max-results': 100000, 'max-results-bare-rows': 100000 } }) });
+  const j = await r.json();
+  if (j.status === 'failed' || j.error) throw new Error('MB query: ' + (j.error || '').slice(0, 200));
+  return (j.data && j.data.rows) || [];
+}
+const esc = s => String(s).replace(/'/g, "''");
+
+/* ---- Serper ---- */
+async function serper(kw, gl) {
+  const key = process.env.SERPER_KEY; if (!key) return [];
+  try {
+    const r = await fetch('https://google.serper.dev/search', { method: 'POST', headers: { 'X-API-KEY': key, 'Content-Type': 'application/json' }, body: JSON.stringify({ q: kw, gl: gl || 'us', num: 10 }) });
+    if (!r.ok) return [];
+    return ((await r.json()).organic || []).slice(0, 10).map(o => norm(o.link)).filter(Boolean);
+  } catch (e) { return []; }
+}
+
+/* ---- GSC (refresh-token) ---- */
+async function gscToken() {
+  const id = process.env.GSC_CLIENT_ID, sec = process.env.GSC_CLIENT_SECRET, rt = process.env.GSC_REFRESH_TOKEN;
+  if (!id || !sec || !rt) return null;
+  const r = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: id, client_secret: sec, refresh_token: rt, grant_type: 'refresh_token' }) });
+  if (!r.ok) return null;
+  return (await r.json()).access_token;
+}
+async function gscQuery(token, site, body) {
+  const r = await fetch('https://www.googleapis.com/webmasters/v3/sites/' + encodeURIComponent(site) + '/searchAnalytics/query', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) return { rows: [] };
+  return await r.json();
+}
+
+module.exports = async (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  let body = req.body; if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = {}; } }
+  const step = body && body.step;
+  const domain = String((body && body.domain) || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
+  try {
+    if (step === 'serp') {
+      const items = (body.items || []).slice(0, 30); const gl = (body.gl || 'us').toLowerCase();
+      const out = {}; let i = 0;
+      const worker = async () => { while (i < items.length) { const it = items[i++]; out[String(it.kw).toLowerCase()] = await serper(it.kw, gl); } };
+      await Promise.all(Array.from({ length: Math.min(6, items.length) }, worker));
+      res.statusCode = 200; return res.end(JSON.stringify({ serp: out }));
+    }
+    if (step === 'pages') {
+      if (!process.env.METABASE_URL) { res.statusCode = 500; return res.end(JSON.stringify({ error: 'Metabase env not set on the server' })); }
+      const sid = await mbSession(); const db = await mbDb(sid);
+      const rows = await mbSql(sid, db, `SELECT c.primary_kw,c.volume,c.page_status,c.page_type,c.slug,p.canonical_url FROM public.clusters c JOIN public.projects p ON p.id=c.p_id WHERE LOWER(p.root_domain)='${esc(domain)}' AND c.d_at IS NULL AND c.primary_kw IS NOT NULL ORDER BY c.volume DESC NULLS LAST`);
+      const base = ((rows[0] && rows[0][5]) || ('https://' + domain + '/feeds')).replace(/\/+$/, '');
+      const byKw = {};
+      rows.forEach(r => { const k = String(r[0]).trim().toLowerCase(); const url = base + '/' + String(r[3] || 'service').toLowerCase() + '/' + (r[4] || ''); const p = { kw: String(r[0]).trim(), vol: r[1] || 0, status: r[2] || 'null', type: r[3] || '', slug: r[4] || '', url }; if (!byKw[k] || p.vol > byKw[k].vol) byKw[k] = p; });
+      res.statusCode = 200; return res.end(JSON.stringify({ feedBase: base, pages: Object.values(byKw) }));
+    }
+    if (step === 'gsc') {
+      const token = await gscToken();
+      if (!token) { res.statusCode = 200; return res.end(JSON.stringify({ available: false })); }
+      const site = 'sc-domain:' + domain;
+      const now = new Date(Date.now() - 3 * 864e5), start = new Date(Date.now() - 480 * 864e5);
+      const dt = d => d.toISOString().slice(0, 10);
+      const feedR = await gscQuery(token, site, { startDate: dt(start), endDate: dt(now), dimensions: ['page'], rowLimit: 25000, dataState: 'final', dimensionFilterGroups: [{ filters: [{ dimension: 'page', operator: 'contains', expression: '/feeds/' }] }] });
+      const nfR = await gscQuery(token, site, { startDate: dt(start), endDate: dt(now), dimensions: ['page', 'query'], rowLimit: 25000, dataState: 'final', dimensionFilterGroups: [{ filters: [{ dimension: 'page', operator: 'notContains', expression: '/feeds/' }] }] });
+      const feed = {};
+      (feedR.rows || []).forEach(r => { feed[norm(r.keys[0])] = { impr: r.impressions, pos: Math.round(r.position * 10) / 10 }; });
+      const BRAND = new RegExp(domain.replace(/\..*/, '') + '|site:', 'i');
+      const tot = {}, best = {};
+      (nfR.rows || []).forEach(r => { const pg = norm(r.keys[0]), q = r.keys[1]; tot[pg] = (tot[pg] || 0) + r.impressions; if (BRAND.test(q) || /^[\d\W]+$/.test(q)) return; const b = best[pg]; if (!b || r.impressions > b.impr) best[pg] = { query: q, impr: r.impressions, pos: Math.round(r.position * 10) / 10 }; });
+      const nonfeed = Object.keys(tot).map(pg => ({ url: pg, total_impr: tot[pg], top_query: best[pg] ? best[pg].query : '', top_query_pos: best[pg] ? best[pg].pos : null })).sort((a, b) => b.total_impr - a.total_impr);
+      res.statusCode = 200; return res.end(JSON.stringify({ available: true, feed, nonfeed }));
+    }
+    res.statusCode = 400; res.end(JSON.stringify({ error: 'unknown step' }));
+  } catch (e) { res.statusCode = 502; res.end(JSON.stringify({ error: String(e && e.message || e) })); }
+};
