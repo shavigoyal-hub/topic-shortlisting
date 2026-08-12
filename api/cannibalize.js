@@ -104,6 +104,13 @@ module.exports = async (req, res) => {
       const nonfeed = Object.keys(tot).map(pg => ({ url: pg, total_impr: tot[pg], top_query: best[pg] ? best[pg].query : '', top_query_pos: best[pg] ? best[pg].pos : null })).sort((a, b) => b.total_impr - a.total_impr);
       res.statusCode = 200; return res.end(JSON.stringify({ available: true, feed, nonfeed }));
     }
+    if (step === 'listconn') {
+      const key = process.env.COMPOSIO_API_KEY; if (!key) { res.statusCode = 200; return res.end(JSON.stringify({ hasKey: false })); }
+      const r = await fetch('https://backend.composio.dev/api/v3/connected_accounts?toolkit_slugs=google_search_console', { headers: { 'x-api-key': key } });
+      const txt = await r.text(); let list = [];
+      try { const o = JSON.parse(txt); const items = o.items || o.data || (Array.isArray(o) ? o : []); list = items.map(a => ({ id: a.id, user_id: a.user_id || a.entity_id || (a.entity && a.entity.id), status: a.status, toolkit: (a.toolkit && (a.toolkit.slug || a.toolkit)) || a.app_name })); } catch (e) {}
+      res.statusCode = 200; return res.end(JSON.stringify({ httpStatus: r.status, count: list.length, connections: list, raw: list.length ? undefined : txt.slice(0, 500) }));
+    }
     if (step === 'gscdebug') {
       const key = process.env.COMPOSIO_API_KEY, acct = process.env.COMPOSIO_GSC_ACCOUNT_ID;
       if (!key || !acct) { res.statusCode = 200; return res.end(JSON.stringify({ hasKey: !!key, hasAcct: !!acct })); }
