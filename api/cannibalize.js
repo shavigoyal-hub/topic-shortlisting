@@ -109,8 +109,8 @@ module.exports = async (req, res) => {
       const site = 'sc-domain:' + domain;
       const now = new Date(Date.now() - 3 * 864e5), start = new Date(Date.now() - 480 * 864e5);
       const dt = d => d.toISOString().slice(0, 10);
-      const feedR = await gscComposio({ site_url: site, start_date: dt(start), end_date: dt(now), dimensions: ['page'], row_limit: 25000, data_state: 'final', dimension_filter_groups: [{ filters: [{ dimension: 'page', operator: 'contains', expression: '/feeds/' }] }] });
-      const nfR = await gscComposio({ site_url: site, start_date: dt(start), end_date: dt(now), dimensions: ['page', 'query'], row_limit: 25000, data_state: 'final', dimension_filter_groups: [{ filters: [{ dimension: 'page', operator: 'notContains', expression: '/feeds/' }] }] });
+      const feedR = await gscComposio({ site_url: site, start_date: dt(start), end_date: dt(now), dimensions: ['page'], row_limit: 5000, data_state: 'final', dimension_filter_groups: [{ filters: [{ dimension: 'page', operator: 'contains', expression: '/feeds/' }] }] });
+      const nfR = await gscComposio({ site_url: site, start_date: dt(start), end_date: dt(now), dimensions: ['page', 'query'], row_limit: 5000, data_state: 'final', dimension_filter_groups: [{ filters: [{ dimension: 'page', operator: 'notContains', expression: '/feeds/' }] }] });
       if (!feedR.rows.length && !nfR.rows.length) { res.statusCode = 200; return res.end(JSON.stringify({ available: false, note: 'Composio returned no GSC rows — check COMPOSIO_GSC_ACCOUNT_ID has access to ' + site })); }
       const feed = {};
       (feedR.rows || []).forEach(r => { feed[norm(r.keys[0])] = { impr: r.impressions, pos: Math.round(r.position * 10) / 10 }; });
