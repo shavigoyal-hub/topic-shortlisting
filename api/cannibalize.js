@@ -1,3 +1,4 @@
+// redeploy: pick up updated COMPOSIO_API_KEY
 // Vercel serverless — feed cannibalisation data source (server-connected: Metabase + GSC).
 // Browser calls this in steps to beat the 60s limit; the heavy overlap/winner compute runs client-side.
 //   POST { step:"pages", domain }           -> { feedBase, pages:[{kw,vol,status,type,slug,url}] }
