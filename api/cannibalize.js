@@ -107,6 +107,7 @@ module.exports = async (req, res) => {
     }
     if (step === 'listconn') {
       const key = process.env.COMPOSIO_API_KEY; if (!key) { res.statusCode = 200; return res.end(JSON.stringify({ hasKey: false })); }
+      const envAcct = process.env.COMPOSIO_GSC_ACCOUNT_ID || '(unset)', envUser = process.env.COMPOSIO_USER_ID || '(unset)';
       const r = await fetch('https://backend.composio.dev/api/v3/connected_accounts?toolkit_slugs=google_search_console', { headers: { 'x-api-key': key } });
       const txt = await r.text(); let list = [];
       try { const o = JSON.parse(txt); const items = o.items || o.data || (Array.isArray(o) ? o : []); list = items.map(a => ({ id: a.id, user_id: a.user_id || a.entity_id || (a.entity && a.entity.id), status: a.status, toolkit: (a.toolkit && (a.toolkit.slug || a.toolkit)) || a.app_name })); } catch (e) {}
@@ -120,7 +121,7 @@ module.exports = async (req, res) => {
         const et = await er.text(); let rows = null; try { const ej = JSON.parse(et); rows = (ej.data && ej.data.rows) ? ej.data.rows.length : null; } catch (e) {}
         verify = { usedId: act.id, usedUser: act.user_id || 'default', status: er.status, rows, body: rows == null ? et.slice(0, 400) : undefined };
       }
-      res.statusCode = 200; return res.end(JSON.stringify({ httpStatus: r.status, count: list.length, connections: list, verify }));
+      res.statusCode = 200; return res.end(JSON.stringify({ httpStatus: r.status, count: list.length, connections: list, verify, envAcct, envUser }));
     }
     if (step === 'gscdebug') {
       const key = process.env.COMPOSIO_API_KEY, acct = process.env.COMPOSIO_GSC_ACCOUNT_ID;
