@@ -49,12 +49,15 @@ async function serper(kw, gl) {
 /* ---- GSC via Composio (reuses the connected Search Console account) ---- */
 // arguments use the Composio tool's snake_case schema (site_url, start_date, ...)
 async function gscComposio(args) {
-  const key = process.env.COMPOSIO_API_KEY, acct = process.env.COMPOSIO_GSC_ACCOUNT_ID;
-  if (!key || !acct) return { rows: [] };
+  const key = process.env.COMPOSIO_API_KEY, acct = process.env.COMPOSIO_GSC_ACCOUNT_ID, uid = process.env.COMPOSIO_USER_ID;
+  if (!key || (!acct && !uid)) return { rows: [] };
   try {
+    const b = { arguments: args };
+    if (uid) b.user_id = uid;                 // Composio v3 requires a user/entity id
+    if (acct) b.connected_account_id = acct;  // optional — omit to auto-resolve by user_id
     const r = await fetch('https://backend.composio.dev/api/v3/tools/execute/GOOGLE_SEARCH_CONSOLE_SEARCH_ANALYTICS_QUERY', {
       method: 'POST', headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ connected_account_id: acct, arguments: args })
+      body: JSON.stringify(b)
     });
     if (!r.ok) return { rows: [] };
     const j = await r.json();
@@ -86,7 +89,7 @@ module.exports = async (req, res) => {
       res.statusCode = 200; return res.end(JSON.stringify({ feedBase: base, pages: Object.values(byKw) }));
     }
     if (step === 'gsc') {
-      if (!process.env.COMPOSIO_API_KEY || !process.env.COMPOSIO_GSC_ACCOUNT_ID) { res.statusCode = 200; return res.end(JSON.stringify({ available: false })); }
+      if (!process.env.COMPOSIO_API_KEY || (!process.env.COMPOSIO_GSC_ACCOUNT_ID && !process.env.COMPOSIO_USER_ID)) { res.statusCode = 200; return res.end(JSON.stringify({ available: false })); }
       const site = 'sc-domain:' + domain;
       const now = new Date(Date.now() - 3 * 864e5), start = new Date(Date.now() - 480 * 864e5);
       const dt = d => d.toISOString().slice(0, 10);
