@@ -173,32 +173,43 @@
 
   <!-- CANNIBALIZATION VIEW -->
   <section id="view-cann" class="hidden">
-    <h1>Feed Cannibalization</h1>
-    <p class="sub">Pulls a domain's feed pages from Metabase, checks live SERP overlap, and uses 16-month GSC impressions to decide keep vs redirect — two CSVs.</p>
+    <h1>Cannibalization</h1>
+    <p class="sub">Each page → its top GSC query → top-10 SERP. Two pages cannibalize when their top-10 URLs overlap ≥ threshold (same intent). Winner = whoever ranks live; impressions break ties.</p>
     <div class="card">
       <div class="field">
-        <label>Client domain <span class="hint">must exist in Metabase (feed pages under /feeds)</span></label>
-        <input type="text" id="cannDomain" placeholder="protectt.ai" autocomplete="off">
+        <label>Client domain <span class="hint">GSC pulled via Composio; feed pages from Metabase</span></label>
+        <input type="text" id="cannDomain" placeholder="hubengage.com" autocomplete="off">
       </div>
       <div class="rowflex">
-        <div class="field" style="max-width:220px">
+        <div class="field" style="max-width:200px">
           <label>SERP location</label>
           <select id="cannGeo"><option value="us">United States</option><option value="in">India</option><option value="gb">United Kingdom</option><option value="au">Australia</option><option value="ca">Canada</option><option value="ae">UAE</option><option value="sg">Singapore</option></select>
         </div>
-        <div class="field" style="max-width:160px">
+        <div class="field" style="max-width:150px">
           <label>Min SERP overlap</label>
           <select id="cannOverlap"><option value="4">4</option><option value="3">3</option><option value="5">5</option></select>
         </div>
+        <div class="field" style="max-width:170px">
+          <label>Min impressions <span class="hint">skip dead pages</span></label>
+          <input type="number" id="cannMinImpr" value="10" min="0" style="width:100%">
+        </div>
       </div>
+      <label style="margin-top:6px">Mode — what to check against what</label>
+      <div class="rowflex" style="gap:8px;flex-wrap:wrap">
+        <button class="primary cann-mode" data-mode="ff">Feed × Feed</button>
+        <button class="primary cann-mode" data-mode="fg">Feed × GSC (main site)</button>
+        <button class="primary cann-mode" data-mode="gg">GSC × GSC (main site self)</button>
+        <button class="primary cann-mode" data-mode="all">All (every page × every page)</button>
+      </div>
+      <div class="note" style="margin-top:8px">GSC/All modes fetch one live SERP per unique top query — can be a few hundred Serper calls on large sites (cached after the first run).</div>
     </div>
-    <button id="cannRun" class="primary big">Run cannibalization</button>
     <div class="card hidden" id="cannProgress" style="margin-top:16px">
       <div class="stat" id="cannPhase">Starting…</div>
       <div class="bar"><i id="cannBar"></i></div>
       <div class="stat" id="cannCounts"></div>
       <div style="margin-top:12px">
         <button class="ghost hidden" id="cannDl1">⬇ Download workbook (.xlsx)</button>
-        <button class="ghost hidden" id="cannDl2" style="margin-left:8px">⬇ Cannibalizing GSC (.csv)</button>
+        <button class="ghost hidden" id="cannDl2" style="margin-left:8px">⬇ Redirect map (.csv)</button>
       </div>
     </div>
   </section>
@@ -262,114 +273,98 @@ function show(v){
   if(v==='history') renderHistory();
 }
 
-/* ============================ cannibalization ============================
- * GSC-first, then feed-vs-feed. Detection on the assigned Metabase keyword's top-10 SERP;
- * decision (winner / redirect target) on GSC top-impression query. Winner = total page impressions,
- * with a strict live keep-guard (top-100 Serper): one survivor per cluster, swap only if the impr
- * winner is not ranking live but a cluster page is. Mirrors bulk/cann_rebuild.mjs. */
+/* ============================ cannibalization (mode-aware) ============================
+ * Each page -> its top GSC query (feed falls back to Metabase keyword) -> top-10 SERP.
+ * Two pages cannibalize when their top-10 URL sets overlap >= threshold (same intent).
+ * Winner = better live rank (own URL position in its top-10); impressions break ties.
+ * Modes: ff (feed×feed), fg (feed×main), gg (main×main), all (every page). */
 const nUrl = u => String(u||'').trim().replace(/^https?:\/\//i,'').replace(/^www\./i,'').replace(/[?#].*$/,'').replace(/\/+$/,'').toLowerCase();
 const nQ = q => String(q||'').toLowerCase().replace(/\s+/g,' ').trim();
-const isFeedU = u => /\/feeds\//.test(u) || /(^|\.)feeds\./.test(u);   // path OR subdomain feed
+const isFeedU = u => /\/feeds\//.test(u) || /(^|\.)feeds\./.test(u);
+const MODE_LABEL={ff:'Feed × Feed',fg:'Feed × GSC (main)',gg:'GSC × GSC (main self)',all:'All pages'};
+const QCAP=600;   // max unique SERP fetches per run
 let cannWB=null;
-$('cannRun').addEventListener('click', async ()=>{
+document.querySelectorAll('.cann-mode').forEach(b=> b.addEventListener('click',()=>runCann(b.dataset.mode)));
+
+async function runCann(mode){
   const domain=$('cannDomain').value.trim().toLowerCase().replace(/^https?:\/\//,'').replace(/^www\./,'').replace(/\/.*$/,'');
   if(!domain){ alert('Enter a domain'); return; }
-  const gl=$('cannGeo').value, OV=Number($('cannOverlap').value), LIVE_KEEP=10;
-  $('cannRun').disabled=true; $('cannProgress').classList.remove('hidden'); $('cannDl1').classList.add('hidden'); $('cannDl2').classList.add('hidden');
+  const gl=$('cannGeo').value, OV=Number($('cannOverlap').value), minImpr=Number($('cannMinImpr').value)||0;
+  document.querySelectorAll('.cann-mode').forEach(b=>b.disabled=true);
+  $('cannProgress').classList.remove('hidden'); $('cannDl1').classList.add('hidden'); $('cannDl2').classList.add('hidden');
+  $('cannBar').style.width='4%'; $('cannCounts').textContent='';
   const api=(step,extra)=>fetch('/api/cannibalize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({step,domain},extra))}).then(r=>r.json());
   try{
-    // 1) feed pages (Metabase)
-    $('cannPhase').textContent='Pulling feed pages from Metabase…';
-    const pg=await api('pages',{}); if(pg.error){ throw new Error(pg.error); }
-    const pages=(pg.pages||[]).map(p=>({...p,nurl:nUrl(p.url)}));
-    if(!pages.length){ throw new Error('No feed pages found in Metabase for '+domain); }
-    // 2) assigned-keyword SERP top-10 (cannibalisation DETECTION)
-    $('cannPhase').textContent='Fetching top-10 SERP for '+pages.length+' keywords…';
+    // 1) GSC (feed + non-feed top queries + impressions)
+    $('cannPhase').textContent='Pulling 16-month GSC (feed + non-feed)…';
+    const g=await api('gsc',{}); if(!g.available) throw new Error('GSC not available for '+domain+(g.note?' — '+g.note:''));
+    const feedG=g.feed||{};
+    // 2) Metabase feed pages (identity + assigned-keyword fallback)
+    let metaPages=[]; if(mode!=='gg'){ const pg=await api('pages',{}); if(!pg.error) metaPages=(pg.pages||[]).map(p=>({...p,nurl:nUrl(p.url)})); }
+    // build FEED page objects: Metabase pages (GSC top query, else assigned kw) + any GSC feed pages not in Metabase
+    const feedByNurl={};
+    metaPages.forEach(p=>{ let gg=feedG[p.nurl]; if(!gg){ const slug=p.nurl.split('/').pop(); const hit=Object.keys(feedG).find(k=>k.endsWith('/'+slug)); if(hit)gg=feedG[hit]; }
+      feedByNurl[p.nurl]={url:p.url,nurl:p.nurl,side:'feed',tq:(gg&&gg.top_query)||p.kw||'',impr:gg?gg.total_impr:0,gscPos:gg?gg.tq_pos:null}; });
+    Object.keys(feedG).forEach(nu=>{ if(feedByNurl[nu]||!feedG[nu].top_query)return; feedByNurl[nu]={url:'https://'+nu,nurl:nu,side:'feed',tq:feedG[nu].top_query,impr:feedG[nu].total_impr,gscPos:feedG[nu].tq_pos}; });
+    const feedPages=Object.values(feedByNurl).filter(p=>p.tq);
+    // build MAIN page objects (non-feed, >= minImpr)
+    const mainPages=(g.nonfeed||[]).filter(n=>n.top_query && n.total_impr>=minImpr && nUrl(n.url).startsWith(domain) && !isFeedU(n.url))
+      .map(n=>({url:'https://'+nUrl(n.url),nurl:nUrl(n.url),side:'main',tq:n.top_query,impr:n.total_impr,gscPos:(n.top_query_pos!=null?n.top_query_pos:null)}));
+    // 3) pick the pool / sides for the mode
+    let sideA,sideB,cross=false;
+    if(mode==='ff'){ sideA=sideB=feedPages; }
+    else if(mode==='gg'){ sideA=sideB=mainPages; }
+    else if(mode==='fg'){ sideA=feedPages; sideB=mainPages; cross=true; }
+    else { sideA=sideB=feedPages.concat(mainPages); }
+    if(!sideA.length||!sideB.length) throw new Error('Not enough pages for '+MODE_LABEL[mode]+' (feed '+feedPages.length+', main '+mainPages.length+').');
+    // participants = every page that could be compared
+    let pool = cross ? feedPages.concat(mainPages) : sideA;
+    const byNurl={}; pool.forEach(p=>byNurl[p.nurl]=p); pool=Object.values(byNurl);
+    // 4) SERP top-10 per unique top query (bounded by QCAP — keep highest-impression pages)
+    pool.sort((a,b)=>b.impr-a.impr);
+    let qorder=[]; const seenQ=new Set();
+    for(const p of pool){ const q=nQ(p.tq); if(q && !seenQ.has(q)){ seenQ.add(q); qorder.push(q); } }
+    let capped=false; if(qorder.length>QCAP){ capped=true; const keep=new Set(qorder.slice(0,QCAP)); pool=pool.filter(p=>keep.has(nQ(p.tq))); qorder=qorder.slice(0,QCAP); }
     const serp={}; const CH=15; let done=0;
-    for(let i=0;i<pages.length;i+=CH){ const chunk=pages.slice(i,i+CH);
-      const r=await api('serp',{items:chunk.map(p=>({kw:p.kw})),gl}); Object.assign(serp,r.serp||{});
-      done+=chunk.length; $('cannBar').style.width=Math.round(done/pages.length*55)+'%'; $('cannCounts').textContent=done+' / '+pages.length+' SERP fetched';
-    }
-    pages.forEach(p=>{ p.serp=(serp[p.kw.toLowerCase()]||[]); p.set=new Set(p.serp); });
-    // 3) GSC (16-month): feed top query + impressions, non-feed pages
-    $('cannPhase').textContent='Pulling 16-month GSC (feed + non-feed top queries)…'; $('cannBar').style.width='60%';
-    const g=await api('gsc',{}); const gscOn=g.available;
-    const feedG=(gscOn&&g.feed)||{};
-    pages.forEach(p=>{ let gg=feedG[p.nurl]; if(!gg){ const slug=p.nurl.split('/').pop(); const hit=Object.keys(feedG).find(k=>k.endsWith('/'+slug)); if(hit)gg=feedG[hit]; }
-      p.totalImpr=gg?gg.total_impr:0; p.tq=gg?gg.top_query||'':''; p.tqImpr=gg?gg.tq_impr||0:0; p.tqPos=(gg&&gg.tq_pos!=null)?gg.tq_pos:null; });
-    const nfUrl={}, nfQ={}; (gscOn?g.nonfeed:[]).forEach(n=>{ if(!nUrl(n.url).startsWith(domain)||isFeedU(n.url))return; nfUrl[nUrl(n.url)]=n; if(n.top_query)(nfQ[nQ(n.top_query)]=nfQ[nQ(n.top_query)]||[]).push(n); });
-    // 4) LAYER 1 (GSC-first): feed -> existing non-feed GSC page
-    const toGsc={};
-    pages.forEach(p=>{ const nf=p.serp.find(u=>u.startsWith(domain+'/')&&!isFeedU(u)&&!/\/(privacy|terms|contact|about)/.test(u));
-      if(nf){ const meta=nfUrl[nf]; toGsc[p.nurl]={target:'https://'+nf,tgtQ:meta?meta.top_query:'',tgtImpr:meta?meta.total_impr:0,why:'non-feed page ranks live for the query'}; return; }
-      for(const q of [nQ(p.tq),nQ(p.kw)]){ if(!q)continue; const m=nfQ[q]; if(m&&m.length){ const b=m.slice().sort((a,b)=>b.total_impr-a.total_impr)[0]; toGsc[p.nurl]={target:'https://'+nUrl(b.url),tgtQ:b.top_query,tgtImpr:b.total_impr,why:(q===nQ(p.tq)?'existing GSC page owns this page top query':'existing GSC page owns the assigned keyword')}; return; } } });
-    // 5) feed<->feed overlap (DETECTION) + clusters (connected components)
-    const matches={};
-    for(let i=0;i<pages.length;i++)for(let j=i+1;j<pages.length;j++){const A=pages[i],B=pages[j];if(!A.set.size||!B.set.size)continue;let o=0;const s=A.set.size<=B.set.size?A.set:B.set,b=A.set.size<=B.set.size?B.set:A.set;s.forEach(u=>{if(b.has(u))o++;});if(o>=OV){(matches[A.nurl]=matches[A.nurl]||[]).push(B);(matches[B.nurl]=matches[B.nurl]||[]).push(A);}}
-    const byNurl=Object.fromEntries(pages.map(p=>[p.nurl,p])); const clusterOf={}, clusters=[];
-    pages.forEach(p=>{ if(clusterOf[p.nurl]!==undefined||!matches[p.nurl])return; const id=clusters.length,st=[p.nurl],mem=[]; while(st.length){const n=st.pop(); if(clusterOf[n]!==undefined)continue; clusterOf[n]=id; mem.push(byNurl[n]); (matches[n]||[]).forEach(x=>{if(clusterOf[x.nurl]===undefined)st.push(x.nurl);});} clusters.push(mem); });
-    // 6) LIVE top-100 Serper on each involved page's GSC top query
-    const involved=pages.filter(p=>toGsc[p.nurl]||matches[p.nurl]);
-    const uniqTQ=[...new Set(involved.map(p=>nQ(p.tq)).filter(Boolean))];
-    $('cannPhase').textContent='Checking LIVE rank (top-100) for '+uniqTQ.length+' top queries…';
-    const live={}; done=0;
-    for(let i=0;i<uniqTQ.length;i+=CH){ const chunk=uniqTQ.slice(i,i+CH);
-      const r=await api('serp',{items:chunk.map(q=>({kw:q})),gl,num:100}); Object.assign(live,r.serp||{});
-      done+=chunk.length; $('cannBar').style.width=(60+Math.round(done/Math.max(1,uniqTQ.length)*35))+'%'; $('cannCounts').textContent=done+' / '+uniqTQ.length+' live checks'; }
-    pages.forEach(p=>{ p.liveTop=p.tq?(live[nQ(p.tq)]||[]):[]; });
-    const livePos=(nu,lt)=>{ if(!lt||!lt.length)return null; const i=lt.findIndex(u=>u===nu||u.split('?')[0]===nu); return i<0?null:i+1; };
-    const fmtPos=x=>x==null?'not ranking':x;
-    // 7) winner helpers (volume = fallback tiebreak only)
-    const isHead=k=>!/^(what|how|why|is |are |can )/i.test(k)&&!/\(/.test(k);
-    const pick=(arr,key)=>arr.slice().sort((a,b)=>{const d=(b[key]||0)-(a[key]||0);if(d)return d;if(b.vol!==a.vol)return b.vol-a.vol;if(isHead(b.kw)!==isHead(a.kw))return isHead(b.kw)-isHead(a.kw);return a.kw.length-b.kw.length;})[0];
-    const pickRank=arr=>arr.slice().sort((a,b)=>{const pa=a.tqPos==null?9999:a.tqPos,pb=b.tqPos==null?9999:b.tqPos;if(pa!==pb)return pa-pb;if(b.vol!==a.vol)return b.vol-a.vol;return a.kw.length-b.kw.length;})[0];
-    const pickLiveRank=arr=>arr.slice().sort((a,b)=>{const pa=livePos(a.nurl,a.liveTop)??9999,pb=livePos(b.nurl,b.liveTop)??9999;if(pa!==pb)return pa-pb;if(b.vol!==a.vol)return b.vol-a.vol;return a.kw.length-b.kw.length;})[0];
-    // 8) build tabs
-    const cannGsc=[]; Object.keys(toGsc).forEach(nu=>{ const p=byNurl[nu],t=toGsc[nu]; const tgtN=nUrl(t.target),fLP=livePos(p.nurl,p.liveTop),tLP=livePos(tgtN,p.liveTop);
-      cannGsc.push({current:p.url,target:t.target,step:'Redirect to existing GSC page',feedKw:p.kw,feedTopQ:p.tq,feedGscPos:p.tqPos,feedLivePos:fmtPos(fLP),feedTotalImpr:p.totalImpr,feedTqImpr:p.tqImpr,gscTopQ:t.tgtQ,gscImpr:t.tgtImpr,tgtLivePos:fmtPos(tLP),why:t.why,liveRetain:(fLP!=null&&tLP==null)?'KEEP feed (feed ranks live, target not ranking)':(tLP!=null?'redirect ok (target ranks live)':'redirect ok (neither ranking live)')}); });
-    const cannFeed=[], winCmp=[];
-    clusters.forEach(mem=>{ const liveM=mem.filter(p=>!toGsc[p.nurl]); if(liveM.length<2)return;
-      const wTot=pick(liveM,'totalImpr'),wTq=pick(liveM,'tqImpr'),wRank=pickRank(liveM),wLive=pickLiveRank(liveM),wLiveP=livePos(wLive.nurl,wLive.liveTop);
-      const agree=(wTot.nurl===wTq.nurl&&wTq.nurl===wRank.nurl);
-      winCmp.push({members:liveM.map(p=>p.kw).join(' | '),size:liveM.length,byTotalImpr:wTot.kw+' ('+wTot.totalImpr+' impr)',byTopQueryImpr:wTq.kw+' ('+wTq.tqImpr+' tq-impr)',byTopQueryRank:wRank.kw+' (GSC pos '+(wRank.tqPos==null?'—':wRank.tqPos)+')',byTopQueryLiveRank:wLiveP==null?'— none ranking in top-100':wLive.kw+' (live pos '+wLiveP+')',agree:agree?'yes':'NO — metric changes winner'});
-      const winnerLP=livePos(wTot.nurl,wTot.liveTop); let winner=wTot,survivorWhy;
-      if(winnerLP!=null&&winnerLP<=LIVE_KEEP)survivorWhy='highest total impr ('+wTot.totalImpr+') and ranks live @'+winnerLP;
-      else{ const ll=liveM.filter(p=>p.nurl!==wTot.nurl).map(p=>({p,lp:livePos(p.nurl,p.liveTop)})).filter(x=>x.lp!=null&&x.lp<=LIVE_KEEP).sort((a,b)=>a.lp-b.lp);
-        if(ll.length){ winner=ll[0].p; survivorWhy='SWAPPED — total-impr winner "'+wTot.kw+'" not ranking live; this page ranks live @'+ll[0].lp; } else survivorWhy='highest total impr ('+wTot.totalImpr+'); no page in cluster ranks live top-10'; }
-      liveM.forEach(p=>{ if(p.nurl===winner.nurl)return; let target=winner.url,step='Consolidate to winner feed page'; if(toGsc[winner.nurl]){target=toGsc[winner.nurl].target;step='Redirect to existing GSC page';}
-        const lLP=livePos(p.nurl,p.liveTop),wLP=livePos(winner.nurl,winner.liveTop);
-        cannFeed.push({current:p.url,target,step,loserKw:p.kw,loserGscPos:p.tqPos,loserLivePos:fmtPos(lLP),loserTotalImpr:p.totalImpr,loserTqImpr:p.tqImpr,winnerKw:winner.kw,winnerGscPos:winner.tqPos,winnerLivePos:fmtPos(wLP),winnerTotalImpr:winner.totalImpr,winnerTqImpr:winner.tqImpr,survivorWhy,liveRetain:lLP!=null?'loser ranks live @'+lLP+' — position lost on redirect (accepted for consolidation)':'ok to consolidate'}); }); });
-    const bucket=pos=>pos==null?'no impressions':pos<=3?'Top 1-3':pos<=10?'Top 4-10':pos<=20?'Page 2 (11-20)':pos<=30?'Page 3 (21-30)':'Page 4+ (31+)';
-    const bOrder=['Top 1-3','Top 4-10','Page 2 (11-20)','Page 3 (21-30)','Page 4+ (31+)','no impressions'], buckets={};
-    pages.forEach(p=>{ const b=bucket(p.tqPos); (buckets[b]=buckets[b]||[]).push(p); });
-    const rankBuckets=[]; bOrder.forEach(b=>(buckets[b]||[]).sort((a,c)=>(a.tqPos??999)-(c.tqPos??999)).forEach(p=>{ const lp=livePos(p.nurl,p.liveTop); rankBuckets.push({bucket:b,url:p.url,topQuery:p.tq,position:p.tqPos,liveSerpPos:p.liveTop&&p.liveTop.length?fmtPos(lp):'not checked',tqImpr:p.tqImpr,totalImpr:p.totalImpr,volume:p.vol}); }));
-    const cnt=b=>(buckets[b]||[]).length;
-    const nextStep=[
-      {step:'Pages ranking Top 1-3 — push with backlinks',deliverables:cnt('Top 1-3')+' pages',reference:'Rank Buckets',eta:''},
-      {step:'Pages ranking Top 4-10 — on-page + backlinks to page 1',deliverables:cnt('Top 4-10')+' pages',reference:'Rank Buckets',eta:''},
-      {step:'Pages on page 2 & 3 — content optimisation to push to page 1',deliverables:(cnt('Page 2 (11-20)')+cnt('Page 3 (21-30)'))+' pages',reference:'Rank Buckets',eta:''},
-      {step:'Consolidate feed pages cannibalizing already-ranking non-feed pages',deliverables:cannGsc.length+' redirects',reference:'Cannibalizing GSC',eta:''},
-      {step:'Consolidate feed pages cannibalizing each other',deliverables:cannFeed.length+' redirects',reference:'Cannibalizing Feed',eta:''},
-    ];
-    cannWB={domain,nextStep,cannGsc,cannFeed,winCmp,rankBuckets};
+    $('cannPhase').textContent='Fetching top-10 SERP for '+qorder.length+' unique queries'+(capped?' (capped)':'')+'…';
+    for(let i=0;i<qorder.length;i+=CH){ const chunk=qorder.slice(i,i+CH);
+      const r=await api('serp',{items:chunk.map(q=>({kw:q})),gl,num:10}); Object.assign(serp,r.serp||{});
+      done+=chunk.length; $('cannBar').style.width=(4+Math.round(done/Math.max(1,qorder.length)*80))+'%'; $('cannCounts').textContent=done+' / '+qorder.length+' SERP fetched'; }
+    pool.forEach(p=>{ p.serp=serp[nQ(p.tq)]||[]; p.set=new Set(p.serp); p.livePos=(()=>{const i=p.serp.findIndex(u=>u===p.nurl||u.split('?')[0]===p.nurl);return i<0?null:i+1;})(); });
+    // refresh side arrays to point at pooled objects (with sets)
+    const inPool=n=>byNurl[n.nurl]; const FA=(cross?feedPages:pool).map(inPool).filter(Boolean); const FB=(cross?mainPages:pool).map(inPool).filter(Boolean);
+    // 5) overlap pairs
+    $('cannPhase').textContent='Computing overlap (≥'+OV+') …'; $('cannBar').style.width='88%';
+    const winnerOf=(a,b)=>{ const la=a.livePos==null?999:a.livePos, lb=b.livePos==null?999:b.livePos; if(la!==lb)return la<lb?a:b; if(a.impr!==b.impr)return a.impr>b.impr?a:b; return a.tq.length<=b.tq.length?a:b; };
+    const overlapOf=(a,b)=>{ let o=0; const s=a.set.size<=b.set.size?a.set:b.set, big=a.set.size<=b.set.size?b.set:a.set; s.forEach(u=>{ if(big.has(u))o++; }); return o; };
+    const pairs=[]; const seenPair=new Set();
+    const consider=(a,b)=>{ if(a.nurl===b.nurl||!a.set.size||!b.set.size)return; const key=a.nurl<b.nurl?a.nurl+'|'+b.nurl:b.nurl+'|'+a.nurl; if(seenPair.has(key))return; seenPair.add(key);
+      const o=overlapOf(a,b); if(o<OV)return; const w=winnerOf(a,b), l=(w===a?b:a);
+      pairs.push({wUrl:w.url,wSide:w.side,wTq:w.tq,wImpr:w.impr,wGsc:w.gscPos,wLive:w.livePos==null?'not ranking':w.livePos,
+                  lUrl:l.url,lSide:l.side,lTq:l.tq,lImpr:l.impr,lGsc:l.gscPos,lLive:l.livePos==null?'not ranking':l.livePos,
+                  overlap:o, decision:(l.livePos!=null&&w.livePos==null)?'review — loser ranks live':'Redirect loser → winner'}); };
+    if(cross){ for(const a of FA) for(const b of FB) consider(a,b); }
+    else { for(let i=0;i<FA.length;i++) for(let j=i+1;j<FA.length;j++) consider(FA[i],FA[j]); }
+    pairs.sort((x,y)=> y.overlap-x.overlap || y.wImpr-x.wImpr);
+    // 6) redirect map — each loser to its single strongest winner
+    const bestWin={}; pairs.forEach(p=>{ const cur=bestWin[p.lUrl]; if(!cur || p.wImpr>cur.wImpr || (p.wImpr===cur.wImpr && p.overlap>cur.overlap)) bestWin[p.lUrl]={winner:p.wUrl,wSide:p.wSide,overlap:p.overlap,wImpr:p.wImpr,lImpr:p.lImpr,decision:p.decision}; });
+    const redirects=Object.keys(bestWin).map(l=>({current:l, target:bestWin[l].winner, winnerSide:bestWin[l].wSide, loserImpr:bestWin[l].lImpr, winnerImpr:bestWin[l].wImpr, overlap:bestWin[l].overlap, decision:bestWin[l].decision}));
+    cannWB={domain,mode,modeLabel:MODE_LABEL[mode],pairs,redirects,feedCount:feedPages.length,mainCount:mainPages.length,capped};
     $('cannBar').style.width='100%';
-    $('cannPhase').textContent='✓ Done — '+pages.length+' feed pages'+(gscOn?' (GSC connected)':' (GSC not configured — impressions unavailable)');
-    $('cannCounts').innerHTML='Cannibalizing GSC: <b>'+cannGsc.length+'</b> &nbsp; Cannibalizing Feed: <b>'+cannFeed.length+'</b> &nbsp; clusters: <b>'+winCmp.length+'</b>';
+    $('cannPhase').innerHTML='✓ '+MODE_LABEL[mode]+' — '+pairs.length+' cannibalizing pairs, '+redirects.length+' redirects'+(capped?' <span style="color:var(--bad)">(query cap '+QCAP+' hit — raised min-impressions recommended)</span>':'');
+    $('cannCounts').innerHTML='feed pages: <b>'+feedPages.length+'</b> &nbsp; main pages ≥'+minImpr+' impr: <b>'+mainPages.length+'</b> &nbsp; pairs: <b>'+pairs.length+'</b>';
     $('cannDl1').classList.remove('hidden'); $('cannDl2').classList.remove('hidden');
   }catch(e){ $('cannPhase').innerHTML='<span style="color:var(--bad)">'+e.message+'</span>'; }
-  $('cannRun').disabled=false;
-});
+  document.querySelectorAll('.cann-mode').forEach(b=>b.disabled=false);
+}
 function cannAOA(rows,cols){ return [cols.map(c=>c[1]), ...rows.map(r=>cols.map(c=>r[c[0]]??''))]; }
 $('cannDl1').addEventListener('click',()=>{ if(!cannWB)return; const wb=XLSX.utils.book_new();
   const add=(name,rows,cols)=>XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(cannAOA(rows,cols)),name);
-  add('Next Step',cannWB.nextStep,[['step','Next Step'],['deliverables','Pages / Deliverables'],['reference','Reference'],['eta','ETA']]);
-  add('Cannibalizing GSC',cannWB.cannGsc,[['current','Current URL'],['target','Redirect To URL'],['step','NEW Next Step'],['feedKw','feed keyword (assigned)'],['feedTopQ','feed GSC top query'],['feedGscPos','feed GSC pos'],['feedLivePos','feed LIVE Serper pos'],['feedTotalImpr','feed total impr'],['feedTqImpr','feed top-q impr'],['gscTopQ','target GSC top query'],['gscImpr','target total impr'],['tgtLivePos','target LIVE Serper pos'],['why','why'],['liveRetain','live-rank retain?']]);
-  add('Cannibalizing Feed',cannWB.cannFeed,[['current','Current URL'],['target','Redirect To URL (survivor)'],['step','Next Step'],['loserKw','loser keyword'],['loserGscPos','loser GSC pos'],['loserLivePos','loser LIVE Serper pos'],['loserTotalImpr','loser total impr'],['loserTqImpr','loser top-q impr'],['winnerKw','winner keyword (survivor)'],['winnerGscPos','winner GSC pos'],['winnerLivePos','winner LIVE Serper pos'],['winnerTotalImpr','winner total impr'],['winnerTqImpr','winner top-q impr'],['survivorWhy','why this survivor'],['liveRetain','live-rank note']]);
-  add('Winner Comparison',cannWB.winCmp,[['members','Cluster members'],['size','size'],['byTotalImpr','winner by TOTAL page impr'],['byTopQueryImpr','winner by TOP-QUERY impr'],['byTopQueryRank','winner by TOP-QUERY rank (GSC)'],['byTopQueryLiveRank','winner by TOP-QUERY rank (LIVE Serper)'],['agree','signals agree?']]);
-  add('Rank Buckets',cannWB.rankBuckets,[['bucket','Bucket'],['url','URL'],['topQuery','GSC top query'],['position','GSC avg position'],['liveSerpPos','LIVE Serper pos'],['tqImpr','top-q impr'],['totalImpr','total impr'],['volume','volume']]);
-  XLSX.writeFile(wb,'cannibalization_'+cannWB.domain.replace(/\./g,'_')+'.xlsx'); });
-$('cannDl2').addEventListener('click',()=>{ if(!cannWB)return; const cols=[['current','Current URL'],['target','Redirect To URL'],['step','NEW Next Step'],['feedKw','feed keyword'],['feedTopQ','feed GSC top query'],['feedLivePos','feed LIVE pos'],['gscTopQ','target GSC top query'],['tgtLivePos','target LIVE pos'],['why','why'],['liveRetain','live-rank retain?']];
-  const rows=[cols.map(c=>c[1]),...cannWB.cannGsc.map(r=>cols.map(c=>r[c[0]]??''))]; downloadCSV(rows.map(r=>r.map(csvCell).join(',')).join('\n')+'\n','cannibalizing_gsc.csv'); });
+  add('Cannibalizing pairs',cannWB.pairs,[['wUrl','Winner URL'],['wSide','winner side'],['wTq','winner top query'],['wImpr','winner impr'],['wGsc','winner GSC pos'],['wLive','winner LIVE pos'],['lUrl','Loser URL'],['lSide','loser side'],['lTq','loser top query'],['lImpr','loser impr'],['lGsc','loser GSC pos'],['lLive','loser LIVE pos'],['overlap','SERP overlap (same intent)'],['decision','Decision']]);
+  add('Redirect map',cannWB.redirects,[['current','Current (loser) URL'],['target','Redirect To (winner) URL'],['winnerSide','winner side'],['loserImpr','loser impr'],['winnerImpr','winner impr'],['overlap','SERP overlap'],['decision','Decision']]);
+  XLSX.writeFile(wb,'cannibalization_'+cannWB.mode+'_'+cannWB.domain.replace(/\./g,'_')+'.xlsx'); });
+$('cannDl2').addEventListener('click',()=>{ if(!cannWB)return; const cols=[['current','Current (loser) URL'],['target','Redirect To (winner) URL'],['winnerSide','winner side'],['loserImpr','loser impr'],['winnerImpr','winner impr'],['overlap','SERP overlap'],['decision','Decision']];
+  const rows=[cols.map(c=>c[1]),...cannWB.redirects.map(r=>cols.map(c=>r[c[0]]??''))]; downloadCSV(rows.map(r=>r.map(csvCell).join(',')).join('\n')+'\n','redirects_'+cannWB.mode+'.csv'); });
 
 /* ============================ helpers ============================ */
 const csvCell = v => { v=(v==null?'':String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };
