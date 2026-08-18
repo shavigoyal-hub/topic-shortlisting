@@ -299,7 +299,7 @@ async function runCann(mode){
     // 1) GSC (feed + non-feed top queries + impressions)
     $('cannPhase').textContent='Pulling 16-month GSC (feed + non-feed)…';
     const g=await api('gsc',{}); if(!g.available) throw new Error('GSC not available for '+domain+(g.note?' — '+g.note:''));
-    const feedG=g.feed||{};
+    const feedG=g.feed||{}; const qBP=g.queriesByPage||{};   // per-page {query: impressions} for co-occurrence
     // 2) Metabase feed pages (identity + assigned-keyword fallback)
     let metaPages=[]; if(mode!=='gg'){ const pg=await api('pages',{}); if(!pg.error) metaPages=(pg.pages||[]).map(p=>({...p,nurl:nUrl(p.url)})); }
     // build FEED page objects: Metabase pages (GSC top query, else assigned kw) + any GSC feed pages not in Metabase
@@ -338,6 +338,8 @@ async function runCann(mode){
     $('cannPhase').textContent='Computing overlap (≥'+OV+') + clustering…'; $('cannBar').style.width='88%';
     const winnerOf=(a,b)=>{ const la=a.livePos==null?999:a.livePos, lb=b.livePos==null?999:b.livePos; if(la!==lb)return la<lb?a:b; if(a.impr!==b.impr)return a.impr>b.impr?a:b; return a.tq.length<=b.tq.length?a:b; };
     const overlapOf=(a,b)=>{ let o=0; const s=a.set.size<=b.set.size?a.set:b.set, big=a.set.size<=b.set.size?b.set:a.set; s.forEach(u=>{ if(big.has(u))o++; }); return o; };
+    // co-occurrence: a real shared query where BOTH pages draw GSC impressions (best = highest min-impr)
+    const sharedQ=(a,b)=>{ const ma=qBP[a.nurl]||{}, mb=qBP[b.nurl]||{}; let best=null; for(const q in ma){ if(mb[q]!=null){ const mn=Math.min(ma[q],mb[q]); if(!best||mn>best.mn) best={q,mn,ai:ma[q],bi:mb[q]}; } } return best; };
     const node={}; const addNode=p=>{ if(p&&p.set&&p.set.size) node[p.nurl]=p; };
     const adj={}; const link=(a,b)=>{ (adj[a]=adj[a]||[]).push(b); (adj[b]=adj[b]||[]).push(a); };
     if(cross){ FA.forEach(addNode); FB.forEach(addNode); for(const a of FA) for(const b of FB){ if(!a||!b||a.nurl===b.nurl||!a.set.size||!b.set.size)continue; if(overlapOf(a,b)>=OV) link(a.nurl,b.nurl); } }
@@ -347,13 +349,14 @@ async function runCann(mode){
     // one winner per cluster; every other member -> that single winner
     const pairs=[];
     clusters.forEach(mem=>{ let w=mem[0]; for(const p of mem) w=winnerOf(w,p);
-      mem.forEach(p=>{ if(p.nurl===w.nurl)return; const o=overlapOf(p,w);
+      mem.forEach(p=>{ if(p.nurl===w.nurl)return; const o=overlapOf(p,w); const sh=sharedQ(w,p);
         pairs.push({wUrl:w.url,wSide:w.side,wTq:w.tq,wImpr:w.impr,wGsc:w.gscPos,wLive:w.livePos==null?'not ranking':w.livePos,
                     lUrl:p.url,lSide:p.side,lTq:p.tq,lImpr:p.impr,lGsc:p.gscPos,lLive:p.livePos==null?'not ranking':p.livePos,
-                    overlap:o, clusterSize:mem.length, decision:(p.livePos!=null&&w.livePos==null)?'review — cannibalising URL ranks live':'Redirect cannibalising → primary'}); }); });
+                    overlap:o, clusterSize:mem.length, coocc:sh?'yes':'no — SERP look-alike', sharedQuery:sh?sh.q:'', pShared:sh?sh.ai:'', cShared:sh?sh.bi:'',
+                    decision:(p.livePos!=null&&w.livePos==null)?'review — cannibalising URL ranks live':'Redirect cannibalising → primary'}); }); });
     pairs.sort((x,y)=> y.wImpr-x.wImpr || y.overlap-x.overlap);
     // 6) redirect map — one row per loser (already unique: one winner per cluster)
-    const redirects=pairs.map(p=>({current:p.lUrl,target:p.wUrl,winnerSide:p.wSide,loserImpr:p.lImpr,winnerImpr:p.wImpr,overlap:p.overlap,decision:p.decision}));
+    const redirects=pairs.map(p=>({current:p.lUrl,target:p.wUrl,winnerSide:p.wSide,loserImpr:p.lImpr,winnerImpr:p.wImpr,overlap:p.overlap,coocc:p.coocc,sharedQuery:p.sharedQuery,decision:p.decision}));
     const clusterCount=clusters.length;
     cannWB={domain,mode,modeLabel:MODE_LABEL[mode],pairs,redirects,clusterCount,feedCount:feedPages.length,mainCount:mainPages.length,capped};
     $('cannBar').style.width='100%';
@@ -366,10 +369,10 @@ async function runCann(mode){
 function cannAOA(rows,cols){ return [cols.map(c=>c[1]), ...rows.map(r=>cols.map(c=>r[c[0]]??''))]; }
 $('cannDl1').addEventListener('click',()=>{ if(!cannWB)return; const wb=XLSX.utils.book_new();
   const add=(name,rows,cols)=>XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(cannAOA(rows,cols)),name);
-  add('Cannibalizing pairs',cannWB.pairs,[['wUrl','Primary URL'],['wSide','primary side'],['wTq','primary top query'],['wImpr','primary impr'],['wGsc','primary GSC pos'],['wLive','primary LIVE pos'],['lUrl','Cannibalising URL'],['lSide','cannibalising side'],['lTq','cannibalising top query'],['lImpr','cannibalising impr'],['lGsc','cannibalising GSC pos'],['lLive','cannibalising LIVE pos'],['overlap','SERP overlap (same intent)'],['clusterSize','cluster size'],['decision','Decision']]);
-  add('Redirect map',cannWB.redirects,[['current','Cannibalising URL'],['target','Redirect To (Primary) URL'],['winnerSide','primary side'],['loserImpr','cannibalising impr'],['winnerImpr','primary impr'],['overlap','SERP overlap'],['decision','Decision']]);
+  add('Cannibalizing pairs',cannWB.pairs,[['wUrl','Primary URL'],['wSide','primary side'],['wTq','primary top query'],['wImpr','primary impr'],['wGsc','primary GSC pos'],['wLive','primary LIVE pos'],['lUrl','Cannibalising URL'],['lSide','cannibalising side'],['lTq','cannibalising top query'],['lImpr','cannibalising impr'],['lGsc','cannibalising GSC pos'],['lLive','cannibalising LIVE pos'],['overlap','SERP overlap (same intent)'],['coocc','co-occurrence (both rank for a shared query?)'],['sharedQuery','shared query (GSC)'],['pShared','primary impr on shared q'],['cShared','cannibalising impr on shared q'],['clusterSize','cluster size'],['decision','Decision']]);
+  add('Redirect map',cannWB.redirects,[['current','Cannibalising URL'],['target','Redirect To (Primary) URL'],['winnerSide','primary side'],['loserImpr','cannibalising impr'],['winnerImpr','primary impr'],['overlap','SERP overlap'],['coocc','co-occurrence?'],['sharedQuery','shared query (GSC)'],['decision','Decision']]);
   XLSX.writeFile(wb,'cannibalization_'+cannWB.mode+'_'+cannWB.domain.replace(/\./g,'_')+'.xlsx'); });
-$('cannDl2').addEventListener('click',()=>{ if(!cannWB)return; const cols=[['current','Cannibalising URL'],['target','Redirect To (Primary) URL'],['winnerSide','primary side'],['loserImpr','cannibalising impr'],['winnerImpr','primary impr'],['overlap','SERP overlap'],['decision','Decision']];
+$('cannDl2').addEventListener('click',()=>{ if(!cannWB)return; const cols=[['current','Cannibalising URL'],['target','Redirect To (Primary) URL'],['winnerSide','primary side'],['loserImpr','cannibalising impr'],['winnerImpr','primary impr'],['overlap','SERP overlap'],['coocc','co-occurrence?'],['sharedQuery','shared query (GSC)'],['decision','Decision']];
   const rows=[cols.map(c=>c[1]),...cannWB.redirects.map(r=>cols.map(c=>r[c[0]]??''))]; downloadCSV(rows.map(r=>r.map(csvCell).join(',')).join('\n')+'\n','redirects_'+cannWB.mode+'.csv'); });
 
 /* ============================ helpers ============================ */
