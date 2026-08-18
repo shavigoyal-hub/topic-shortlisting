@@ -91,7 +91,7 @@
   <div class="brand">Gushwork<small>SEO REPORTING</small></div>
   <nav>
     <a id="navEnrich" class="active" onclick="show('enrich')">AKR Enricher</a>
-    <a id="navCann" onclick="show('cann')">Cannibalization</a>
+    <a id="navCann" class="hidden" onclick="show('cann')">Cannibalization <span style="color:var(--yellow);font-size:11px">admin</span></a>
     <a id="navHistory" onclick="show('history')">History</a>
   </nav>
 
@@ -253,7 +253,7 @@ function initAuth(){
     catch(_){ $('gateErr').textContent='This browser blocks secure crypto — open over https.'; }
   };
 }
-function showAdmin(){ $('adminLocked').classList.add('hidden'); $('adminPanel').classList.remove('hidden'); }
+function showAdmin(){ $('adminLocked').classList.add('hidden'); $('adminPanel').classList.remove('hidden'); $('navCann').classList.remove('hidden'); }
 $('adminUnlock').onclick = async () => {
   try{ if(await sha256($('adminPw').value)===ADMIN_HASH){ localStorage.setItem(ADMIN_KEY,'1'); showAdmin(); } else { $('adminErr').textContent='Wrong admin password'; } }catch(_){ $('adminErr').textContent='crypto blocked'; }
 };
@@ -264,6 +264,7 @@ fetch('/api/version').then(function(r){return r.json();}).then(function(v){ if(v
 
 /* ============================ nav ============================ */
 function show(v){
+  if(v==='cann' && localStorage.getItem(ADMIN_KEY)!=='1') v='enrich';   // cannibalization is admin-only
   $('view-enrich').classList.toggle('hidden', v!=='enrich');
   $('view-cann').classList.toggle('hidden', v!=='cann');
   $('view-history').classList.toggle('hidden', v!=='history');
