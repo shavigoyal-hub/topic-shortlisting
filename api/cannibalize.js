@@ -114,8 +114,9 @@ module.exports = async (req, res) => {
       const feedR = await gscComposio({ site_url: site, start_date: dt(start), end_date: dt(now), dimensions: ['page', 'query'], row_limit: 5000, data_state: 'final', dimension_filter_groups: [{ filters: [{ dimension: 'page', operator: 'contains', expression: 'feeds' }] }] });
       const nfR = await gscComposio({ site_url: site, start_date: dt(start), end_date: dt(now), dimensions: ['page', 'query'], row_limit: 5000, data_state: 'final', dimension_filter_groups: [{ filters: [{ dimension: 'page', operator: 'notContains', expression: 'feeds' }] }] });
       if (!feedR.rows.length && !nfR.rows.length) { res.statusCode = 200; return res.end(JSON.stringify({ available: false, note: 'Composio returned no GSC rows — check COMPOSIO_GSC_ACCOUNT_ID has access to ' + site })); }
-      const BRAND = new RegExp(domain.replace(/\..*/, '') + '|site:', 'i');
-      const isJunk = q => BRAND.test(q) || /^[\d\W]+$/.test(q);
+      // brand = domain root ("hubengage"); match it even when the query spaces/hyphens it ("hub engage", "hub-engage")
+      const brandRoot = domain.replace(/\..*/, '').toLowerCase();
+      const isJunk = q => { const ql = String(q).toLowerCase(); return ql.includes('site:') || ql.replace(/[\s\-_]/g, '').includes(brandRoot) || /^[\d\W]+$/.test(q); };
       // feed pages: total impressions + top non-branded query (real query the page earns on)
       const ftot = {}, fbest = {};
       (feedR.rows || []).forEach(r => { const pg = norm(r.keys[0]), q = r.keys[1]; ftot[pg] = (ftot[pg] || 0) + r.impressions; if (isJunk(q)) return; const b = fbest[pg]; if (!b || r.impressions > b.impr) fbest[pg] = { query: q, impr: r.impressions, pos: Math.round(r.position * 10) / 10 }; });
