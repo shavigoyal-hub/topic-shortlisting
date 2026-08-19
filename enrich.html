@@ -249,13 +249,13 @@ function openApp(){ $('gate').classList.add('hidden'); $('app').classList.remove
 function initAuth(){
   if(localStorage.getItem(AUTH_KEY)==='1'){ openApp(); }
   $('gateForm').onsubmit = async e => { e.preventDefault();
-    try{ if(await sha256($('gatePw').value)===PW_HASH){ localStorage.setItem(AUTH_KEY,'1'); openApp(); } else { $('gateErr').textContent='Incorrect password'; $('gatePw').select(); } }
+    try{ if(await sha256($('gatePw').value.trim())===PW_HASH){ localStorage.setItem(AUTH_KEY,'1'); openApp(); } else { $('gateErr').textContent='Incorrect password'; $('gatePw').select(); } }
     catch(_){ $('gateErr').textContent='This browser blocks secure crypto — open over https.'; }
   };
 }
 function showAdmin(){ $('adminLocked').classList.add('hidden'); $('adminPanel').classList.remove('hidden'); $('navCann').classList.remove('hidden'); }
 $('adminUnlock').onclick = async () => {
-  try{ if(await sha256($('adminPw').value)===ADMIN_HASH){ localStorage.setItem(ADMIN_KEY,'1'); showAdmin(); } else { $('adminErr').textContent='Wrong admin password'; } }catch(_){ $('adminErr').textContent='crypto blocked'; }
+  try{ if(await sha256($('adminPw').value.trim())===ADMIN_HASH){ localStorage.setItem(ADMIN_KEY,'1'); showAdmin(); } else { $('adminErr').textContent='Wrong admin password'; } }catch(_){ $('adminErr').textContent='crypto blocked'; }
 };
 $('clearHist').onclick = () => { if(confirm('Clear all saved history on this browser?')){ localStorage.removeItem('akrHistory'); renderHistory(); alert('History cleared.'); } };
 $('signOut').onclick = () => { localStorage.removeItem(AUTH_KEY); localStorage.removeItem(ADMIN_KEY); location.reload(); };
