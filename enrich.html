@@ -182,25 +182,14 @@
       </div>
       <div class="rowflex">
         <div class="field" style="max-width:200px">
-          <label>SERP location</label>
+          <label>SERP location <span class="hint">for live-rank check</span></label>
           <select id="cannGeo"><option value="us">United States</option><option value="in">India</option><option value="gb">United Kingdom</option><option value="au">Australia</option><option value="ca">Canada</option><option value="ae">UAE</option><option value="sg">Singapore</option></select>
         </div>
-        <div class="field" style="max-width:150px">
-          <label>Min SERP overlap</label>
-          <select id="cannOverlap"><option value="4">4</option><option value="3">3</option><option value="5">5</option></select>
-        </div>
-        <div class="field" style="max-width:170px">
-          <label>Min impressions <span class="hint">skip dead pages</span></label>
-          <input type="number" id="cannMinImpr" value="10" min="0" style="width:100%">
-        </div>
       </div>
-      <label style="margin-top:6px">Mode — what to check against what</label>
-      <div class="rowflex" style="gap:8px;flex-wrap:wrap">
-        <button class="primary cann-mode" data-mode="ff">Feed × Feed</button>
-        <button class="primary cann-mode" data-mode="fg">Feed × GSC (main site)</button>
-        <button class="primary cann-mode" data-mode="gg">GSC × GSC (main site self)</button>
-        <button class="primary cann-mode" data-mode="all">All (every page × every page)</button>
+      <div class="rowflex" style="gap:8px;flex-wrap:wrap;margin-top:6px">
+        <button class="primary" id="cannRunBoth">Run cannibalization analysis</button>
       </div>
+      <div class="note" style="margin-top:8px">Two checks: <b>Duplicate Intent</b> (all pages sharing ≥3 queries) and <b>Active Cannibalization</b> (feed↔main splits — ≥40% balanced, both ranking ≤20, confirmed on live Google). Weak = &lt;10 impressions. Both apply the <b>unique-value guard</b>: never redirect a page that ranks for queries no other page owns.</div>
       <div class="note" style="margin-top:8px">GSC/All modes fetch one live SERP per unique top query — can be a few hundred Serper calls on large sites (cached after the first run).</div>
     </div>
     <div class="card hidden" id="cannProgress" style="margin-top:16px">
@@ -274,106 +263,94 @@ function show(v){
   if(v==='history') renderHistory();
 }
 
-/* ============================ cannibalization (mode-aware) ============================
- * Each page -> its top GSC query (feed falls back to Metabase keyword) -> top-10 SERP.
- * Two pages cannibalize when their top-10 URL sets overlap >= threshold (same intent).
- * Winner = better live rank (own URL position in its top-10); impressions break ties.
- * Modes: ff (feed×feed), fg (feed×main), gg (main×main), all (every page). */
+/* ============================ cannibalization (two-method layered) ============================
+ * Method 1 — Duplicate Intent (all pages sharing >=3 queries) + unique-value guard.
+ * Method 2 — Active Cannibalization (feed<->main: co-occurrence, >=40% balance, position gate <=20,
+ *            unique-value guard, live-rank winner). Weak = <10 impressions. */
 const nUrl = u => String(u||'').trim().replace(/^https?:\/\//i,'').replace(/^www\./i,'').replace(/[?#].*$/,'').replace(/\/+$/,'').toLowerCase();
 const nQ = q => String(q||'').toLowerCase().replace(/\s+/g,' ').trim();
-const isFeedU = u => /\/feeds\//.test(u) || /(^|\.)feeds\./.test(u);
-const MODE_LABEL={ff:'Feed × Feed',fg:'Feed × GSC (main)',gg:'GSC × GSC (main self)',all:'All pages'};
-const QCAP=600;   // max unique SERP fetches per run
+const isFeedN = nu => /\/feeds\//.test(nu) || /(^|\.)feeds\./.test(nu);
 let cannWB=null;
-document.querySelectorAll('.cann-mode').forEach(b=> b.addEventListener('click',()=>runCann(b.dataset.mode)));
-
-async function runCann(mode){
+{ const _b=document.getElementById('cannRunBoth'); if(_b) _b.addEventListener('click', runCannAnalysis); }
+async function runCannAnalysis(){
   const domain=$('cannDomain').value.trim().toLowerCase().replace(/^https?:\/\//,'').replace(/^www\./,'').replace(/\/.*$/,'');
   if(!domain){ alert('Enter a domain'); return; }
-  const gl=$('cannGeo').value, OV=Number($('cannOverlap').value), minImpr=Number($('cannMinImpr').value)||0;
-  document.querySelectorAll('.cann-mode').forEach(b=>b.disabled=true);
-  $('cannProgress').classList.remove('hidden'); $('cannDl1').classList.add('hidden'); $('cannDl2').classList.add('hidden');
-  $('cannBar').style.width='4%'; $('cannCounts').textContent='';
+  const gl=$('cannGeo').value;
+  const WEAK=10, SIM=0.40, POSGATE=20, WELL=10, COVER=20, SHARED=3;
+  $('cannRunBoth').disabled=true; $('cannProgress').classList.remove('hidden'); $('cannDl1').classList.add('hidden'); $('cannDl2').classList.add('hidden');
+  $('cannBar').style.width='8%'; $('cannCounts').textContent='';
   const api=(step,extra)=>fetch('/api/cannibalize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({step,domain},extra))}).then(r=>r.json());
   try{
-    // 1) GSC (feed + non-feed top queries + impressions)
-    $('cannPhase').textContent='Pulling 16-month GSC (feed + non-feed)…';
+    $('cannPhase').textContent='Pulling 16-month GSC (queries + positions)…';
     const g=await api('gsc',{}); if(!g.available) throw new Error('GSC not available for '+domain+(g.note?' — '+g.note:''));
-    const feedG=g.feed||{}; const qBP=g.queriesByPage||{};   // per-page {query: impressions} for co-occurrence
-    // 2) Metabase feed pages (identity + assigned-keyword fallback)
-    let metaPages=[]; if(mode!=='gg'){ const pg=await api('pages',{}); if(!pg.error) metaPages=(pg.pages||[]).map(p=>({...p,nurl:nUrl(p.url)})); }
-    // build FEED page objects: Metabase pages (GSC top query, else assigned kw) + any GSC feed pages not in Metabase
-    const feedByNurl={};
-    metaPages.forEach(p=>{ let gg=feedG[p.nurl]; if(!gg){ const slug=p.nurl.split('/').pop(); const hit=Object.keys(feedG).find(k=>k.endsWith('/'+slug)); if(hit)gg=feedG[hit]; }
-      feedByNurl[p.nurl]={url:(gg&&gg.url)||p.url,nurl:p.nurl,side:'feed',tq:(gg&&gg.top_query)||p.kw||'',impr:gg?gg.total_impr:0,gscPos:gg?gg.tq_pos:null}; });   // prefer exact GSC URL for display
-    Object.keys(feedG).forEach(nu=>{ if(feedByNurl[nu]||!feedG[nu].top_query)return; feedByNurl[nu]={url:feedG[nu].url||('https://'+nu),nurl:nu,side:'feed',tq:feedG[nu].top_query,impr:feedG[nu].total_impr,gscPos:feedG[nu].tq_pos}; });
-    const feedPages=Object.values(feedByNurl).filter(p=>p.tq);
-    // build MAIN page objects (non-feed, >= minImpr) — display the exact GSC URL (n.url), match on the normalized key
-    const mainPages=(g.nonfeed||[]).filter(n=>{const k=n.nurl||nUrl(n.url);return n.top_query && n.total_impr>=minImpr && k.startsWith(domain) && !isFeedU(k);})
-      .map(n=>({url:n.url||('https://'+(n.nurl||nUrl(n.url))),nurl:n.nurl||nUrl(n.url),side:'main',tq:n.top_query,impr:n.total_impr,gscPos:(n.top_query_pos!=null?n.top_query_pos:null)}));
-    // 3) pick the pool / sides for the mode
-    let sideA,sideB,cross=false;
-    if(mode==='ff'){ sideA=sideB=feedPages; }
-    else if(mode==='gg'){ sideA=sideB=mainPages; }
-    else if(mode==='fg'){ sideA=feedPages; sideB=mainPages; cross=true; }
-    else { sideA=sideB=feedPages.concat(mainPages); }
-    if(!sideA.length||!sideB.length) throw new Error('Not enough pages for '+MODE_LABEL[mode]+' (feed '+feedPages.length+', main '+mainPages.length+').');
-    // participants = every page that could be compared
-    let pool = cross ? feedPages.concat(mainPages) : sideA;
-    const byNurl={}; pool.forEach(p=>byNurl[p.nurl]=p); pool=Object.values(byNurl);
-    // 4) SERP top-10 per unique top query (bounded by QCAP — keep highest-impression pages)
-    pool.sort((a,b)=>b.impr-a.impr);
-    let qorder=[]; const seenQ=new Set();
-    for(const p of pool){ const q=nQ(p.tq); if(q && !seenQ.has(q)){ seenQ.add(q); qorder.push(q); } }
-    let capped=false; if(qorder.length>QCAP){ capped=true; const keep=new Set(qorder.slice(0,QCAP)); pool=pool.filter(p=>keep.has(nQ(p.tq))); qorder=qorder.slice(0,QCAP); }
-    const serp={}; const CH=15; let done=0;
-    $('cannPhase').textContent='Fetching top-10 SERP for '+qorder.length+' unique queries'+(capped?' (capped)':'')+'…';
-    for(let i=0;i<qorder.length;i+=CH){ const chunk=qorder.slice(i,i+CH);
-      const r=await api('serp',{items:chunk.map(q=>({kw:q})),gl,num:10}); Object.assign(serp,r.serp||{});
-      done+=chunk.length; $('cannBar').style.width=(4+Math.round(done/Math.max(1,qorder.length)*80))+'%'; $('cannCounts').textContent=done+' / '+qorder.length+' SERP fetched'; }
-    pool.forEach(p=>{ p.serp=serp[nQ(p.tq)]||[]; p.set=new Set(p.serp); p.livePos=(()=>{const i=p.serp.findIndex(u=>u===p.nurl||u.split('?')[0]===p.nurl);return i<0?null:i+1;})(); });
-    // refresh side arrays to point at pooled objects (with sets)
-    const inPool=n=>byNurl[n.nurl]; const FA=(cross?feedPages:pool).map(inPool).filter(Boolean); const FB=(cross?mainPages:pool).map(inPool).filter(Boolean);
-    // 5) overlap edges -> clusters (connected components) -> ONE winner per cluster
-    $('cannPhase').textContent='Computing overlap (≥'+OV+') + clustering…'; $('cannBar').style.width='88%';
-    const winnerOf=(a,b)=>{ const la=a.livePos==null?999:a.livePos, lb=b.livePos==null?999:b.livePos; if(la!==lb)return la<lb?a:b; if(a.impr!==b.impr)return a.impr>b.impr?a:b; return a.tq.length<=b.tq.length?a:b; };
-    const overlapOf=(a,b)=>{ let o=0; const s=a.set.size<=b.set.size?a.set:b.set, big=a.set.size<=b.set.size?b.set:a.set; s.forEach(u=>{ if(big.has(u))o++; }); return o; };
-    // co-occurrence: a real shared query where BOTH pages draw GSC impressions (best = highest min-impr)
-    const sharedQ=(a,b)=>{ const ma=qBP[a.nurl]||{}, mb=qBP[b.nurl]||{}; let best=null; for(const q in ma){ if(mb[q]!=null){ const mn=Math.min(ma[q],mb[q]); if(!best||mn>best.mn) best={q,mn,ai:ma[q],bi:mb[q]}; } } return best; };
-    const node={}; const addNode=p=>{ if(p&&p.set&&p.set.size) node[p.nurl]=p; };
-    const adj={}; const link=(a,b)=>{ (adj[a]=adj[a]||[]).push(b); (adj[b]=adj[b]||[]).push(a); };
-    if(cross){ FA.forEach(addNode); FB.forEach(addNode); for(const a of FA) for(const b of FB){ if(!a||!b||a.nurl===b.nurl||!a.set.size||!b.set.size)continue; if(overlapOf(a,b)>=OV) link(a.nurl,b.nurl); } }
-    else { FA.forEach(addNode); for(let i=0;i<FA.length;i++)for(let j=i+1;j<FA.length;j++){ const a=FA[i],b=FA[j]; if(!a.set.size||!b.set.size)continue; if(overlapOf(a,b)>=OV) link(a.nurl,b.nurl); } }
-    const seenN={}, clusters=[];
-    Object.keys(adj).forEach(n=>{ if(seenN[n])return; const st=[n],mem=[]; while(st.length){ const x=st.pop(); if(seenN[x])continue; seenN[x]=1; if(node[x])mem.push(node[x]); (adj[x]||[]).forEach(y=>{ if(!seenN[y])st.push(y); }); } if(mem.length>=2)clusters.push(mem); });
-    // one winner per cluster; every other member -> that single winner
-    const pairs=[];
-    clusters.forEach(mem=>{ let w=mem[0]; for(const p of mem) w=winnerOf(w,p);
-      mem.forEach(p=>{ if(p.nurl===w.nurl)return; const o=overlapOf(p,w); const sh=sharedQ(w,p);
-        pairs.push({wUrl:w.url,wSide:w.side,wTq:w.tq,wImpr:w.impr,wGsc:w.gscPos,wLive:w.livePos==null?'not ranking':w.livePos,
-                    lUrl:p.url,lSide:p.side,lTq:p.tq,lImpr:p.impr,lGsc:p.gscPos,lLive:p.livePos==null?'not ranking':p.livePos,
-                    overlap:o, clusterSize:mem.length, coocc:sh?'yes':'no — SERP look-alike', sharedQuery:sh?sh.q:'', pShared:sh?sh.ai:'', cShared:sh?sh.bi:'',
-                    decision:(p.livePos!=null&&w.livePos==null)?'review — cannibalising URL ranks live':'Redirect cannibalising → primary'}); }); });
-    pairs.sort((x,y)=> y.wImpr-x.wImpr || y.overlap-x.overlap);
-    // 6) redirect map — one row per loser (already unique: one winner per cluster)
-    const redirects=pairs.map(p=>({current:p.lUrl,target:p.wUrl,winnerSide:p.wSide,loserImpr:p.lImpr,winnerImpr:p.wImpr,overlap:p.overlap,coocc:p.coocc,sharedQuery:p.sharedQuery,decision:p.decision}));
-    const clusterCount=clusters.length;
-    cannWB={domain,mode,modeLabel:MODE_LABEL[mode],pairs,redirects,clusterCount,feedCount:feedPages.length,mainCount:mainPages.length,capped};
+    const qBP=g.queriesByPage||{}; const urlBy={}, totBy={};
+    Object.entries(g.feed||{}).forEach(([nu,v])=>{ urlBy[nu]=v.url||('https://'+nu); totBy[nu]=v.total_impr||0; });
+    (g.nonfeed||[]).forEach(n=>{ const nu=n.nurl||nUrl(n.url); urlBy[nu]=n.url||('https://'+nu); totBy[nu]=n.total_impr||0; });
+    const pages=Object.keys(qBP);
+    pages.forEach(nu=>{ if(!urlBy[nu])urlBy[nu]='https://'+nu; if(totBy[nu]==null){ let t=0; const m=qBP[nu]; for(const q in m)t+=m[q][0]; totBy[nu]=t; } });
+    const disp=nu=>urlBy[nu]||('https://'+nu);
+    const typeOf=(a,b)=> isFeedN(a)!==isFeedN(b)?'feed ↔ existing':(isFeedN(a)?'feed ↔ feed':'main ↔ main');
+    const uniqWell=(cann,prim)=>{ const out=[]; const cm=qBP[cann]||{},pm=qBP[prim]||{}; for(const q in cm){ const e=cm[q]; if(e[1]<=WELL&&e[0]>=WEAK){ const pc=pm[q]; if(!pc||pc[1]>COVER) out.push([q,e[1],e[0]]); } } out.sort((a,b)=>b[2]-a[2]); return out; };
+    $('cannPhase').textContent='Method 1 — duplicate intent…'; $('cannBar').style.width='40%';
+    const q2p={};
+    pages.forEach(nu=>{ const m=qBP[nu]; for(const q in m){ if(m[q][0]>=WEAK)(q2p[q]=q2p[q]||[]).push(nu); } });
+    const pairSh={};
+    Object.keys(q2p).forEach(q=>{ const ps=q2p[q]; for(let i=0;i<ps.length;i++)for(let j=i+1;j<ps.length;j++){ const a=ps[i],b=ps[j]; const k=a<b?a+'|'+b:b+'|'+a; (pairSh[k]=pairSh[k]||[]).push(q); } });
+    const m1=[];
+    Object.keys(pairSh).forEach(k=>{ const sh=pairSh[k]; if(sh.length<SHARED)return; const [a,b]=k.split('|'); const prim=totBy[a]>=totBy[b]?a:b, cann=prim===a?b:a; const uq=uniqWell(cann,prim);
+      sh.sort((x,y)=>((qBP[a][y]?qBP[a][y][0]:0)+(qBP[b][y]?qBP[b][y][0]:0))-((qBP[a][x]?qBP[a][x][0]:0)+(qBP[b][x]?qBP[b][x][0]:0)));
+      m1.push({primary:disp(prim),duplicate:disp(cann),type:typeOf(a,b),shared:sh.length,examples:sh.slice(0,4).map(q=>q+' ('+qBP[a][q][0]+'/'+qBP[b][q][0]+')').join('; '),verdict:uq.length?('KEEP — duplicate owns other rankings: '+uq[0][0]+' @'+uq[0][1]):'Safe to consolidate → primary',_o:sh.length}); });
+    m1.sort((x,y)=>y._o-x._o);
+    $('cannPhase').textContent='Method 2 — active cannibalization…'; $('cannBar').style.width='55%';
+    const cand=[];
+    Object.keys(q2p).forEach(q=>{ const ps=q2p[q]; for(let i=0;i<ps.length;i++)for(let j=i+1;j<ps.length;j++){ const a=ps[i],b=ps[j]; if(isFeedN(a)===isFeedN(b))continue;
+      const ia=qBP[a][q][0],ib=qBP[b][q][0]; const bal=Math.min(ia,ib)/Math.max(ia,ib); if(bal<SIM)continue;
+      const prim=totBy[a]>=totBy[b]?a:b, cann=prim===a?b:a;
+      cand.push({q,prim,cann,pip:qBP[prim][q][0],ppos:qBP[prim][q][1],cip:qBP[cann][q][0],cpos:qBP[cann][q][1],bal}); } });
+    const gateQ=[...new Set(cand.filter(c=>c.ppos<=POSGATE&&c.cpos<=POSGATE).map(c=>c.q))];
+    $('cannPhase').textContent='Method 2 — live-rank check ('+gateQ.length+' queries)…'; $('cannBar').style.width='72%';
+    const live={}; const CH=15; let dn=0;
+    for(let i=0;i<gateQ.length;i+=CH){ const chunk=gateQ.slice(i,i+CH); const r=await api('serp',{items:chunk.map(q=>({kw:q})),gl,num:20}); Object.assign(live,r.serp||{}); dn+=chunk.length; $('cannBar').style.width=(72+Math.round(dn/Math.max(1,gateQ.length)*20))+'%'; $('cannCounts').textContent=dn+' / '+gateQ.length+' live checks'; }
+    const livePos=(q,nu)=>{ const lt=live[nQ(q)]||live[q]||[]; const i=lt.findIndex(u=>u===nu||u.split('?')[0]===nu); return i<0?null:i+1; };
+    const m2=cand.map(c=>{ const gate=c.ppos<=POSGATE&&c.cpos<=POSGATE; const uq=uniqWell(c.cann,c.prim); let pl=null,cl=null,winner='',basis='';
+      if(gate){ pl=livePos(c.q,c.prim); cl=livePos(c.q,c.cann); if(pl!=null||cl!=null){ winner=((pl||999)<=(cl||999))?c.prim:c.cann; basis='live rank ('+(pl||'—')+' vs '+(cl||'—')+')'; } else { winner=c.prim; basis='impressions (neither live top-20)'; } }
+      let verdict; if(!gate)verdict='DROP — incidental (ranks >'+POSGATE+' on query)'; else if(uq.length)verdict='KEEP both — cannibalising owns distinct queries'; else verdict='REDIRECT cannibalising → primary';
+      return {query:c.q,primary:disp(c.prim),p_impr:c.pip,p_pos:c.ppos,p_live:pl==null?'—':pl,cann:disp(c.cann),c_impr:c.cip,c_pos:c.cpos,c_live:cl==null?'—':cl,balance:Math.round(c.bal*100)+'%',winner:winner?disp(winner):'—',basis,unique:uq.length?(uq[0][0]+' (@'+uq[0][1]+')'):'—',verdict}; });
+    const ord={REDIRECT:0,KEEP:1,DROP:2}; m2.sort((x,y)=>(ord[x.verdict.split(' ')[0]]??3)-(ord[y.verdict.split(' ')[0]]??3));
+    $('cannPhase').textContent='Building query audit…'; $('cannBar').style.width='94%';
+    const qAll={};
+    pages.forEach(nu=>{ const m=qBP[nu]; for(const q in m){ (qAll[q]=qAll[q]||[]).push([nu,m[q][0],m[q][1]]); } });
+    const audit=[];
+    Object.keys(qAll).forEach(q=>{ const rs=qAll[q]; const fs=rs.filter(r=>isFeedN(r[0])).sort((a,b)=>b[1]-a[1]); const mn=rs.filter(r=>!isFeedN(r[0])).sort((a,b)=>b[1]-a[1]); if(!fs.length||!mn.length)return;
+      let ok=false; for(const f of fs){ for(const m of mn){ const bal=Math.min(f[1],m[1])/Math.max(f[1],m[1]); if(f[1]>=WEAK&&m[1]>=WEAK&&bal>=SIM&&f[2]<=POSGATE&&m[2]<=POSGATE){ok=true;break;} } if(ok)break; }
+      const f=fs[0],m=mn[0],bal=Math.min(f[1],m[1])/Math.max(f[1],m[1]);
+      let why=''; if(!ok){ if(f[1]<WEAK&&m[1]<WEAK)why='both weak (<'+WEAK+' impr)'; else if(f[1]<WEAK)why='feed weak ('+f[1]+'<'+WEAK+')'; else if(m[1]<WEAK)why='non-feed weak ('+m[1]+'<'+WEAK+')'; else if(bal<SIM)why='lopsided ('+Math.round(bal*100)+'%<40%)'; else why='incidental (feed@'+f[2]+' / non-feed@'+m[2]+', one ranks >'+POSGATE+')'; }
+      audit.push({query:q,feed_page:disp(f[0]),feed_impr:f[1],feed_pos:f[2],nonfeed_page:disp(m[0]),nonfeed_impr:m[1],nonfeed_pos:m[2],balance:Math.round(bal*100)+'%',verdict:ok?'CANNIBALIZATION':'not',why}); });
+    audit.sort((x,y)=>((x.verdict!=='CANNIBALIZATION')-(y.verdict!=='CANNIBALIZATION'))||(y.feed_impr-x.feed_impr));
+    const m2r=m2.filter(r=>r.verdict.startsWith('REDIRECT')).length, m2k=m2.filter(r=>r.verdict.startsWith('KEEP')).length;
+    cannWB={domain,m1,m2,audit,summary:[
+      {k:'Rule: weak <10 impr · balance ≥40% · position gate ≤20',v:''},
+      {k:'METHOD 1 — Duplicate Intent pairs (all page types)',v:m1.length},
+      {k:'METHOD 2 — Active Cannibalization candidates (feed↔main)',v:m2.length},
+      {k:'   → REDIRECT',v:m2r},{k:'   → KEEP both',v:m2k},{k:'   → DROP (incidental)',v:m2.length-m2r-m2k},
+      {k:'Query audit rows (feed↔main queries checked)',v:audit.length}]};
     $('cannBar').style.width='100%';
-    $('cannPhase').innerHTML='✓ '+MODE_LABEL[mode]+' — '+clusterCount+' clusters, '+redirects.length+' redirects (one primary per cluster)'+(capped?' <span style="color:var(--bad)">(query cap '+QCAP+' hit — raise min-impressions)</span>':'');
-    $('cannCounts').innerHTML='feed pages: <b>'+feedPages.length+'</b> &nbsp; main pages ≥'+minImpr+' impr: <b>'+mainPages.length+'</b> &nbsp; clusters: <b>'+clusterCount+'</b> &nbsp; redirects: <b>'+redirects.length+'</b>';
+    $('cannPhase').innerHTML='✓ Done — M1 duplicate-intent: <b>'+m1.length+'</b> · M2 active (feed↔main): <b>'+m2.length+'</b> (redirect '+m2r+', keep '+m2k+') · audit '+audit.length+' queries';
+    $('cannCounts').textContent='';
     $('cannDl1').classList.remove('hidden'); $('cannDl2').classList.remove('hidden');
   }catch(e){ $('cannPhase').innerHTML='<span style="color:var(--bad)">'+e.message+'</span>'; }
-  document.querySelectorAll('.cann-mode').forEach(b=>b.disabled=false);
+  $('cannRunBoth').disabled=false;
 }
 function cannAOA(rows,cols){ return [cols.map(c=>c[1]), ...rows.map(r=>cols.map(c=>r[c[0]]??''))]; }
 $('cannDl1').addEventListener('click',()=>{ if(!cannWB)return; const wb=XLSX.utils.book_new();
   const add=(name,rows,cols)=>XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(cannAOA(rows,cols)),name);
-  add('Cannibalizing pairs',cannWB.pairs,[['wUrl','Primary URL'],['wSide','primary side'],['wTq','primary top query'],['wImpr','primary impr'],['wGsc','primary GSC pos'],['wLive','primary LIVE pos'],['lUrl','Cannibalising URL'],['lSide','cannibalising side'],['lTq','cannibalising top query'],['lImpr','cannibalising impr'],['lGsc','cannibalising GSC pos'],['lLive','cannibalising LIVE pos'],['overlap','SERP overlap (same intent)'],['coocc','co-occurrence (both rank for a shared query?)'],['sharedQuery','shared query (GSC)'],['pShared','primary impr on shared q'],['cShared','cannibalising impr on shared q'],['clusterSize','cluster size'],['decision','Decision']]);
-  add('Redirect map',cannWB.redirects,[['current','Cannibalising URL'],['target','Redirect To (Primary) URL'],['winnerSide','primary side'],['loserImpr','cannibalising impr'],['winnerImpr','primary impr'],['overlap','SERP overlap'],['coocc','co-occurrence?'],['sharedQuery','shared query (GSC)'],['decision','Decision']]);
-  XLSX.writeFile(wb,'cannibalization_'+cannWB.mode+'_'+cannWB.domain.replace(/\./g,'_')+'.xlsx'); });
-$('cannDl2').addEventListener('click',()=>{ if(!cannWB)return; const cols=[['current','Cannibalising URL'],['target','Redirect To (Primary) URL'],['winnerSide','primary side'],['loserImpr','cannibalising impr'],['winnerImpr','primary impr'],['overlap','SERP overlap'],['coocc','co-occurrence?'],['sharedQuery','shared query (GSC)'],['decision','Decision']];
-  const rows=[cols.map(c=>c[1]),...cannWB.redirects.map(r=>cols.map(c=>r[c[0]]??''))]; downloadCSV(rows.map(r=>r.map(csvCell).join(',')).join('\n')+'\n','redirects_'+cannWB.mode+'.csv'); });
+  add('Summary',cannWB.summary,[['k','Metric'],['v','Value']]);
+  add('M1 Duplicate Intent',cannWB.m1,[['primary','Primary URL'],['duplicate','Duplicate URL'],['type','Pair type'],['shared','# shared queries'],['examples','Example shared queries (impr/impr)'],['verdict','Verdict (unique-value guard)']]);
+  add('M2 Active Cannibalization',cannWB.m2,[['query','Query'],['primary','Primary URL'],['p_impr','primary impr'],['p_pos','primary pos'],['p_live','primary LIVE'],['cann','Cannibalising URL'],['c_impr','cannib impr'],['c_pos','cannib pos'],['c_live','cannib LIVE'],['balance','Impression balance'],['winner','Winner (live)'],['basis','Winner basis'],['unique','Unique query of cannib'],['verdict','FINAL verdict']]);
+  add('Query audit (feed-main)',cannWB.audit,[['query','Query'],['feed_page','Feed page'],['feed_impr','feed impr'],['feed_pos','feed pos'],['nonfeed_page','Non-feed page'],['nonfeed_impr','non-feed impr'],['nonfeed_pos','non-feed pos'],['balance','balance'],['verdict','Verdict'],['why','Why NOT']]);
+  XLSX.writeFile(wb,'cannibalization_'+cannWB.domain.replace(/\./g,'_')+'.xlsx'); });
+$('cannDl2').addEventListener('click',()=>{ if(!cannWB)return; const cols=[['query','Query'],['feed_page','Feed page'],['feed_impr','feed impr'],['feed_pos','feed pos'],['nonfeed_page','Non-feed page'],['nonfeed_impr','non-feed impr'],['nonfeed_pos','non-feed pos'],['balance','balance'],['verdict','Verdict'],['why','Why NOT']];
+  const rows=[cols.map(c=>c[1]),...cannWB.audit.map(r=>cols.map(c=>r[c[0]]??''))]; downloadCSV(rows.map(r=>r.map(csvCell).join(',')).join('\n')+'\n','query_audit.csv'); });
 
 /* ============================ helpers ============================ */
 const csvCell = v => { v=(v==null?'':String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };

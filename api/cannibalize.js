@@ -117,20 +117,20 @@ module.exports = async (req, res) => {
       // brand = domain root ("hubengage"); match it even when the query spaces/hyphens it ("hub engage", "hub-engage")
       const brandRoot = domain.replace(/\..*/, '').toLowerCase();
       const isJunk = q => { const ql = String(q).toLowerCase(); return ql.includes('site:') || ql.replace(/[\s\-_]/g, '').includes(brandRoot) || /^[\d\W]+$/.test(q); };
-      // per-page query -> impressions map (non-branded), for co-occurrence checks; capped at 30 queries/page
+      // per-page query -> [impressions, impr-weighted position] map (non-branded); capped at 30 queries/page
       const qByPageRaw = {};
-      const addQ = (pg, q, impr) => { if (isJunk(q)) return; const m = qByPageRaw[pg] || (qByPageRaw[pg] = {}); const k = normq(q); m[k] = (m[k] || 0) + impr; };
+      const addQ = (pg, q, impr, pos) => { if (isJunk(q)) return; const m = qByPageRaw[pg] || (qByPageRaw[pg] = {}); const k = normq(q); const e = m[k] || (m[k] = [0, 0]); e[0] += impr; e[1] += impr * pos; };
       const origUrl = {};   // normalized key -> the exact URL GSC returned (keeps www + trailing slash) for display
       // feed pages: total impressions + top non-branded query (real query the page earns on)
       const ftot = {}, fbest = {};
-      (feedR.rows || []).forEach(r => { const pg = norm(r.keys[0]), q = r.keys[1]; if (!origUrl[pg]) origUrl[pg] = r.keys[0]; ftot[pg] = (ftot[pg] || 0) + r.impressions; addQ(pg, q, r.impressions); if (isJunk(q)) return; const b = fbest[pg]; if (!b || r.impressions > b.impr) fbest[pg] = { query: q, impr: r.impressions, pos: Math.round(r.position * 10) / 10 }; });
+      (feedR.rows || []).forEach(r => { const pg = norm(r.keys[0]), q = r.keys[1]; if (!origUrl[pg]) origUrl[pg] = r.keys[0]; ftot[pg] = (ftot[pg] || 0) + r.impressions; addQ(pg, q, r.impressions, r.position); if (isJunk(q)) return; const b = fbest[pg]; if (!b || r.impressions > b.impr) fbest[pg] = { query: q, impr: r.impressions, pos: Math.round(r.position * 10) / 10 }; });
       const feed = {}; Object.keys(ftot).forEach(pg => { feed[pg] = { url: origUrl[pg], total_impr: ftot[pg], impr: ftot[pg], top_query: fbest[pg] ? fbest[pg].query : '', tq_impr: fbest[pg] ? fbest[pg].impr : 0, tq_pos: fbest[pg] ? fbest[pg].pos : null }; });
       // non-feed pages: total impressions + top non-branded query
       const tot = {}, best = {};
-      (nfR.rows || []).forEach(r => { const pg = norm(r.keys[0]), q = r.keys[1]; if (!origUrl[pg]) origUrl[pg] = r.keys[0]; tot[pg] = (tot[pg] || 0) + r.impressions; addQ(pg, q, r.impressions); if (isJunk(q)) return; const b = best[pg]; if (!b || r.impressions > b.impr) best[pg] = { query: q, impr: r.impressions, pos: Math.round(r.position * 10) / 10 }; });
+      (nfR.rows || []).forEach(r => { const pg = norm(r.keys[0]), q = r.keys[1]; if (!origUrl[pg]) origUrl[pg] = r.keys[0]; tot[pg] = (tot[pg] || 0) + r.impressions; addQ(pg, q, r.impressions, r.position); if (isJunk(q)) return; const b = best[pg]; if (!b || r.impressions > b.impr) best[pg] = { query: q, impr: r.impressions, pos: Math.round(r.position * 10) / 10 }; });
       const nonfeed = Object.keys(tot).map(pg => ({ url: origUrl[pg], nurl: pg, total_impr: tot[pg], top_query: best[pg] ? best[pg].query : '', top_query_pos: best[pg] ? best[pg].pos : null })).sort((a, b) => b.total_impr - a.total_impr);
-      // cap each page's query map to its top 30 queries by impressions (bounds payload)
-      const queriesByPage = {}; Object.keys(qByPageRaw).forEach(pg => { queriesByPage[pg] = Object.fromEntries(Object.entries(qByPageRaw[pg]).sort((a, b) => b[1] - a[1]).slice(0, 30)); });
+      // cap each page's query map to top 30 by impressions -> {query: [impr, avg position]}
+      const queriesByPage = {}; Object.keys(qByPageRaw).forEach(pg => { const o = {}; Object.entries(qByPageRaw[pg]).sort((a, b) => b[1][0] - a[1][0]).slice(0, 30).forEach(([q, e]) => { o[q] = [e[0], Math.round((e[1] / e[0]) * 10) / 10]; }); queriesByPage[pg] = o; });
       res.statusCode = 200; return res.end(JSON.stringify({ available: true, feed, nonfeed, queriesByPage }));
     }
     res.statusCode = 400; res.end(JSON.stringify({ error: 'unknown step' }));
