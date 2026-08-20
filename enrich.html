@@ -305,12 +305,12 @@ async function runCann(mode){
     // build FEED page objects: Metabase pages (GSC top query, else assigned kw) + any GSC feed pages not in Metabase
     const feedByNurl={};
     metaPages.forEach(p=>{ let gg=feedG[p.nurl]; if(!gg){ const slug=p.nurl.split('/').pop(); const hit=Object.keys(feedG).find(k=>k.endsWith('/'+slug)); if(hit)gg=feedG[hit]; }
-      feedByNurl[p.nurl]={url:p.url,nurl:p.nurl,side:'feed',tq:(gg&&gg.top_query)||p.kw||'',impr:gg?gg.total_impr:0,gscPos:gg?gg.tq_pos:null}; });
-    Object.keys(feedG).forEach(nu=>{ if(feedByNurl[nu]||!feedG[nu].top_query)return; feedByNurl[nu]={url:'https://'+nu,nurl:nu,side:'feed',tq:feedG[nu].top_query,impr:feedG[nu].total_impr,gscPos:feedG[nu].tq_pos}; });
+      feedByNurl[p.nurl]={url:(gg&&gg.url)||p.url,nurl:p.nurl,side:'feed',tq:(gg&&gg.top_query)||p.kw||'',impr:gg?gg.total_impr:0,gscPos:gg?gg.tq_pos:null}; });   // prefer exact GSC URL for display
+    Object.keys(feedG).forEach(nu=>{ if(feedByNurl[nu]||!feedG[nu].top_query)return; feedByNurl[nu]={url:feedG[nu].url||('https://'+nu),nurl:nu,side:'feed',tq:feedG[nu].top_query,impr:feedG[nu].total_impr,gscPos:feedG[nu].tq_pos}; });
     const feedPages=Object.values(feedByNurl).filter(p=>p.tq);
-    // build MAIN page objects (non-feed, >= minImpr)
-    const mainPages=(g.nonfeed||[]).filter(n=>n.top_query && n.total_impr>=minImpr && nUrl(n.url).startsWith(domain) && !isFeedU(n.url))
-      .map(n=>({url:'https://'+nUrl(n.url),nurl:nUrl(n.url),side:'main',tq:n.top_query,impr:n.total_impr,gscPos:(n.top_query_pos!=null?n.top_query_pos:null)}));
+    // build MAIN page objects (non-feed, >= minImpr) — display the exact GSC URL (n.url), match on the normalized key
+    const mainPages=(g.nonfeed||[]).filter(n=>{const k=n.nurl||nUrl(n.url);return n.top_query && n.total_impr>=minImpr && k.startsWith(domain) && !isFeedU(k);})
+      .map(n=>({url:n.url||('https://'+(n.nurl||nUrl(n.url))),nurl:n.nurl||nUrl(n.url),side:'main',tq:n.top_query,impr:n.total_impr,gscPos:(n.top_query_pos!=null?n.top_query_pos:null)}));
     // 3) pick the pool / sides for the mode
     let sideA,sideB,cross=false;
     if(mode==='ff'){ sideA=sideB=feedPages; }
