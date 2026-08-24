@@ -45,12 +45,31 @@ If the user just triggers the skill, ask for the CSV (or a query + URLs) and the
 market (default `us` silently). Then run the helper and relay the table — don't
 make the user build the command.
 
-## How to run (internal)
+## Two helpers (pick by the question)
 
-Call the bundled helper by its skill base directory (shown at invocation as
-"Base directory for this skill: …"). It needs only `node` + internet + a Serper
-key:
+- **`rank-domain.mjs`** — *simple:* **query + domain + country → live position + the ranking URL.**
+  Use for "where does DOMAIN rank for these queries, and which page is Google showing?"
+- **`rank-pages.mjs`** — *page-level:* checks **exact URLs** and **page-vs-page co-ranking**
+  (the cannibalization confirmation — do BOTH pages rank live?).
 
+Call either by its skill base directory (shown at invocation as "Base directory
+for this skill: …"). Needs only `node` + internet + a Serper key.
+
+### rank-domain.mjs — query + domain → live rank + URL
+```bash
+# a few queries
+node "<skill-base-dir>/rank-domain.mjs" --domain qrstuff.com "twitter qr code generator" "coupon qr code" --country us
+
+# a keyword list (auto-detects a query/keyword column, else every line)
+node "<skill-base-dir>/rank-domain.mjs" --domain site.com --file keywords.csv --country in
+
+# pipe queries in / machine-readable
+printf "%s\n" "kw one" "kw two" | node "<skill-base-dir>/rank-domain.mjs" --domain site.com --json
+```
+Output per query: `#<position>  <query>  <ranking url>` (or `none` if past top-100),
+plus a headline (on page 1 / in top-100 / not ranking).
+
+### rank-pages.mjs — exact URLs + co-ranking
 ```bash
 # verify a whole cannibalization report (auto-detects query + url columns)
 node "<skill-base-dir>/rank-pages.mjs" --file ~/Downloads/cannibalization_pairs.csv --country us
