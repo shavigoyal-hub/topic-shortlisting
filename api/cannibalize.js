@@ -48,38 +48,61 @@ async function serper(kw, gl, num) {
 
 /* ---- GSC via Composio (reuses the connected Search Console account) ---- */
 // arguments use the Composio tool's snake_case schema (site_url, start_date, ...)
-let _gscConn = undefined;   // {id,user} cache
-async function resolveGscConn(key) {
-  if (_gscConn !== undefined) return _gscConn;
-  _gscConn = null;
+let _gscConns = undefined;   // [{id,user}] cache — ALL active connections
+async function resolveGscConns(key) {
+  if (_gscConns !== undefined) return _gscConns;
+  _gscConns = [];
   try {
     const r = await fetch('https://backend.composio.dev/api/v3/connected_accounts?toolkit_slugs=google_search_console', { headers: { 'x-api-key': key } });
     const o = await r.json(); const items = o.items || o.data || [];
-    const act = items.find(a => a.status === 'ACTIVE');
-    if (act) _gscConn = { id: act.id, user: act.user_id || act.entity_id || 'default' };
+    _gscConns = items.filter(a => a.status === 'ACTIVE').map(a => ({ id: a.id, user: a.user_id || a.entity_id || 'default' }));
   } catch (e) {}
-  return _gscConn;
+  return _gscConns;
 }
-async function gscComposio(args) {
-  const key = process.env.COMPOSIO_API_KEY; if (!key) return { rows: [] };
-  const envAcct = process.env.COMPOSIO_GSC_ACCOUNT_ID, envUser = process.env.COMPOSIO_USER_ID;
-  let acct = (envAcct && /^ca_/.test(envAcct)) ? envAcct : null, uid = envUser;
-  if (!acct) { const c = await resolveGscConn(key); if (c) { acct = c.id; uid = uid || c.user; } }  // auto-discover the active connection
-  if (!acct && !uid) return { rows: [] };
+// low-level execute; returns rows + a `forbidden` flag so callers can fall back to another account on a 403.
+async function gscExec(key, args, conn) {
   try {
     const b = { arguments: args };
-    if (uid) b.user_id = uid;
-    if (acct) b.connected_account_id = acct;
+    if (conn && conn.user) b.user_id = conn.user;
+    if (conn && conn.id) b.connected_account_id = conn.id;
     const r = await fetch('https://backend.composio.dev/api/v3/tools/execute/GOOGLE_SEARCH_CONSOLE_SEARCH_ANALYTICS_QUERY', {
       method: 'POST', headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
       body: JSON.stringify(b)
     });
-    if (!r.ok) return { rows: [] };
+    if (!r.ok) return { rows: [], forbidden: r.status === 403 };
     const j = await r.json();
     const data = (j && j.data) || {};
-    const rows = (data.response_data && data.response_data.rows) || data.rows || [];   // Composio nests under data.response_data
-    return { rows };
-  } catch (e) { return { rows: [] }; }
+    const rows = (data.response_data && data.response_data.rows) || data.rows || [];
+    // Composio wraps a Google 403 as HTTP 200 with successful:false — sniff the error text.
+    const errTxt = JSON.stringify(j.error || (data && (data.error || data.http_error)) || '');
+    const forbidden = j.successful === false && /403|forbidden|sufficient permission/i.test(errTxt);
+    return { rows, forbidden };
+  } catch (e) { return { rows: [], forbidden: false }; }
+}
+// Pick the connected account that actually has access to `site` (probes each with a 1-row query).
+// Cached per request so the feed + non-feed pulls reuse the working account.
+const _gscAcct = {};   // site -> chosen conn (keyed by site so warm containers don't leak across domains)
+async function pickGscAcct(key, site, start, end) {
+  if (Object.prototype.hasOwnProperty.call(_gscAcct, site)) return _gscAcct[site];
+  const conns = await resolveGscConns(key);
+  const envAcct = process.env.COMPOSIO_GSC_ACCOUNT_ID, envUser = process.env.COMPOSIO_USER_ID;
+  const ordered = [];
+  if (envAcct && /^ca_/.test(envAcct)) ordered.push({ id: envAcct, user: envUser });   // explicit env first
+  ordered.push(...conns.filter(c => c.id !== envAcct));
+  if (envUser && !ordered.length) ordered.push({ id: null, user: envUser });
+  let firstOk = null;
+  for (const c of ordered) {
+    const p = await gscExec(key, { site_url: site, start_date: start, end_date: end, dimensions: ['query'], row_limit: 1, data_state: 'final' }, c);
+    if (p.forbidden) continue;                 // no access to this site on this account
+    if (p.rows.length) { _gscAcct[site] = c; return c; }   // has access AND data — take it
+    if (!firstOk) firstOk = c;                 // access but no rows in probe; remember as fallback
+  }
+  _gscAcct[site] = firstOk;                    // may be null if every account 403'd
+  return firstOk;
+}
+async function gscComposio(args, conn) {
+  const key = process.env.COMPOSIO_API_KEY; if (!key) return { rows: [] };
+  return gscExec(key, args, conn || null);
 }
 
 module.exports = async (req, res) => {
@@ -110,10 +133,13 @@ module.exports = async (req, res) => {
       const site = 'sc-domain:' + domain;
       const now = new Date(Date.now() - 3 * 864e5), start = new Date(Date.now() - 480 * 864e5);
       const dt = d => d.toISOString().slice(0, 10);
+      // pick whichever connected Search Console account actually has access to this site (multi-account fallback)
+      const conn = await pickGscAcct(process.env.COMPOSIO_API_KEY, site, dt(start), dt(now));
+      if (!conn) { res.statusCode = 200; return res.end(JSON.stringify({ available: false, note: 'No connected Google Search Console account has access to ' + site + ' (all returned 403). Add the property to a connected account.' })); }
       // 'feeds' (not '/feeds/') so path feeds AND subdomain feeds (feeds.<domain>) are both captured
-      const feedR = await gscComposio({ site_url: site, start_date: dt(start), end_date: dt(now), dimensions: ['page', 'query'], row_limit: 5000, data_state: 'final', dimension_filter_groups: [{ filters: [{ dimension: 'page', operator: 'contains', expression: 'feeds' }] }] });
-      const nfR = await gscComposio({ site_url: site, start_date: dt(start), end_date: dt(now), dimensions: ['page', 'query'], row_limit: 5000, data_state: 'final', dimension_filter_groups: [{ filters: [{ dimension: 'page', operator: 'notContains', expression: 'feeds' }] }] });
-      if (!feedR.rows.length && !nfR.rows.length) { res.statusCode = 200; return res.end(JSON.stringify({ available: false, note: 'Composio returned no GSC rows — check COMPOSIO_GSC_ACCOUNT_ID has access to ' + site })); }
+      const feedR = await gscComposio({ site_url: site, start_date: dt(start), end_date: dt(now), dimensions: ['page', 'query'], row_limit: 5000, data_state: 'final', dimension_filter_groups: [{ filters: [{ dimension: 'page', operator: 'contains', expression: 'feeds' }] }] }, conn);
+      const nfR = await gscComposio({ site_url: site, start_date: dt(start), end_date: dt(now), dimensions: ['page', 'query'], row_limit: 5000, data_state: 'final', dimension_filter_groups: [{ filters: [{ dimension: 'page', operator: 'notContains', expression: 'feeds' }] }] }, conn);
+      if (!feedR.rows.length && !nfR.rows.length) { res.statusCode = 200; return res.end(JSON.stringify({ available: false, note: 'Connected account has access to ' + site + ' but returned no rows for the last 16 months.' })); }
       // brand = domain root ("hubengage"); match it even when the query spaces/hyphens it ("hub engage", "hub-engage")
       const brandRoot = domain.replace(/\..*/, '').toLowerCase();
       const isJunk = q => { const ql = String(q).toLowerCase(); return ql.includes('site:') || ql.replace(/[\s\-_]/g, '').includes(brandRoot) || /^[\d\W]+$/.test(q); };
