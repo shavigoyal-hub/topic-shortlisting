@@ -117,7 +117,7 @@ module.exports = async (req, res) => {
       const out = {}; let i = 0;
       const worker = async () => { while (i < items.length) { const it = items[i++]; out[String(it.kw).toLowerCase()] = await serper(it.kw, gl, num); } };
       await Promise.all(Array.from({ length: Math.min(6, items.length) }, worker));
-      res.statusCode = 200; return res.end(JSON.stringify({ serp: out }));
+      res.statusCode = 200; return res.end(JSON.stringify({ serp: out, usage: { model: '', pt: 0, ct: 0, serper: items.length } }));
     }
     if (step === 'pages') {
       if (!process.env.METABASE_URL) { res.statusCode = 500; return res.end(JSON.stringify({ error: 'Metabase env not set on the server' })); }

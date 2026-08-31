@@ -90,10 +90,12 @@ async function serperLinks(q, gl, key) {
     return ((await r.json()).organic || []).map(o => ({ link: o.link || '', title: o.title || '', snippet: o.snippet || '' })).filter(o => o.link);
   } catch (e) { return []; }
 }
-async function openai(messages, key) {
+async function openai(messages, key, u) {
   const resp = await fetch('https://api.openai.com/v1/chat/completions', { method: 'POST', headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'gpt-4o', temperature: 0, response_format: { type: 'json_object' }, messages }) });
   if (!resp.ok) throw new Error('OpenAI ' + resp.status + ': ' + (await resp.text()).slice(0, 200));
-  try { return JSON.parse((await resp.json()).choices[0].message.content); } catch (e) { return {}; }
+  const jr = await resp.json();
+  if (u) { const us = jr.usage || {}; u.pt += us.prompt_tokens || 0; u.ct += us.completion_tokens || 0; }
+  try { return JSON.parse(jr.choices[0].message.content); } catch (e) { return {}; }
 }
 
 /* ------------------------------- handler ------------------------------- */
@@ -111,19 +113,20 @@ module.exports = async (req, res) => {
   const gl = (cfg.serpGl || 'us').toLowerCase();
   const names = cfg.services.concat(cfg.products);
 
+  const u = { model: 'gpt-4o', pt: 0, ct: 0, serper: 0 };   // cost accounting: OpenAI tokens + Serper calls this request
   try {
     // 1) SERP per keyword (limited concurrency). Skip any item whose titles the client already cached (browser SERP cache).
     if (useSerp) {
       let i = 0;
       const worker = async () => { while (i < items.length) { const it = items[i++];
         if (Array.isArray(it.titles) && it.titles.length) continue;   // client-supplied from its cache → don't re-fetch
-        it.titles = await serper(it.kw, gl, skey); } };
+        u.serper++; it.titles = await serper(it.kw, gl, skey); } };
       await Promise.all(Array.from({ length: Math.min(5, items.length) }, worker));
     } else { items.forEach(it => { if (!Array.isArray(it.titles)) it.titles = []; }); }
 
     // 2) classify (one call for the chunk)
     const payload = items.map((it, idx) => ({ id: String(idx), keyword: it.kw, page_title: it.topic || '', ranking_titles: (it.titles || []).slice(0, 6).join(' | ') }));
-    const j = await openai([{ role: 'system', content: CLASSIFY_SYS(cfg) }, { role: 'user', content: 'Classify these:\n' + payload.map(p => JSON.stringify(p)).join('\n') }], okey);
+    const j = await openai([{ role: 'system', content: CLASSIFY_SYS(cfg) }, { role: 'user', content: 'Classify these:\n' + payload.map(p => JSON.stringify(p)).join('\n') }], okey, u);
     const byId = parseClassify(j);
 
     // 3) preliminary decision per item
@@ -153,7 +156,7 @@ module.exports = async (req, res) => {
       const withPages = [];
       await Promise.all(cands.map(async d => {
         const q = (d.c.product && d.c.product.trim()) ? d.c.product.trim() : coreQuery(d.it.kw);   // LLM-extracted product term; word-list fallback
-        const hits = await serperLinks('site:' + domain + ' ' + q, gl, skey);
+        u.serper++; const hits = await serperLinks('site:' + domain + ' ' + q, gl, skey);
         const genuine = hits.filter(h => { const u = h.link.toLowerCase(); return !/\/feeds?(\/|$)/.test(u) && !/\/(blog|feeds)\//.test(u); }).slice(0, 3);
         if (genuine.length) withPages.push({ d, genuine });
       }));
@@ -163,7 +166,7 @@ module.exports = async (req, res) => {
           const j = await openai([
             { role: 'system', content: 'A client sells home products. For each keyword, their OWN website (excluding auto-generated /feeds SEO pages) has these pages. Decide if those pages show the client actually SELLS / OFFERS that product or service (a product or product-category page = yes; a mere blog mention = no). Return ONLY JSON: {"results":[{"id":<id>,"offers":true|false}]}.' },
             { role: 'user', content: withPages.map((w, i) => JSON.stringify({ id: i, keyword: w.d.it.kw, pages: w.genuine.map(g => g.title + ' — ' + g.link) })).join('\n') }
-          ], okey);
+          ], okey, u);
           (j.results || []).forEach(o => { verdict[String(o.id)] = o.offers === true; });
         } catch (e) {}
         withPages.forEach((w, i) => {
@@ -179,7 +182,7 @@ module.exports = async (req, res) => {
       return { id: d.it.id, status: d.status, confidence: d.status === '' ? '' : c.conf, reason: d.reason, explained, audience: c.audience || '', profession: c.profession || '', type: c.type || '', modifier: modifiersOf(d.it.kw, cfg), bofu: isBofu(d.it.kw) ? 'Yes' : 'No', services: (c.services || []).join(', '), buyStage: c.buyStage || '', buyWhy: c.buyWhy || '', icp: c.icp || '', icpFit: c.icpFit === false ? 'no' : 'yes', titles: Array.isArray(d.it.titles) ? d.it.titles : [] };
     });
     res.statusCode = 200;
-    res.end(JSON.stringify({ rows }));
+    res.end(JSON.stringify({ rows, usage: u }));
   } catch (e) {
     res.statusCode = 502;
     res.end(JSON.stringify({ error: String(e && e.message || e) }));

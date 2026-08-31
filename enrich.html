@@ -208,10 +208,11 @@
     <h1>History</h1>
     <p class="sub">Your recent runs (kept in this browser). Click a row to download its CSV again.</p>
     <div class="card">
-      <table><thead><tr><th>When</th><th>Domain</th><th>Keywords</th><th>Keep</th><th>Reject</th><th>Review</th><th></th></tr></thead>
-      <tbody id="histBody"><tr><td colspan="7" class="stat">No runs yet.</td></tr></tbody></table>
+      <table><thead><tr><th>When</th><th>Tool</th><th>Domain</th><th>Result</th><th>Est. cost</th><th></th></tr></thead>
+      <tbody id="histBody"><tr><td colspan="6" class="stat">No runs yet.</td></tr></tbody></table>
+      <div id="histTotal" class="stat" style="margin-top:10px"></div>
     </div>
-    <div class="note">History is stored locally in your browser (last 25 runs). It never leaves your machine.</div>
+    <div class="note">Cost is an <b>estimate</b> from OpenAI token usage + Serper call counts at current list prices (gpt‑4o $2.50/$10 per 1M in/out · gpt‑4o‑mini $0.15/$0.60 · Serper ~$0.001/query). History is stored locally in your browser (last 50 runs) and never leaves your machine.</div>
   </section>
 </main>
 </div>
@@ -282,6 +283,7 @@ async function runCannAnalysis(){
   const api=(step,extra)=>fetch('/api/cannibalize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({step,domain},extra))}).then(r=>r.json());
   try{
     $('cannPhase').textContent='Pulling 16-month GSC (queries + positions)…';
+    const acc=newUsage();   // cost: cannibalization only spends Serper (GSC via Composio + Metabase are free)
     const g=await api('gsc',{}); if(!g.available) throw new Error('GSC not available for '+domain+(g.note?' — '+g.note:''));
     const qBP=g.queriesByPage||{}; const urlBy={}, totBy={};
     Object.entries(g.feed||{}).forEach(([nu,v])=>{ urlBy[nu]=v.url||('https://'+nu); totBy[nu]=v.total_impr||0; });
@@ -310,7 +312,7 @@ async function runCannAnalysis(){
     const gateQ=[...new Set(cand.filter(c=>c.ppos<=POSGATE&&c.cpos<=POSGATE).map(c=>c.q))];
     $('cannPhase').textContent='Method 2 — live-rank check ('+gateQ.length+' queries)…'; $('cannBar').style.width='72%';
     const live={}; const CH=15; let dn=0;
-    for(let i=0;i<gateQ.length;i+=CH){ const chunk=gateQ.slice(i,i+CH); const r=await api('serp',{items:chunk.map(q=>({kw:q})),gl,num:20}); Object.assign(live,r.serp||{}); dn+=chunk.length; $('cannBar').style.width=(72+Math.round(dn/Math.max(1,gateQ.length)*20))+'%'; $('cannCounts').textContent=dn+' / '+gateQ.length+' live checks'; }
+    for(let i=0;i<gateQ.length;i+=CH){ const chunk=gateQ.slice(i,i+CH); const r=await api('serp',{items:chunk.map(q=>({kw:q})),gl,num:20}); Object.assign(live,r.serp||{}); addUsage(acc,r.usage); dn+=chunk.length; $('cannBar').style.width=(72+Math.round(dn/Math.max(1,gateQ.length)*20))+'%'; $('cannCounts').textContent=dn+' / '+gateQ.length+' live checks'; }
     const livePos=(q,nu)=>{ const lt=live[nQ(q)]||live[q]||[]; const i=lt.findIndex(u=>u===nu||u.split('?')[0]===nu); return i<0?null:i+1; };
     const m2=cand.map(c=>{ const gate=c.ppos<=POSGATE&&c.cpos<=POSGATE; const uq=uniqWell(c.cann,c.prim); let pl=null,cl=null,winner='',basis='';
       if(gate){ pl=livePos(c.q,c.prim); cl=livePos(c.q,c.cann); if(pl!=null||cl!=null){ winner=((pl||999)<=(cl||999))?c.prim:c.cann; basis='live rank ('+(pl||'—')+' vs '+(cl||'—')+')'; } else { winner=c.prim; basis='impressions (neither live top-20)'; } }
@@ -335,7 +337,9 @@ async function runCannAnalysis(){
       {k:'   → REDIRECT',v:m2r},{k:'   → KEEP both',v:m2k},{k:'   → DROP (incidental)',v:m2.length-m2r-m2k},
       {k:'Query audit rows (feed↔main queries checked)',v:audit.length}]};
     $('cannBar').style.width='100%';
-    $('cannPhase').innerHTML='✓ Done — M1 duplicate-intent: <b>'+m1.length+'</b> · M2 active (feed↔main): <b>'+m2.length+'</b> (redirect '+m2r+', keep '+m2k+') · audit '+audit.length+' queries';
+    const _cc=costOf(acc);
+    saveHistory({ kind:'cann', when:new Date().toLocaleString(), domain, m1:m1.length, m2:m2.length, audit:audit.length, cost:_cc.total, breakdown:costBreak(acc) });
+    $('cannPhase').innerHTML='✓ Done — M1 duplicate-intent: <b>'+m1.length+'</b> · M2 active (feed↔main): <b>'+m2.length+'</b> (redirect '+m2r+', keep '+m2k+') · audit '+audit.length+' queries · <span class="stat">est. cost '+fmtCost(_cc.total)+'</span>';
     $('cannCounts').textContent='';
     $('cannDl1').classList.remove('hidden'); $('cannDl2').classList.remove('hidden');
   }catch(e){ $('cannPhase').innerHTML='<span style="color:var(--bad)">'+e.message+'</span>'; }
@@ -434,7 +438,7 @@ async function analyze(){
     const r = await fetch('/api/profile', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({domain:d}) });
     const p = await r.json();
     if(p.error){ $('domainInfo').innerHTML='<span style="color:var(--bad)">'+p.error+'</span>'; return; }
-    profile = { services:p.services||[], category:p.category||'', industries:p.industries||[], anyBusiness:!!p.anyBusiness, _for:d };
+    profile = { services:p.services||[], category:p.category||'', industries:p.industries||[], anyBusiness:!!p.anyBusiness, _for:d, _usage:p.usage||null };
     derived=true;
     if(!$('services').value.trim()) $('services').value = (p.services||[]).join('\n');
     $('dCat').innerHTML = p.category ? '<span class="chip cat">'+p.category+'</span>' : '—';
@@ -462,6 +466,7 @@ $('run').addEventListener('click', async () => {
   $('progressCard').classList.remove('hidden');
   $('download').classList.add('hidden');
   const byId = {}; enrichedRows = [];
+  const acc = newUsage(); addUsage(acc, profile._usage);   // cost: seed with the profile (site-read) call
   const serpCache = loadSerpCache(); const gl = config.serpGl; let cacheHits = 0;
   const CHUNK = 12;
   const chunks = []; for(let i=0;i<akrItems.length;i+=CHUNK) chunks.push(akrItems.slice(i,i+CHUNK));
@@ -473,6 +478,7 @@ $('run').addEventListener('click', async () => {
     try{
       const resp = await fetch('/api/enrich', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ items:sendItems, config }) });
       const data = await resp.json();
+      addUsage(acc, data.usage);
       if(data.rows){ data.rows.forEach(r=>{ byId[r.id]=r; if(r.status==='1')keep++; else if(r.status==='0')reject++; else review++;
         if(r.titles && r.titles.length){ const it=chunk.find(x=>x.id===r.id); if(it) serpCache[gl+'|'+it.kw.toLowerCase()]=r.titles; } }); }
       else failed += chunk.length;
@@ -490,6 +496,7 @@ $('run').addEventListener('click', async () => {
     if(payload.audience.length+payload.profession.length+payload.type.length > 0){
       const cr = await fetch('/api/consolidate', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
       const cm = await cr.json();
+      addUsage(acc, cm.usage);
       const apply=(r,f)=>{ const m=cm[f]||{}; const v=String(r[f]||'').trim(); if(v && m[v]) r[f]=m[v]; };
       Object.values(byId).forEach(r=>{ apply(r,'audience'); apply(r,'profession'); apply(r,'type'); });
     }
@@ -503,7 +510,9 @@ $('run').addEventListener('click', async () => {
   $('phase').textContent = '✓ Done — '+akrItems.length+' enriched'+(failed?' ('+failed+' failed)':'')+(cacheHits?' · '+cacheHits+' from SERP cache':'');
   $('download').classList.remove('hidden');
   $('run').disabled = false;
-  saveHistory({ when:new Date().toLocaleString(), domain:$('domain').value.trim()||'(no domain)', total:akrItems.length, keep, reject, review, csv:buildCSV() });
+  const _c=costOf(acc);
+  $('phase').innerHTML += ' · <span class="stat">est. cost '+fmtCost(_c.total)+'</span>';
+  saveHistory({ kind:'enrich', when:new Date().toLocaleString(), domain:$('domain').value.trim()||'(no domain)', total:akrItems.length, keep, reject, review, cost:_c.total, breakdown:costBreak(acc), csv:buildCSV() });
 });
 
 function buildCSV(){ return [OUT_HDR].concat(enrichedRows).map(r=>r.map(csvCell).join(',')).join('\n')+'\n'; }
@@ -520,6 +529,15 @@ function saveSerpCache(c){
   }catch(e){ try{ localStorage.removeItem('akrSerpCache'); }catch(_){} }   // quota exceeded → drop cache rather than error
 }
 
+/* ============================ cost estimation ============================ */
+// List prices in USD. OpenAI = [input, output] per 1M tokens. Serper = per query. Update as vendor pricing changes.
+const PRICES = { 'gpt-4o':[2.50,10.00], 'gpt-4o-mini':[0.15,0.60], serper:0.001 };
+function newUsage(){ return { tok:{}, serper:0 }; }
+function addUsage(acc, u){ if(!u) return acc; const m=u.model; if(m && PRICES[m]){ const t=acc.tok[m]||(acc.tok[m]={pt:0,ct:0}); t.pt+=u.pt||0; t.ct+=u.ct||0; } acc.serper+=u.serper||0; return acc; }
+function costOf(acc){ let oa=0, tok=0; for(const m in acc.tok){ const p=PRICES[m]||[0,0]; oa += acc.tok[m].pt/1e6*p[0] + acc.tok[m].ct/1e6*p[1]; tok += acc.tok[m].pt+acc.tok[m].ct; } const sp=(acc.serper||0)*PRICES.serper; return { openai:oa, serper:sp, total:oa+sp, tokens:tok, serpCalls:acc.serper||0 }; }
+function fmtCost(v){ return '$'+(v<1 ? v.toFixed(4) : v.toFixed(2)); }
+function costBreak(acc){ const c=costOf(acc); const parts=[]; if(c.tokens) parts.push(c.tokens.toLocaleString()+' tok = '+fmtCost(c.openai)); if(c.serpCalls) parts.push(c.serpCalls+' SERP = '+fmtCost(c.serper)); return parts.join(' · '); }
+
 /* ============================ history ============================ */
 function loadHist(){ try{ return JSON.parse(localStorage.getItem('akrHistory')||'[]'); }catch(e){ return []; } }
 // Robust save: full CSVs are big, so 25 of them + the SERP cache can blow the ~5MB localStorage quota — which was
@@ -535,14 +553,25 @@ function saveHistory(entry){
     }
   }
 }
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function renderHistory(){
-  const h=loadHist(), body=$('histBody');
-  if(!h.length){ body.innerHTML='<tr><td colspan="7" class="stat">No runs yet.</td></tr>'; return; }
-  body.innerHTML='';
+  const h=loadHist(), body=$('histBody'), tot=$('histTotal');
+  if(!h.length){ body.innerHTML='<tr><td colspan="6" class="stat">No runs yet.</td></tr>'; if(tot)tot.textContent=''; return; }
+  body.innerHTML=''; let sum=0;
   h.forEach((e,i)=>{ const tr=document.createElement('tr');
-    tr.innerHTML='<td>'+e.when+'</td><td>'+e.domain+'</td><td>'+e.total+'</td><td><b class="ok">'+e.keep+'</b></td><td><b class="bad">'+e.reject+'</b></td><td>'+e.review+'</td><td>'+(e.csv?'<button class="ghost" data-i="'+i+'">⬇ CSV</button>':'<span class="stat">—</span>')+'</td>';
+    const kind = e.kind==='cann' ? 'Cannibalization' : 'AKR Enrich';
+    const result = e.kind==='cann'
+      ? ('M1 <b>'+(e.m1??0)+'</b> · M2 <b>'+(e.m2??0)+'</b> · audit '+(e.audit??0))
+      : (e.total+' kw · keep <b class="ok">'+(e.keep??0)+'</b> · reject <b class="bad">'+(e.reject??0)+'</b> · review '+(e.review??0));
+    const cost = (typeof e.cost==='number') ? e.cost : 0; sum += cost;
+    const costCell = (typeof e.cost==='number')
+      ? '<span title="'+esc(e.breakdown||'')+'">'+fmtCost(cost)+'</span>'
+      : '<span class="stat">—</span>';
+    const dl = e.csv ? '<button class="ghost" data-i="'+i+'">⬇ CSV</button>' : '<span class="stat">—</span>';
+    tr.innerHTML='<td>'+esc(e.when)+'</td><td>'+kind+'</td><td>'+esc(e.domain)+'</td><td>'+result+'</td><td>'+costCell+'</td><td>'+dl+'</td>';
     body.appendChild(tr);
   });
+  if(tot) tot.innerHTML='Total estimated spend across '+h.length+' saved run'+(h.length>1?'s':'')+': <b>'+fmtCost(sum)+'</b>';
   body.querySelectorAll('button[data-i]').forEach(b=>b.addEventListener('click',()=>{ const e=loadHist()[+b.dataset.i]; if(e&&e.csv) downloadCSV(e.csv, (e.domain||'enriched').replace(/[^a-z0-9]+/gi,'_')+'.csv'); }));
 }
 </script>
