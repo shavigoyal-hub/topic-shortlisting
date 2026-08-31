@@ -48,16 +48,17 @@ async function serper(kw, gl, num) {
 
 /* ---- GSC via Composio (reuses the connected Search Console account) ---- */
 // arguments use the Composio tool's snake_case schema (site_url, start_date, ...)
-let _gscConns = undefined;   // [{id,user}] cache — ALL active connections
+let _gscConns = null;   // [{id,user}] cache — ACTIVE connections (only cached once NON-empty, so a transient fetch failure self-heals)
 async function resolveGscConns(key) {
-  if (_gscConns !== undefined) return _gscConns;
-  _gscConns = [];
+  if (_gscConns && _gscConns.length) return _gscConns;
+  let out = [];
   try {
     const r = await fetch('https://backend.composio.dev/api/v3/connected_accounts?toolkit_slugs=google_search_console', { headers: { 'x-api-key': key } });
     const o = await r.json(); const items = o.items || o.data || [];
-    _gscConns = items.filter(a => a.status === 'ACTIVE').map(a => ({ id: a.id, user: a.user_id || a.entity_id || 'default' }));
+    out = items.filter(a => String(a.status || '').toUpperCase() === 'ACTIVE' && a.id).map(a => ({ id: a.id, user: a.user_id || a.entity_id || 'default' }));
   } catch (e) {}
-  return _gscConns;
+  if (out.length) _gscConns = out;
+  return out;
 }
 // low-level execute; returns rows + a `forbidden` flag so callers can fall back to another account on a 403.
 async function gscExec(key, args, conn) {
@@ -81,15 +82,14 @@ async function gscExec(key, args, conn) {
 }
 // Pick the connected account that actually has access to `site` (probes each with a 1-row query).
 // Cached per request so the feed + non-feed pulls reuse the working account.
-const _gscAcct = {};   // site -> chosen conn (keyed by site so warm containers don't leak across domains)
+const _gscAcct = {};   // site -> chosen conn (keyed by site so warm containers don't leak across domains). Only ever caches a TRUTHY conn — a null is never stored, so a transient miss retries next call instead of sticking.
 async function pickGscAcct(key, site, start, end) {
-  if (Object.prototype.hasOwnProperty.call(_gscAcct, site)) return _gscAcct[site];
+  if (_gscAcct[site]) return _gscAcct[site];
   const conns = await resolveGscConns(key);
   const envAcct = process.env.COMPOSIO_GSC_ACCOUNT_ID, envUser = process.env.COMPOSIO_USER_ID;
   const ordered = [];
-  if (envAcct && /^ca_/.test(envAcct)) ordered.push({ id: envAcct, user: envUser });   // explicit env first
-  ordered.push(...conns.filter(c => c.id !== envAcct));
-  if (envUser && !ordered.length) ordered.push({ id: null, user: envUser });
+  if (envAcct && /^ca_/.test(envAcct)) ordered.push({ id: envAcct, user: envUser || 'default' });   // explicit env first (only if a real ca_ id)
+  ordered.push(...conns.filter(c => c.id && c.id !== envAcct));                                       // then every ACTIVE connection (real ids only)
   let firstOk = null;
   for (const c of ordered) {
     const p = await gscExec(key, { site_url: site, start_date: start, end_date: end, dimensions: ['query'], row_limit: 1, data_state: 'final' }, c);
@@ -97,7 +97,7 @@ async function pickGscAcct(key, site, start, end) {
     if (p.rows.length) { _gscAcct[site] = c; return c; }   // has access AND data — take it
     if (!firstOk) firstOk = c;                 // access but no rows in probe; remember as fallback
   }
-  _gscAcct[site] = firstOk;                    // may be null if every account 403'd
+  if (firstOk) _gscAcct[site] = firstOk;       // cache only a real conn; never poison with null
   return firstOk;
 }
 async function gscComposio(args, conn) {
@@ -158,30 +158,6 @@ module.exports = async (req, res) => {
       // cap each page's query map to top 30 by impressions -> {query: [impr, avg position]}
       const queriesByPage = {}; Object.keys(qByPageRaw).forEach(pg => { const o = {}; Object.entries(qByPageRaw[pg]).sort((a, b) => b[1][0] - a[1][0]).slice(0, 30).forEach(([q, e]) => { o[q] = [e[0], Math.round((e[1] / e[0]) * 10) / 10]; }); queriesByPage[pg] = o; });
       res.statusCode = 200; return res.end(JSON.stringify({ available: true, feed, nonfeed, queriesByPage }));
-    }
-    if (step === 'gscdebug') {   // TEMP diagnostic: reveal the raw Composio response shape for a heavy feed pull
-      const key = process.env.COMPOSIO_API_KEY;
-      // also dump the connected_accounts listing so we see the real id field + status casing
-      let connDump = null;
-      try {
-        const cr = await fetch('https://backend.composio.dev/api/v3/connected_accounts?toolkit_slugs=google_search_console', { headers: { 'x-api-key': key } });
-        const co = await cr.json(); const items = co.items || co.data || [];
-        connDump = { status: cr.status, count: items.length, topKeys: Object.keys(co || {}), sample: (items[0] ? { keys: Object.keys(items[0]), id: items[0].id, status: items[0].status, user_id: items[0].user_id, toolkit: items[0].toolkit_slug || (items[0].toolkit && items[0].toolkit.slug) } : null), statuses: items.map(x => x.status) };
-      } catch (e) { connDump = { err: String(e && e.message || e) }; }
-      const envInfo = { hasAcctEnv: !!process.env.COMPOSIO_GSC_ACCOUNT_ID, acctEnvPrefix: String(process.env.COMPOSIO_GSC_ACCOUNT_ID || '').slice(0, 4), hasUserEnv: !!process.env.COMPOSIO_USER_ID };
-      const site = 'sc-domain:' + domain;
-      const now = new Date(Date.now() - 3 * 864e5), start = new Date(Date.now() - 480 * 864e5);
-      const dt = d => d.toISOString().slice(0, 10);
-      const conn = await pickGscAcct(key, site, dt(start), dt(now));
-      const rl = Number(body.row_limit) || 5000;
-      const b = { arguments: { site_url: site, start_date: dt(start), end_date: dt(now), dimensions: ['page', 'query'], row_limit: rl, data_state: 'final', dimension_filter_groups: [{ filters: [{ dimension: 'page', operator: 'contains', expression: 'feeds' }] }] } };
-      if (conn && conn.user) b.user_id = conn.user;
-      if (conn && conn.id) b.connected_account_id = conn.id;
-      const r = await fetch('https://backend.composio.dev/api/v3/tools/execute/GOOGLE_SEARCH_CONSOLE_SEARCH_ANALYTICS_QUERY', { method: 'POST', headers: { 'x-api-key': key, 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
-      const status = r.status; const j = await r.json().catch(() => ({}));
-      const shape = (o, d) => { d = d || 0; if (o === null || typeof o !== 'object') return typeof o; if (Array.isArray(o)) return 'array(' + o.length + ')' + (o.length ? ':' + shape(o[0], d + 1) : ''); if (d > 5) return '{...}'; const out = {}; for (const k of Object.keys(o).slice(0, 30)) out[k] = shape(o[k], d + 1); return out; };
-      const data = (j && j.data) || {}; const rowsFound = (data.response_data && data.response_data.rows) || data.rows || [];
-      res.statusCode = 200; return res.end(JSON.stringify({ connDump, envInfo, conn: conn ? { id: conn.id, user: conn.user } : null, status, rl, successful: j && j.successful, rowsFoundByCurrentParse: rowsFound.length, topKeys: Object.keys(j || {}), dataKeys: Object.keys(data || {}), shape: shape(j) }));
     }
     res.statusCode = 400; res.end(JSON.stringify({ error: 'unknown step' }));
   } catch (e) { res.statusCode = 502; res.end(JSON.stringify({ error: String(e && e.message || e) })); }
