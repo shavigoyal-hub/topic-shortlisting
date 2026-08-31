@@ -161,6 +161,14 @@ module.exports = async (req, res) => {
     }
     if (step === 'gscdebug') {   // TEMP diagnostic: reveal the raw Composio response shape for a heavy feed pull
       const key = process.env.COMPOSIO_API_KEY;
+      // also dump the connected_accounts listing so we see the real id field + status casing
+      let connDump = null;
+      try {
+        const cr = await fetch('https://backend.composio.dev/api/v3/connected_accounts?toolkit_slugs=google_search_console', { headers: { 'x-api-key': key } });
+        const co = await cr.json(); const items = co.items || co.data || [];
+        connDump = { status: cr.status, count: items.length, topKeys: Object.keys(co || {}), sample: (items[0] ? { keys: Object.keys(items[0]), id: items[0].id, status: items[0].status, user_id: items[0].user_id, toolkit: items[0].toolkit_slug || (items[0].toolkit && items[0].toolkit.slug) } : null), statuses: items.map(x => x.status) };
+      } catch (e) { connDump = { err: String(e && e.message || e) }; }
+      const envInfo = { hasAcctEnv: !!process.env.COMPOSIO_GSC_ACCOUNT_ID, acctEnvPrefix: String(process.env.COMPOSIO_GSC_ACCOUNT_ID || '').slice(0, 4), hasUserEnv: !!process.env.COMPOSIO_USER_ID };
       const site = 'sc-domain:' + domain;
       const now = new Date(Date.now() - 3 * 864e5), start = new Date(Date.now() - 480 * 864e5);
       const dt = d => d.toISOString().slice(0, 10);
@@ -173,7 +181,7 @@ module.exports = async (req, res) => {
       const status = r.status; const j = await r.json().catch(() => ({}));
       const shape = (o, d) => { d = d || 0; if (o === null || typeof o !== 'object') return typeof o; if (Array.isArray(o)) return 'array(' + o.length + ')' + (o.length ? ':' + shape(o[0], d + 1) : ''); if (d > 5) return '{...}'; const out = {}; for (const k of Object.keys(o).slice(0, 30)) out[k] = shape(o[k], d + 1); return out; };
       const data = (j && j.data) || {}; const rowsFound = (data.response_data && data.response_data.rows) || data.rows || [];
-      res.statusCode = 200; return res.end(JSON.stringify({ conn: conn ? { id: conn.id, user: conn.user } : null, status, rl, successful: j && j.successful, rowsFoundByCurrentParse: rowsFound.length, topKeys: Object.keys(j || {}), dataKeys: Object.keys(data || {}), shape: shape(j) }));
+      res.statusCode = 200; return res.end(JSON.stringify({ connDump, envInfo, conn: conn ? { id: conn.id, user: conn.user } : null, status, rl, successful: j && j.successful, rowsFoundByCurrentParse: rowsFound.length, topKeys: Object.keys(j || {}), dataKeys: Object.keys(data || {}), shape: shape(j) }));
     }
     res.statusCode = 400; res.end(JSON.stringify({ error: 'unknown step' }));
   } catch (e) { res.statusCode = 502; res.end(JSON.stringify({ error: String(e && e.message || e) })); }
