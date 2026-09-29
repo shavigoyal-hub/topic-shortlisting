@@ -107,6 +107,7 @@ async function gscComposio(args, conn) {
 
 module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
+  const _gwUser = require("../lib/session").requireUser(req, res); if (!_gwUser) return;
   let body = req.body; if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = {}; } }
   const step = body && body.step;
   const domain = String((body && body.domain) || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');

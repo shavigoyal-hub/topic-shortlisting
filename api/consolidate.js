@@ -13,6 +13,7 @@ async function openai(messages, key, u) {
 
 module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
+  const _gwUser = require("../lib/session").requireUser(req, res); if (!_gwUser) return;
   const key = process.env.OPENAI_API_KEY;
   if (!key) { res.statusCode = 500; return res.end(JSON.stringify({ error: 'OPENAI_API_KEY not set' })); }
   let body = req.body; if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = {}; } }

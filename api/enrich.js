@@ -101,6 +101,7 @@ async function openai(messages, key, u) {
 /* ------------------------------- handler ------------------------------- */
 module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
+  const _gwUser = require("../lib/session").requireUser(req, res); if (!_gwUser) return;
   const okey = process.env.OPENAI_API_KEY, skey = process.env.SERPER_KEY;
   if (!okey) { res.statusCode = 500; return res.end(JSON.stringify({ error: 'OPENAI_API_KEY not set in Vercel' })); }
   let body = req.body; if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = {}; } }

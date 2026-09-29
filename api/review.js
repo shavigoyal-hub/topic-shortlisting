@@ -3,6 +3,7 @@
 //   -> { results:[{id, ok:true|false, severity:"high"|"low", reason}] }
 module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
+  const _gwUser = require("../lib/session").requireUser(req, res); if (!_gwUser) return;
   const key = process.env.OPENAI_API_KEY;
   if (!key) { res.statusCode = 500; return res.end(JSON.stringify({ error: 'OPENAI_API_KEY env var not set in Vercel' })); }
   let body = req.body;
