@@ -7,8 +7,10 @@
 const { requireUser, isAdmin } = require('../lib/session');
 
 async function kv(cmd) {
-  const url = process.env.KV_REST_API_URL, tok = process.env.KV_REST_API_TOKEN;
-  if (!url || !tok) throw new Error('KV not configured (create a Vercel KV store)');
+  // Accept both Vercel-KV and Upstash-Redis (marketplace) env var names.
+  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const tok = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !tok) throw new Error('KV not configured — create a Vercel KV / Upstash Redis store, connect it to this project, then redeploy');
   const r = await fetch(url, { method: 'POST', headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json' }, body: JSON.stringify(cmd) });
   const j = await r.json();
   if (j.error) throw new Error(j.error);
