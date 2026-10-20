@@ -219,7 +219,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const OUT_HDR = ['AKR Source','Primary Keyword','Page Type','Topic','Secondary Keywords','Total Search Volume','Relevance','Status','Confidence','Reason','Reason Explained','Audience','Profession','Type','Modifier','BOFU','Matched Services','Source (product/service)','Buying Readiness (high/med/low)','Readiness — why','ICP (keyword)','ICP fit'];
+const OUT_HDR = ['AKR Source','Primary Keyword','Page Type','Topic','Secondary Keywords','Total Search Volume','Relevance','Status','Confidence','Reason','Reason Explained','Audience','Profession','Type','Modifier','BOFU','Matched Services','Source (product/service)','Buying Readiness (high/med/low)','Readiness — why','ICP (keyword)','ICP fit','Top 10 URLs','Top 10 Titles'];
 let akrItems = [], rawAkrItems = [], excludeSet = null, enrichedRows = [], profile = { services:[], category:'', industries:[], anyBusiness:true }, derived=false, geoTouched=false;
 const normKw = k => String(k||'').toLowerCase().replace(/\s+/g,' ').trim();
 function applyExclusion(){
@@ -505,13 +505,13 @@ $('run').addEventListener('click', async () => {
   $('phase').textContent = 'Enriching '+akrItems.length+' keywords with SERP…';
   for(const chunk of chunks){
     // attach cached SERP titles so the server skips re-fetching those keywords
-    const sendItems = chunk.map(it=>{ const c=serpCache[gl+'|'+it.kw.toLowerCase()]; if(c){ cacheHits++; return {...it, titles:c}; } return it; });
+    const sendItems = chunk.map(it=>{ const c=serpCache[gl+'|'+it.kw.toLowerCase()]; if(c){ cacheHits++; return Array.isArray(c) ? {...it, titles:c} : {...it, titles:c.t||[], urls:c.u||[], topics:c.p||[]}; } return it; });
     try{
       const resp = await fetch('/api/enrich', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ items:sendItems, config }) });
       const data = await resp.json();
       addUsage(acc, data.usage);
       if(data.rows){ data.rows.forEach(r=>{ byId[r.id]=r; if(r.status==='1')keep++; else if(r.status==='0')reject++; else review++;
-        if(r.titles && r.titles.length){ const it=chunk.find(x=>x.id===r.id); if(it) serpCache[gl+'|'+it.kw.toLowerCase()]=r.titles; } }); }
+        if((r.titles&&r.titles.length)||(r.urls&&r.urls.length)){ const it=chunk.find(x=>x.id===r.id); if(it) serpCache[gl+'|'+it.kw.toLowerCase()]={t:r.titles||[], u:r.urls||[], p:r.topics||[]}; } }); }
       else failed += chunk.length;
     }catch(e){ failed += chunk.length; }
     done += chunk.length;
@@ -537,7 +537,7 @@ $('run').addEventListener('click', async () => {
   const svcSource = str => { const arr=String(str||'').split(',').map(s=>s.trim()).filter(Boolean); if(!arr.length) return '';
     const w=arr.filter(s=>websiteSet.has(s.toLowerCase())).length; return w===arr.length?'website':(w===0?'CSM-entered':'website + CSM'); };
   enrichedRows = akrItems.map(it=>{ const r=byId[it.id]||{}; return [ it.source||'', it.kw, it.pageType, it.topic, it.sec, it.vol, it.rel,
-    r.status||'', r.confidence||'', r.reason||'', r.explained||'', r.audience||'', r.profession||'', r.type||'', r.modifier||'', r.bofu||'', r.services||'', svcSource(r.services), r.buyStage||'', r.buyWhy||'', r.icp||'', r.icpFit||'' ]; });
+    r.status||'', r.confidence||'', r.reason||'', r.explained||'', r.audience||'', r.profession||'', r.type||'', r.modifier||'', r.bofu||'', r.services||'', svcSource(r.services), r.buyStage||'', r.buyWhy||'', r.icp||'', r.icpFit||'', (r.urls||[]).join(' | '), (r.topics||[]).join(' | ') ]; });
   $('phase').textContent = '✓ Done — '+akrItems.length+' enriched'+(failed?' ('+failed+' failed)':'')+(cacheHits?' · '+cacheHits+' from SERP cache':'');
   $('download').classList.remove('hidden');
   $('run').disabled = false;

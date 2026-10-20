@@ -57,19 +57,23 @@ const IGNORE_DOMAINS = /(wikipedia|wikihow|britannica|fandom|youtube|youtu\.be|v
 const hostOf = u => { try { return String(u).replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].toLowerCase(); } catch (e) { return ''; } };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function serper(kw, gl, key) {
-  if (!key) return [];
+  if (!key) return { titles: [], urls: [], topics: [] };
   for (let a = 0; a < 2; a++) {
     try {
       const r = await fetch('https://google.serper.dev/search', { method: 'POST', headers: { 'X-API-KEY': key, 'Content-Type': 'application/json' }, body: JSON.stringify({ q: kw, gl: gl || 'us', num: 10 }) });
       if (r.status === 429 || r.status >= 500) { await sleep(900 * (a + 1)); continue; }
-      if (!r.ok) return [];
-      const j = await r.json(), titles = [];
-      // capture ranking DOMAIN + title + snippet(meta) — the domain shows WHO ranks (competitors/industry), a strong field signal
-      for (const o of (j.organic || []).slice(0, 10)) { const h = hostOf(o.link || ''); if (h && !IGNORE_DOMAINS.test(h)) titles.push((h + ' — ' + ((o.title || '') + ' ' + (o.snippet || '')).trim()).slice(0, 300)); }
-      return titles;
+      if (!r.ok) return { titles: [], urls: [], topics: [] };
+      const j = await r.json(), titles = [], urls = [], topics = [];
+      // titles = ranking DOMAIN + title + snippet (classifier signal, wiki/social filtered); urls/topics = ALL top-10 raw (for the output CSV)
+      for (const o of (j.organic || []).slice(0, 10)) {
+        const link = o.link || '', h = hostOf(link);
+        if (link) { urls.push(link); topics.push(o.title || ''); }
+        if (h && !IGNORE_DOMAINS.test(h)) titles.push((h + ' — ' + ((o.title || '') + ' ' + (o.snippet || '')).trim()).slice(0, 300));
+      }
+      return { titles, urls, topics };
     } catch (e) { await sleep(600); }
   }
-  return [];
+  return { titles: [], urls: [], topics: [] };
 }
 const cleanDomain = d => String(d || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '').replace(/\s+/g, '');
 // For the site: search, strip qualifier words (styles/materials/colors/sizes/positions) that derail recall toward
@@ -121,7 +125,7 @@ module.exports = async (req, res) => {
       let i = 0;
       const worker = async () => { while (i < items.length) { const it = items[i++];
         if (Array.isArray(it.titles) && it.titles.length) continue;   // client-supplied from its cache → don't re-fetch
-        u.serper++; it.titles = await serper(it.kw, gl, skey); } };
+        u.serper++; const s = await serper(it.kw, gl, skey); it.titles = s.titles; it.urls = s.urls; it.topics = s.topics; } };
       await Promise.all(Array.from({ length: Math.min(5, items.length) }, worker));
     } else { items.forEach(it => { if (!Array.isArray(it.titles)) it.titles = []; }); }
 
@@ -180,7 +184,7 @@ module.exports = async (req, res) => {
     const rows = dec.map(d => {
       const c = d.c; let explained = d.explained;
       if (d.status === '0' && c.icp) explained = (explained ? explained + ' — ' : '') + 'people searching this are most likely ' + c.icp + (c.icpFit === false ? ", which is NOT the client's target ICP" : '');
-      return { id: d.it.id, status: d.status, confidence: d.status === '' ? '' : c.conf, reason: d.reason, explained, audience: c.audience || '', profession: c.profession || '', type: c.type || '', modifier: modifiersOf(d.it.kw, cfg), bofu: isBofu(d.it.kw) ? 'Yes' : 'No', services: (c.services || []).join(', '), buyStage: c.buyStage || '', buyWhy: c.buyWhy || '', icp: c.icp || '', icpFit: c.icpFit === false ? 'no' : 'yes', titles: Array.isArray(d.it.titles) ? d.it.titles : [] };
+      return { id: d.it.id, status: d.status, confidence: d.status === '' ? '' : c.conf, reason: d.reason, explained, audience: c.audience || '', profession: c.profession || '', type: c.type || '', modifier: modifiersOf(d.it.kw, cfg), bofu: isBofu(d.it.kw) ? 'Yes' : 'No', services: (c.services || []).join(', '), buyStage: c.buyStage || '', buyWhy: c.buyWhy || '', icp: c.icp || '', icpFit: c.icpFit === false ? 'no' : 'yes', titles: Array.isArray(d.it.titles) ? d.it.titles : [], urls: Array.isArray(d.it.urls) ? d.it.urls : [], topics: Array.isArray(d.it.topics) ? d.it.topics : [] };
     });
     res.statusCode = 200;
     res.end(JSON.stringify({ rows, usage: u }));

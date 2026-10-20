@@ -173,15 +173,16 @@ async function serper(kw, gl){
         body:JSON.stringify({q:kw, gl:gl||'us', num:10}), signal:AbortSignal.timeout(15000) });
       if(r.status===429 || r.status>=500){ await sleep(1200*(a+1)); continue; }
       if(!r.ok) return {titles:[], domains:[]};
-      const j = await r.json(), titles=[], domains=[];
+      const j = await r.json(), titles=[], domains=[], urls=[], topics=[];
       for(const o of (j.organic||[]).slice(0,10)){
-        const h = hostOf(o.link||''); if(!h) continue; domains.push(h);
+        const link=o.link||'', h=hostOf(link); if(!h) continue; domains.push(h);
+        urls.push(link); topics.push(o.title||'');                                  // ALL top-10 raw (for the output CSV)
         if(!IGNORE_DOMAINS.test(h)) titles.push(((o.title||'')+' '+(o.snippet||'')).trim());
       }
-      return {titles, domains};
+      return {titles, domains, urls, topics};
     }catch(e){ await sleep(800); }
   }
-  return {titles:[], domains:[]};
+  return {titles:[], domains:[], urls:[], topics:[]};
 }
 function loadSerpCache(dir){ try{ return JSON.parse(fs.readFileSync(path.resolve(dir,'serp_cache.json'),'utf8')); }catch(e){ return {}; } }
 function saveSerpCache(dir, m){ try{ fs.writeFileSync(path.resolve(dir,'serp_cache.json'), JSON.stringify(m)); }catch(e){} }
@@ -293,13 +294,14 @@ function loadAkr(file){
     let done=0;
     await mapLimit(items, CONC, async (it)=>{
       const key = cfg.serpGl+'|'+it.kw.toLowerCase();
-      if(!serpCache[key]){ const s = await serper(it.kw, cfg.serpGl); serpCache[key] = {titles:s.titles, domains:s.domains}; }
+      if(!serpCache[key] || !serpCache[key].urls){ const s = await serper(it.kw, cfg.serpGl); serpCache[key] = {titles:s.titles, domains:s.domains, urls:s.urls, topics:s.topics}; }
       it.titles = serpCache[key].titles || [];
+      it.urls = serpCache[key].urls || []; it.topics = serpCache[key].topics || [];
       if((++done % 50)===0) console.log('  SERP '+done+'/'+items.length);
     });
     saveSerpCache(dir, serpCache);
     console.log('SERP done: '+items.length+' lookups');
-  } else { items.forEach(it=>it.titles=[]); }
+  } else { items.forEach(it=>{ it.titles=[]; it.urls=[]; it.topics=[]; }); }
 
   // 2) classify in batches
   const byKw = {};
@@ -340,11 +342,12 @@ function loadAkr(file){
       status, (status===''?'':c.conf), reason, explained,
       c.audience||'', c.profession||'', c.type||'',
       modifiersOf(it.kw, cfg), isBofu(it.kw)?'Yes':'No',
-      (c.services||[]).join(', '), c.icp||'', c.icpFit===false?'no':'yes' ];
+      (c.services||[]).join(', '), c.icp||'', c.icpFit===false?'no':'yes',
+      (it.urls||[]).join(' | '), (it.topics||[]).join(' | ') ];
   });
 
   const HDR = ['Primary Keyword','Page Type','Topic','Secondary Keywords','Total Search Volume','Relevance',
-    'Status','Confidence','Reason','Reason Explained','Audience','Profession','Type','Modifier','BOFU','Matched Services','ICP (keyword)','ICP fit'];
+    'Status','Confidence','Reason','Reason Explained','Audience','Profession','Type','Modifier','BOFU','Matched Services','ICP (keyword)','ICP fit','Top 10 URLs','Top 10 Titles'];
   const outPath = path.isAbsolute(OUT_FILE) ? OUT_FILE : path.resolve(dir, OUT_FILE);
   fs.writeFileSync(outPath, [HDR].concat(out).map(r=>r.map(csvCell).join(',')).join('\n')+'\n');
   console.log('\nEnriched '+items.length+' topics → '+outPath);
