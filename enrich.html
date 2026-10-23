@@ -340,14 +340,18 @@ async function runCannAnalysis(){
       const ia=qBP[a][q][0],ib=qBP[b][q][0]; const bal=Math.min(ia,ib)/Math.max(ia,ib); if(bal<SIM)continue;
       const prim=totBy[a]>=totBy[b]?a:b, cann=prim===a?b:a;
       cand.push({q,prim,cann,pip:qBP[prim][q][0],ppos:qBP[prim][q][1],cip:qBP[cann][q][0],cpos:qBP[cann][q][1],bal}); } });
-    const gateQ=[...new Set(cand.filter(c=>c.ppos<=POSGATE&&c.cpos<=POSGATE).map(c=>c.q))];
+    // Live-check EVERY feed↔main query — any query that at least one feed page AND one non-feed page rank for (the full audit universe), not just the position-gated ones.
+    const fmQ=new Set();
+    { const feedByQ={},mainByQ={}; pages.forEach(nu=>{ const m=qBP[nu]; if(!m)return; const f=isFeedN(nu); for(const q in m){ (f?feedByQ:mainByQ)[q]=1; } }); Object.keys(feedByQ).forEach(q=>{ if(mainByQ[q]) fmQ.add(q); }); }
+    const gateQ=[...fmQ];
     $('cannPhase').textContent='Method 2 — live-rank check ('+gateQ.length+' queries)…'; $('cannBar').style.width='72%';
     const live={}; const CH=15; let dn=0;
     for(let i=0;i<gateQ.length;i+=CH){ const chunk=gateQ.slice(i,i+CH); const r=await api('serp',{items:chunk.map(q=>({kw:q})),gl,num:20}); Object.assign(live,r.serp||{}); addUsage(acc,r.usage); dn+=chunk.length; $('cannBar').style.width=(72+Math.round(dn/Math.max(1,gateQ.length)*20))+'%'; $('cannCounts').textContent=dn+' / '+gateQ.length+' live checks'; }
     const livePos=(q,nu)=>{ const lt=live[nQ(q)]||live[q]||[]; const i=lt.findIndex(u=>u===nu||u.split('?')[0]===nu); return i<0?null:i+1; };
-    const m2=cand.map(c=>{ const gate=c.ppos<=POSGATE&&c.cpos<=POSGATE; const uq=uniqWell(c.cann,c.prim); let pl=null,cl=null,winner='',basis='';
-      if(gate){ pl=livePos(c.q,c.prim); cl=livePos(c.q,c.cann); if(pl!=null||cl!=null){ winner=((pl||999)<=(cl||999))?c.prim:c.cann; basis='live rank ('+(pl||'—')+' vs '+(cl||'—')+')'; } else { winner=c.prim; basis='impressions (neither live top-20)'; } }
-      let verdict; if(!gate)verdict='DROP — incidental (ranks >'+POSGATE+' on query)'; else if(uq.length)verdict='KEEP both — cannibalising owns distinct queries'; else verdict='REDIRECT cannibalising → primary';
+    const m2=cand.map(c=>{ const gscGate=c.ppos<=POSGATE&&c.cpos<=POSGATE; const uq=uniqWell(c.cann,c.prim);
+      const pl=livePos(c.q,c.prim), cl=livePos(c.q,c.cann); const bothLive=pl!=null&&cl!=null; const active=gscGate||bothLive; let winner='',basis='';
+      if(pl!=null||cl!=null){ winner=((pl||999)<=(cl||999))?c.prim:c.cann; basis='live rank ('+(pl||'—')+' vs '+(cl||'—')+')'; } else { winner=totBy[c.prim]>=totBy[c.cann]?c.prim:c.cann; basis='GSC impressions (neither live top-20)'; }
+      let verdict; if(!active)verdict='DROP — incidental (no GSC gate & not both live)'; else if(uq.length)verdict='KEEP both — cannibalising owns distinct queries'; else verdict='REDIRECT cannibalising → primary';
       return {query:c.q,primary:disp(c.prim),p_impr:c.pip,p_pos:c.ppos,p_live:pl==null?'—':pl,cann:disp(c.cann),c_impr:c.cip,c_pos:c.cpos,c_live:cl==null?'—':cl,balance:Math.round(c.bal*100)+'%',winner:winner?disp(winner):'—',basis,unique:uq.length?(uq[0][0]+' (@'+uq[0][1]+')'):'—',verdict}; });
     const ord={REDIRECT:0,KEEP:1,DROP:2}; m2.sort((x,y)=>(ord[x.verdict.split(' ')[0]]??3)-(ord[y.verdict.split(' ')[0]]??3));
     $('cannPhase').textContent='Building query audit…'; $('cannBar').style.width='94%';
